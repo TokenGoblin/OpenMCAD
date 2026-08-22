@@ -875,10 +875,10 @@ Four epochs, eighteen phases. Each phase states a **goal**, **exit criteria** (m
 - [x] **P1-T10** Kernel contract test suite, parameterized over both implementations.
 - [ ] **P1-T11** Implement the retry ladder (§5.2.4) for boolean and fillet, with per-rung logging and the health metric. *(Blocked on P1-T06. The observable contract — `RetryRung` on every result, `Degraded` for partial success — is implemented and tested.)*
 - [ ] **P1-T12** Determinism audit: pin OCCT build flags, disable nondeterministic parallelism, sort all returned collections by a stable geometric key. Add the double-rebuild diff test. *(Blocked on P1-T06. A miniature determinism check runs in the contract battery today.)*
-- [ ] **P1-T13** Repro-bundle capture: on kernel failure, serialize inputs + operation + parameters to a bundle directory.
-- [ ] **P1-T14** `tests/regression` runner and the first three corpus fixtures; wire into `nightly-regression.yml`.
+- [x] **P1-T13** Repro-bundle capture: on kernel failure, serialize inputs + operation + parameters to a bundle directory. *(Bundles are named by content hash, so a rebuild loop that fails identically two hundred times produces one bundle and a recurrence count.)*
+- [x] **P1-T14** `tests/regression` runner and the first three corpus fixtures; wire into `nightly-regression.yml`. *(Runner, three `basic/` fixtures, and the determinism gate. Runs on every build against `FakeKernel`; nightly replays the same fixtures and will add OCCT at P1-T06.)*
 - [ ] **P1-T15** Benchmark harness for kernel operations; record a baseline. *(Blocked on P1-T06; benchmarking `FakeKernel` would measure nothing useful.)*
-- [ ] **P1-T16** Document the shim extension procedure in `docs/specs/kernel-shim.md` — every later phase adds operations, and this must be a 30-minute task, not an archaeology expedition.
+- [x] **P1-T16** Document the shim extension procedure in `docs/specs/kernel-shim.md` — every later phase adds operations, and this must be a 30-minute task, not an archaeology expedition.
 
 ---
 

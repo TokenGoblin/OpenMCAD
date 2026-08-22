@@ -41,6 +41,16 @@ public interface IOperationDefinition
     /// <see cref="DiagnosticSeverity.Error"/> means the operation must not be attempted.
     /// </returns>
     ImmutableArray<KernelDiagnostic> Validate();
+
+    /// <summary>
+    /// Gets the shapes this operation reads, in the order it receives them.
+    /// </summary>
+    /// <remarks>
+    /// Used by repro-bundle capture (P1-T13) to write the inputs alongside the failure, and later
+    /// by the geometry cache (P3-T05) to know what a result depends on. Defaults to empty, which
+    /// is correct for the primitives.
+    /// </remarks>
+    ImmutableArray<KernelShape> InputShapes() => [];
 }
 
 /// <summary>Shared validation helpers for operation definitions.</summary>
@@ -417,6 +427,9 @@ public sealed record ExtrudeDefinition(
     public string OperationName => "Extrude";
 
     /// <inheritdoc />
+    public ImmutableArray<KernelShape> InputShapes() => [Profile];
+
+    /// <inheritdoc />
     public ImmutableArray<KernelDiagnostic> Validate()
     {
         List<KernelDiagnostic> problems = [];
@@ -446,6 +459,9 @@ public sealed record RevolveDefinition(
 
     /// <inheritdoc />
     public string OperationName => "Revolve";
+
+    /// <inheritdoc />
+    public ImmutableArray<KernelShape> InputShapes() => [Profile];
 
     /// <inheritdoc />
     public ImmutableArray<KernelDiagnostic> Validate()
@@ -511,6 +527,10 @@ public sealed record BooleanDefinition(
     public string OperationName => $"Boolean.{Operation}";
 
     /// <inheritdoc />
+    public ImmutableArray<KernelShape> InputShapes()
+        => [Target, .. Tools.IsDefault ? [] : Tools];
+
+    /// <inheritdoc />
     public ImmutableArray<KernelDiagnostic> Validate()
     {
         List<KernelDiagnostic> problems = [];
@@ -569,6 +589,9 @@ public sealed record FilletDefinition(
 
     /// <inheritdoc />
     public string OperationName => "Fillet";
+
+    /// <inheritdoc />
+    public ImmutableArray<KernelShape> InputShapes() => [Body];
 
     /// <inheritdoc />
     public ImmutableArray<KernelDiagnostic> Validate()
@@ -642,6 +665,9 @@ public sealed record ChamferDefinition(
 
     /// <inheritdoc />
     public string OperationName => "Chamfer";
+
+    /// <inheritdoc />
+    public ImmutableArray<KernelShape> InputShapes() => [Body];
 
     /// <inheritdoc />
     public ImmutableArray<KernelDiagnostic> Validate()

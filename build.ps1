@@ -24,6 +24,10 @@
 .PARAMETER SkipTests
     Build only; do not run tests.
 
+.PARAMETER SkipRegression
+    Skip the regression corpus. It runs by default because PLAN.md 14 names it the single most
+    important discipline in the project.
+
 .PARAMETER WithOcct
     Link OCCT into the native shim. Requires vcpkg with the manifest in native/vcpkg.json
     restored. Off until P1-T06.
@@ -47,6 +51,7 @@ param(
     [switch]$Generate,
     [switch]$SkipNative,
     [switch]$SkipTests,
+    [switch]$SkipRegression,
     [switch]$WithOcct,
     [switch]$Clean
 )
@@ -224,6 +229,27 @@ else {
     }
 
     Write-Host '    all tests passed' -ForegroundColor Green
+}
+
+# --- Regression corpus -------------------------------------------------------------------------
+# PLAN.md 8.2. Fast enough against FakeKernel to run on every build; the nightly workflow replays
+# the same fixtures against OCCT and adds the determinism gate.
+Write-Step 'Regression corpus'
+
+if ($SkipTests -or $SkipRegression) {
+    Write-Skip 'regression run was skipped'
+}
+else {
+    $regress = Join-Path $ArtifactsDir "bin/OpenMCAD.Regression/$($Configuration.ToLowerInvariant())/omcad-regress.exe"
+
+    if (-not (Test-Path $regress)) {
+        throw "Regression runner not found at $regress"
+    }
+
+    & $regress --determinism
+    if ($LASTEXITCODE -ne 0) {
+        throw "Regression corpus failed with exit code $LASTEXITCODE."
+    }
 }
 
 Write-Step 'Done'

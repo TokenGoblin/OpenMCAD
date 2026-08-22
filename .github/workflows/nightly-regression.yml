@@ -1,0 +1,96 @@
+name: Nightly regression
+
+# PLAN.md 8.4. The per-PR pipeline is budgeted at fifteen minutes and cannot carry the full corpus,
+# fuzzing, determinism, and performance work. This job can take hours, and the things it checks are
+# the ones that decay silently: determinism, robustness, and the golden values that make a
+# regression visible at all.
+
+on:
+  schedule:
+    # 03:00 UTC daily. No particular reason beyond being outside working hours.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      kernel:
+        description: Which kernel to run the corpus against
+        type: choice
+        options: [fake, occt]
+        default: fake
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  corpus:
+    name: Corpus and determinism (${{ matrix.kernel }})
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # TODO(P1-T06): add 'occt' once the shim implements the operations. The corpus is
+        # kernel-agnostic by design, so that is the whole integration.
+        kernel: [fake]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build OpenMCAD.slnx --configuration Release --nologo
+
+      - name: Run the corpus with the determinism gate
+        shell: pwsh
+        run: |
+          # ADR-0011: the corpus runs twice on fresh kernels and the topology and role signatures
+          # are diffed. A difference is a P0 even when every fixture still passes, because
+          # non-determinism corrupts undo, caching, and naming in ways that surface months later
+          # as unrelated intermittent bugs.
+          & ./artifacts/bin/OpenMCAD.Regression/release/omcad-regress.exe `
+              --kernel ${{ matrix.kernel }} --verbose --determinism
+          if ($LASTEXITCODE -ne 0) { throw "Regression corpus failed (exit $LASTEXITCODE)" }
+
+      - name: Run the full test suite
+        shell: pwsh
+        run: ./build.ps1 -Configuration Release -SkipRegression
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-test-results-${{ matrix.kernel }}
+          path: artifacts/test-results/**/*.trx
+          if-no-files-found: warn
+
+  no-cache:
+    name: Rebuild from scratch
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Clean build and full suite
+        shell: pwsh
+        run: |
+          # PLAN.md 8.4 weekly item, run nightly because it is cheap while the corpus is small:
+          # prove that nothing depends on incremental build state or a warm cache.
+          ./build.ps1 -Clean -Configuration Release

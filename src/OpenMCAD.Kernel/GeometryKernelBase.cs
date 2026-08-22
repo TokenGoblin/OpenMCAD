@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using OpenMCAD.Kernel.Diagnostics;
 using OpenMCAD.Kernel.Operations;
 using OpenMCAD.Kernel.Threading;
 using OpenMCAD.Math;
@@ -47,6 +48,9 @@ namespace OpenMCAD.Kernel;
 /// </remarks>
 public abstract class GeometryKernelBase : IGeometryKernel, IKernelShapeReleaser
 {
+    private readonly ReproBundleOptions _repro;
+
+    private ReproBundleWriter? _reproWriter;
     private bool _disposed;
 
     /// <summary>Creates the kernel and its dispatcher.</summary>
@@ -54,11 +58,19 @@ public abstract class GeometryKernelBase : IGeometryKernel, IKernelShapeReleaser
     /// The dispatcher to marshal work onto. The kernel takes ownership and disposes it.
     /// </param>
     /// <param name="logger">Where to log.</param>
-    protected GeometryKernelBase(KernelDispatcher dispatcher, ILogger? logger = null)
+    /// <param name="repro">
+    /// Repro-bundle capture settings (P1-T13). Off by default; writing B-rep for every failure
+    /// costs real time and disk.
+    /// </param>
+    protected GeometryKernelBase(
+        KernelDispatcher dispatcher,
+        ILogger? logger = null,
+        ReproBundleOptions repro = default)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         Dispatcher = dispatcher;
         Logger = logger ?? NullLogger.Instance;
+        _repro = repro;
     }
 
     /// <inheritdoc />
@@ -69,6 +81,14 @@ public abstract class GeometryKernelBase : IGeometryKernel, IKernelShapeReleaser
 
     /// <summary>Gets the logger.</summary>
     protected ILogger Logger { get; }
+
+    /// <summary>
+    /// Gets the repro-bundle writer, created on first use so a kernel with capture switched off
+    /// pays nothing for it.
+    /// </summary>
+    /// <remarks>Only touched from the kernel thread, so no synchronisation is needed.</remarks>
+    private ReproBundleWriter ReproWriter
+        => _reproWriter ??= new ReproBundleWriter(_repro, Capabilities, Logger);
 
     // --- Primitives ---------------------------------------------------------------------------------
 
@@ -433,11 +453,30 @@ public abstract class GeometryKernelBase : IGeometryKernel, IKernelShapeReleaser
 
                 try
                 {
-                    return work();
+                    OperationResult result = work();
+
+                    if (result is OperationResult.Failed failure && _repro.Enabled)
+                    {
+                        CaptureRepro(name, definition, failure.Diagnostics, request);
+                    }
+
+                    return result;
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException)
                 {
                     Logger.LogError(exception, "Kernel operation {Operation} threw", name);
+
+                    if (_repro.Enabled)
+                    {
+                        CaptureRepro(
+                            name,
+                            definition,
+                            [KernelDiagnostic.Error(
+                                KernelDiagnosticCodes.InternalError,
+                                exception.Message,
+                                kernelDetail: exception.ToString())],
+                            request);
+                    }
 
                     return OperationResult.Failed.From(
                         KernelDiagnosticCodes.InternalError,
@@ -449,6 +488,26 @@ public abstract class GeometryKernelBase : IGeometryKernel, IKernelShapeReleaser
             request.Priority,
             cancellationToken);
     }
+
+    /// <summary>
+    /// Writes a repro bundle for a failed operation. Runs on the kernel thread, so it can ask the
+    /// implementation for the input geometry directly.
+    /// </summary>
+    private void CaptureRepro(
+        string name,
+        IOperationDefinition? definition,
+        ImmutableArray<KernelDiagnostic> diagnostics,
+        KernelRequest request)
+        => ReproWriter.Capture(
+            name,
+            definition,
+            diagnostics,
+            request,
+            shape =>
+            {
+                KernelResult<ImmutableArray<byte>> written = WriteBRep(shape, request);
+                return written.TryGetValue(out ImmutableArray<byte> bytes) ? bytes : [];
+            });
 
     private ValueTask<KernelResult<T>> RunQueryAsync<T>(
         string name,

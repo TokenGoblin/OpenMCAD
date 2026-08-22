@@ -120,18 +120,52 @@ public sealed class ProjectGraphTests
             "a test project must be named <Something>.Tests or it is silently excluded from the run");
     }
 
+    /// <summary>
+    /// Projects under <c>tests/</c> that are deliberately standalone executables rather than xunit
+    /// projects, with the reason each one is.
+    /// </summary>
+    /// <remarks>
+    /// An allow-list rather than a loosened rule. Anything not named here and not ending in
+    /// <c>.Tests</c> is a project the runner silently skips, which is how a suite comes to test
+    /// nothing without anyone noticing.
+    /// </remarks>
+    private static readonly Dictionary<string, string> StandaloneRunners = new(StringComparer.Ordinal)
+    {
+        ["OpenMCAD.Regression"] =
+            "The corpus runner needs to replay every fixture twice on fresh kernels for the "
+            + "determinism gate, and to select a kernel at run time. Neither fits a test host, so "
+            + "it is an executable that build.ps1 and the nightly workflow invoke directly.",
+    };
+
     [Fact]
-    public void EveryProjectUnderTestsIsATestProject()
+    public void EveryProjectUnderTestsIsEitherATestProjectOrAKnownRunner()
     {
         List<string> violations =
         [
             .. new DirectoryInfo(Path.Combine(ProjectCatalog.RepoRoot.FullName, "tests"))
                 .GetFiles("*.csproj", SearchOption.AllDirectories)
                 .Select(p => Path.GetFileNameWithoutExtension(p.Name))
-                .Where(name => !name.EndsWith(".Tests", StringComparison.Ordinal)),
+                .Where(name => !name.EndsWith(".Tests", StringComparison.Ordinal))
+                .Where(name => !StandaloneRunners.ContainsKey(name)),
         ];
 
-        violations.Should().BeEmpty("everything under tests/ must be discoverable by the runner");
+        violations.Should().BeEmpty(
+            "a project under tests/ that is neither named *.Tests nor a documented standalone "
+            + "runner is silently skipped by the test runner");
+    }
+
+    [Fact]
+    public void EveryDocumentedStandaloneRunnerStillExists()
+    {
+        // The allow-list must not outlive its entries, or it quietly becomes a hole in the rule.
+        List<string> present =
+        [
+            .. new DirectoryInfo(Path.Combine(ProjectCatalog.RepoRoot.FullName, "tests"))
+                .GetFiles("*.csproj", SearchOption.AllDirectories)
+                .Select(p => Path.GetFileNameWithoutExtension(p.Name)),
+        ];
+
+        StandaloneRunners.Keys.Should().BeSubsetOf(present);
     }
 
     [Fact]

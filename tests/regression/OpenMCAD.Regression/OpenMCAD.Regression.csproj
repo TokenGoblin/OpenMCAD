@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>omcad-regress</AssemblyName>
+    <RootNamespace>OpenMCAD.Regression</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.App/OpenMCAD.App.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,37 @@
+{
+  "name": "cylinder-r20-h75",
+  "category": "basic",
+  "description": "A 20 mm radius, 75 mm tall cylinder. Curved geometry, so it pins the transcendental mass properties and the axial moment of inertia. It also pins the seam edge: a seam is an artefact of parameterisation rather than of design intent, and a kernel that reports a different number of them changes what a user can select.",
+  "steps": [
+    {
+      "op": "cylinder",
+      "name": "body",
+      "values": [
+        0.02,
+        0.075
+      ]
+    }
+  ],
+  "expected": {
+    "volume": 9.424777960769381e-05,
+    "surfaceArea": 0.011938052083641215,
+    "centroid": [
+      0,
+      0,
+      0.0375
+    ],
+    "faces": 3,
+    "edges": 3,
+    "vertices": 2,
+    "relativeTolerance": 1e-12,
+    "roles": {
+      "SideWall": 1,
+      "StartCap": 1,
+      "EndCap": 1,
+      "Seam": 1,
+      "StartProfileEdge": 1,
+      "EndProfileEdge": 1,
+      "PrimitiveVertex": 2
+    }
+  }
+}

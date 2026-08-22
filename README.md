@@ -26,6 +26,8 @@ AP242 and other exchange formats, sheet metal, surfacing, and a stable public pl
 | Kernel abstraction, single-threaded dispatcher, owning handles | ✅ P1-T01/02/07/08 |
 | `FakeKernel` — deterministic analytic mock | ✅ P1-T09 |
 | Kernel contract battery | ✅ P1-T10 |
+| C ABI generated from a single IDL (49 operations) | ✅ P1-T03 |
+| Repro-bundle capture, regression corpus, determinism gate | ✅ P1-T13, P1-T14 |
 | OCCT geometry kernel | ⬜ P1-T04/05/06 — needs a C++ toolchain |
 | Viewport | ⬜ Phase 2 |
 | Documents, rebuild, topological naming | ⬜ Phase 3 |

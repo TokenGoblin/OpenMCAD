@@ -137,6 +137,14 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
 
         TaskCompletionSource<T> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // Running and publishing are separate steps so that instrumentation happens before the
+        // caller observes completion. Completing the task inside the work would let a continuation
+        // start on the thread pool while this thread is still measuring, and anything that read
+        // the metrics after awaiting would see the previous call's numbers.
+        T? value = default;
+        Exception? error = null;
+        bool cancelled = false;
+
         WorkItem item = new(
             operation,
             priority,
@@ -145,18 +153,33 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
             {
                 try
                 {
-                    completion.TrySetResult(work());
+                    value = work();
                     return false;
                 }
                 catch (OperationCanceledException)
                 {
-                    completion.TrySetCanceled(cancellationToken);
+                    cancelled = true;
                     return true;
                 }
                 catch (Exception exception)
                 {
-                    completion.TrySetException(exception);
+                    error = exception;
                     return true;
+                }
+            },
+            () =>
+            {
+                if (cancelled)
+                {
+                    completion.TrySetCanceled(cancellationToken);
+                }
+                else if (error is not null)
+                {
+                    completion.TrySetException(error);
+                }
+                else
+                {
+                    completion.TrySetResult(value!);
                 }
             },
             () => completion.TrySetCanceled(cancellationToken),
@@ -228,6 +251,7 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
                     return true;
                 }
             },
+            static () => { },
             static () => { },
             CancellationToken.None);
 
@@ -304,15 +328,6 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
         TimeSpan executed = Stopwatch.GetElapsedTime(startedAt);
         CompletedCount++;
 
-        if (executed > TimeSpan.FromSeconds(1))
-        {
-            _logger.LogInformation(
-                "Kernel operation {Operation} took {ExecutedMs:F0} ms ({QueuedMs:F0} ms queued)",
-                item.Operation,
-                executed.TotalMilliseconds,
-                queued.TotalMilliseconds);
-        }
-
         if (_onMetrics is not null)
         {
             try
@@ -324,6 +339,18 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
             {
                 _logger.LogError(exception, "Kernel metrics callback threw and was ignored");
             }
+        }
+
+        // Only now may the caller resume.
+        item.Publish();
+
+        if (executed > TimeSpan.FromSeconds(1))
+        {
+            _logger.LogInformation(
+                "Kernel operation {Operation} took {ExecutedMs:F0} ms ({QueuedMs:F0} ms queued)",
+                item.Operation,
+                executed.TotalMilliseconds,
+                queued.TotalMilliseconds);
         }
     }
 
@@ -380,6 +407,7 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
         KernelPriority Priority,
         long EnqueuedAt,
         Func<bool> Execute,
+        Action Publish,
         Action Cancel,
         CancellationToken CancellationToken);
 }

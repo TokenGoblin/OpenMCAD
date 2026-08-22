@@ -29,6 +29,9 @@
   <Folder Name="/tests/contract/">
     <Project Path="tests/contract/OpenMCAD.Kernel.Contract.Tests/OpenMCAD.Kernel.Contract.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/regression/">
+    <Project Path="tests/regression/OpenMCAD.Regression/OpenMCAD.Regression.csproj" />
+  </Folder>
   <Folder Name="/tests/unit/">
     <Project Path="tests/unit/OpenMCAD.IdlGen.Tests/OpenMCAD.IdlGen.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Kernel.Tests/OpenMCAD.Kernel.Tests.csproj" />

@@ -50,5 +50,8 @@ and "0% of everything" would misrepresent the state of the repository.
 | Kernel contract battery | P1-T10 | ✅ one implementation; second lands with P1-T06 |
 | OCCT behind `IGeometryKernel` | P1-T04/05/06 | ⬜ blocked on the C++ toolchain |
 | Retry ladder | P1-T11 | 🟨 contract implemented, mechanism blocked on P1-T06 |
-| Regression corpus | P1-T14 | ⬜ |
+| C ABI generated from a single IDL | P1-T03 | ✅ 49 operations, five artefacts |
+| Repro-bundle capture on kernel failure | P1-T13 | ✅ |
+| Regression corpus and determinism gate | P1-T14 | ✅ runner plus three fixtures; grows every phase |
+| Shim extension procedure documented | P1-T16 | ✅ |
 | Topological naming | P3 | ⬜ |

@@ -150,20 +150,19 @@ mock instead of against OCCT.
 
 ## 5. Not yet done in Phase 1
 
-| Task | Blocked on |
-|---|---|
-| P1-T03 IDL and `idlgen` | This review. The IDL describes the surface below, so settling the surface first avoids generating against a design about to change. |
-| P1-T04 shim handle table | MSVC toolchain — see §6. |
-| P1-T05 exception firewall, `OSD::SetSignal` | Same. The C-side pattern is already written in `native/openmcad_occt/src`. |
-| P1-T06 OCCT operations | Same, plus the OCCT spike PLAN.md §14 asks for. |
-| P1-T11 retry ladder | P1-T06. The observable contract (`RetryRung`, `Degraded`) exists; the mechanism is native. |
-| P1-T12 determinism audit | P1-T06. A miniature version runs in the contract battery today. |
-| P1-T13 repro-bundle capture | Best written against a kernel that can actually fail in interesting ways. |
-| P1-T14 corpus and nightly | P1-T06. |
-| P1-T15 benchmarks | P1-T06; benchmarking `FakeKernel` would measure nothing useful. |
-| P1-T16 shim extension procedure | P1-T03 and P1-T06. |
+Everything remaining is native, and blocked on the same thing.
 
----
+| Task | State |
+|---|---|
+| P1-T04 shim handle table | Blocked on the C++ toolchain — see section 6. |
+| P1-T05 exception firewall, `OSD::SetSignal` | The pattern is written (`openmcad_types.h`, `openmcad_occt.cpp`) and generated into all 49 entry points; it has never been compiled. |
+| P1-T06 OCCT operations | Blocked, and also wants the OCCT spike PLAN.md §14 asks for. |
+| P1-T11 retry ladder | Blocked on P1-T06. The observable contract — `RetryRung` on every result, `Degraded` for partial success, `rung` threaded through every fragile IDL operation — is done and tested. |
+| P1-T12 determinism audit | Blocked on P1-T06. The gate itself exists and runs on every build against `FakeKernel`. |
+| P1-T15 benchmarks | Blocked on P1-T06; benchmarking `FakeKernel` would measure the dispatcher, not the kernel. |
+
+Done since this document was first written: P1-T03 (IDL and generator), P1-T13 (repro bundles),
+P1-T14 (corpus runner, three fixtures, determinism gate), P1-T16 (`docs/specs/kernel-shim.md`).
 
 ## 6. The toolchain blocker
 
