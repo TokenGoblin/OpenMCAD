@@ -16,19 +16,44 @@ namespace OpenMCAD.Kernel.Diagnostics;
 /// </param>
 /// <param name="Directory">Where bundles are written.</param>
 /// <param name="MaxBundles">
-/// How many bundles to keep before refusing to write more. A runaway rebuild must not fill the
-/// disk; refusing is better than evicting, because the first failure is usually the interesting one.
+/// How many bundles to keep before refusing to write more, or zero for
+/// <see cref="DefaultMaxBundles"/>. A runaway rebuild must not fill the disk; refusing is better
+/// than evicting, because the first failure is usually the interesting one.
 /// </param>
-/// <param name="IncludeInputGeometry">
-/// Whether to write the input shapes as B-rep. This is what makes a bundle reproducible rather
+/// <param name="OmitInputGeometry">
+/// Whether to leave the input shapes out. Writing them is what makes a bundle reproducible rather
 /// than merely descriptive, and it is also nearly all of the cost.
 /// </param>
+/// <remarks>
+/// <para>
+/// <b>Every field means the safe thing when zero or false.</b> That is not a style choice. A
+/// <c>record struct</c> reaches its primary-constructor defaults only through the constructor, so
+/// <c>default</c> and <c>new ReproBundleOptions { Enabled = true }</c> both bypass them. An earlier
+/// version declared <c>MaxBundles = 50</c> and <c>IncludeInputGeometry = true</c> positionally,
+/// which meant the second of those -- code that reads exactly like the documented configuration --
+/// silently produced a writer that refused to capture anything, and would have dropped the input
+/// geometry if it had.
+/// </para>
+/// <para>
+/// Hence the negative form of <see cref="OmitInputGeometry"/>. A negative flag is mildly ugly and
+/// is the price of the field behaving correctly however it was constructed.
+/// </para>
+/// </remarks>
 public readonly record struct ReproBundleOptions(
     bool Enabled = false,
     string? Directory = null,
-    int MaxBundles = 50,
-    bool IncludeInputGeometry = true)
+    int MaxBundles = 0,
+    bool OmitInputGeometry = false)
 {
+    /// <summary>The bundle limit used when <see cref="MaxBundles"/> is not set.</summary>
+    public const int DefaultMaxBundles = 50;
+
+    /// <summary>Gets the bundle limit actually in force.</summary>
+    public int EffectiveMaxBundles => MaxBundles > 0 ? MaxBundles : DefaultMaxBundles;
+
+    /// <summary>Gets a value indicating whether input geometry is written.</summary>
+    public bool IncludeInputGeometry => !OmitInputGeometry;
+
     /// <summary>Gets options with capture switched on, writing to the default directory.</summary>
     /// <param name="directory">Where to write, or null for the default.</param>
     public static ReproBundleOptions On(string? directory = null)
@@ -124,11 +149,11 @@ public sealed class ReproBundleWriter(
                 return directory;
             }
 
-            if (_written.Count >= options.MaxBundles)
+            if (_written.Count >= options.EffectiveMaxBundles)
             {
                 _logger.LogDebug(
                     "Repro-bundle limit of {Max} reached; not capturing {Operation}",
-                    options.MaxBundles,
+                    options.EffectiveMaxBundles,
                     operation);
 
                 return null;
@@ -142,7 +167,7 @@ public sealed class ReproBundleWriter(
                 KernelVersion: capabilities.Version,
                 Tolerance: request.EffectiveTolerance,
                 CorrelationId: request.CorrelationId,
-                Definition: Describe(definition),
+                Definition: DefinitionDescriptor.ForManifest(definition),
                 Diagnostics: [.. diagnostics.Select(d => new ManifestDiagnostic(
                     d.Severity.ToString(), d.Code, d.Message, d.KernelDetail))],
                 InputShapes: inputs.Length,
@@ -153,32 +178,22 @@ public sealed class ReproBundleWriter(
                 JsonSerializer.Serialize(manifest, JsonOptions),
                 new UTF8Encoding(false));
 
-            if (options.IncludeInputGeometry && inputs.Length > 0)
-            {
-                string inputDirectory = Path.Combine(directory, "inputs");
-                System.IO.Directory.CreateDirectory(inputDirectory);
-
-                for (int i = 0; i < inputs.Length; i++)
-                {
-                    ImmutableArray<byte> bytes = writeBRep(inputs[i]);
-                    if (bytes.IsDefaultOrEmpty)
-                    {
-                        continue;
-                    }
-
-                    // Sequence-numbered, not tag-numbered: tags are not stable across runs, so a
-                    // tag-named file would make two captures of the same failure look different.
-                    string name = i.ToString("D2", CultureInfo.InvariantCulture) + ".brep";
-                    File.WriteAllBytes(Path.Combine(inputDirectory, name), [.. bytes]);
-                }
-            }
-
             File.WriteAllText(
                 Path.Combine(directory, "README.md"),
                 BuildReadme(operation, fingerprint),
                 new UTF8Encoding(false));
 
+            // Recorded before the geometry is written, not after. The geometry callback comes from
+            // a caller and may throw -- the catch-all below says as much -- and an exception there
+            // used to unwind past this line, leaving a bundle on disk the writer did not know
+            // about. The limit then never engaged, and every later recurrence rewrote the manifest
+            // with a count of one.
             _written.Add(directory);
+
+            if (options.IncludeInputGeometry && inputs.Length > 0)
+            {
+                WriteInputGeometry(directory, inputs, writeBRep, operation);
+            }
 
             _logger.LogWarning(
                 "Captured a repro bundle for {Operation} at {Directory}", operation, directory);
@@ -193,6 +208,46 @@ public sealed class ReproBundleWriter(
             // confusing failure would be strictly worse than losing the bundle.
             _logger.LogError(exception, "Could not capture a repro bundle for {Operation}", operation);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Writes the input shapes. Isolated so a failure here costs the geometry, not the bundle.
+    /// </summary>
+    private void WriteInputGeometry(
+        string directory,
+        ImmutableArray<KernelShape> inputs,
+        Func<KernelShape, ImmutableArray<byte>> writeBRep,
+        string operation)
+    {
+        string inputDirectory = Path.Combine(directory, "inputs");
+        System.IO.Directory.CreateDirectory(inputDirectory);
+
+        for (int i = 0; i < inputs.Length; i++)
+        {
+            try
+            {
+                ImmutableArray<byte> bytes = writeBRep(inputs[i]);
+                if (bytes.IsDefaultOrEmpty)
+                {
+                    continue;
+                }
+
+                // Sequence-numbered, not tag-numbered: tags are not stable across runs, so a
+                // tag-named file would make two captures of the same failure look different.
+                string name = i.ToString("D2", CultureInfo.InvariantCulture) + ".brep";
+                File.WriteAllBytes(Path.Combine(inputDirectory, name), [.. bytes]);
+            }
+            catch (Exception exception)
+            {
+                // A bundle missing one input is far better than no bundle. The shape may already
+                // have been released, which is exactly the situation worth recording.
+                _logger.LogWarning(
+                    exception,
+                    "Could not write input {Index} of the repro bundle for {Operation}",
+                    i,
+                    operation);
+            }
         }
     }
 
@@ -234,7 +289,11 @@ public sealed class ReproBundleWriter(
         StringBuilder material = new();
         material.Append(operation);
         material.Append('\n');
-        material.Append(Describe(definition));
+
+        // Handle tags are deliberately excluded. They are slot indices carrying a generation
+        // counter, so they change on every rebuild; including them gave the same failure a
+        // different fingerprint each time and defeated the deduplication entirely.
+        material.Append(DefinitionDescriptor.ForFingerprint(definition));
         material.Append('\n');
 
         // Codes and entity counts, not messages: a message may carry a formatted measurement that
@@ -250,9 +309,6 @@ public sealed class ReproBundleWriter(
         byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(material.ToString()));
         return Convert.ToHexStringLower(hash.AsSpan(0, 6));
     }
-
-    private static string Describe(IOperationDefinition? definition)
-        => definition?.ToString() ?? "(none)";
 
     private static string BuildReadme(string operation, string fingerprint) =>
         $"""

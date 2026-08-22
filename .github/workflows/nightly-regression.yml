@@ -9,13 +9,10 @@ on:
   schedule:
     # 03:00 UTC daily. No particular reason beyond being outside working hours.
     - cron: '0 3 * * *'
+  # No kernel input yet: 'occt' is not a runnable choice until P1-T06, and an input the job
+  # silently ignored would be worse than not offering it. Add it back, wired into the matrix with
+  # fromJSON, when there is a second kernel to choose.
   workflow_dispatch:
-    inputs:
-      kernel:
-        description: Which kernel to run the corpus against
-        type: choice
-        options: [fake, occt]
-        default: fake
 
 permissions:
   contents: read

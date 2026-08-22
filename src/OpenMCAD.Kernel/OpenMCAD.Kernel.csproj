@@ -5,6 +5,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="OpenMCAD.Kernel.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../OpenMCAD.Math/OpenMCAD.Math.csproj" />
   </ItemGroup>
 

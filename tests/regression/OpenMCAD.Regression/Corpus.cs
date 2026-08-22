@@ -185,6 +185,26 @@ public static class CorpusLoader
             throw new InvalidDataException($"{file.FullName}: a fixture needs at least one step.");
         }
 
+        HashSet<string> stepNames = new(StringComparer.Ordinal);
+        foreach (ScenarioStep step in fixture.Steps)
+        {
+            if (string.IsNullOrWhiteSpace(step.Name))
+            {
+                throw new InvalidDataException($"{file.FullName}: every step needs a name.");
+            }
+
+            // Later steps address earlier results by name, and the runner keeps them in a
+            // dictionary. A duplicate would silently replace the earlier handle without disposing
+            // it, which against a real kernel leaks a native shape for the life of the run -- and
+            // would also make the fixture mean something other than it reads.
+            if (!stepNames.Add(step.Name))
+            {
+                throw new InvalidDataException(
+                    $"{file.FullName}: two steps are both named '{step.Name}'. Step names address "
+                    + "results, so they must be unique within a fixture.");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(fixture.Description))
         {
             throw new InvalidDataException(

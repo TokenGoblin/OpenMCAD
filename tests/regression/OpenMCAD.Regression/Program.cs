@@ -59,6 +59,7 @@ internal static class Program
                 .ConfigureAwait(false);
 
             int failed = Report(first, verbose);
+            int diverged = 0;
 
             if (determinism)
             {
@@ -68,15 +69,31 @@ internal static class Program
                 ImmutableArray<FixtureResult> second = await RunAllAsync(kernelName, fixtures, verbose: false)
                     .ConfigureAwait(false);
 
-                failed += CompareRuns(first, second);
+                diverged = CompareRuns(first, second);
             }
 
+            // Counted separately. A fixture that fails in run one and passes in run two is one
+            // failing fixture and one divergence, not two failing fixtures -- summing them
+            // produced output like "FAIL 2 of 1 fixtures".
             Console.WriteLine();
-            Console.WriteLine(failed == 0
-                ? $"PASS  {fixtures.Length} fixtures"
-                : $"FAIL  {failed} of {fixtures.Length} fixtures");
 
-            return failed == 0 ? 0 : 1;
+            if (failed == 0 && diverged == 0)
+            {
+                Console.WriteLine($"PASS  {fixtures.Length} fixtures");
+                return 0;
+            }
+
+            if (failed > 0)
+            {
+                Console.WriteLine($"FAIL  {failed} of {fixtures.Length} fixtures");
+            }
+
+            if (diverged > 0)
+            {
+                Console.WriteLine($"FAIL  {diverged} of {fixtures.Length} fixtures were nondeterministic");
+            }
+
+            return 1;
         }
         catch (Exception exception) when (
             exception is DirectoryNotFoundException or InvalidDataException or IOException)
