@@ -1,7 +1,8 @@
 # Spec: the geometry kernel abstraction
 
-**Status:** implemented and tested against `FakeKernel`; **awaiting the review PLAN.md §14 asks for
-before the native shim is written against it.**
+**Status:** implemented and tested against `FakeKernel`; the C ABI is built and exercised against
+a real MSVC-compiled DLL. **Still awaiting the review PLAN.md §14 asks for before operation bodies
+are written against this surface.**
 
 **Tasks:** P1-T01, P1-T02, P1-T07, P1-T08, P1-T09, P1-T10.
 
@@ -164,21 +165,32 @@ Everything remaining is native, and blocked on the same thing.
 Done since this document was first written: P1-T03 (IDL and generator), P1-T13 (repro bundles),
 P1-T14 (corpus runner, three fixtures, determinism gate), P1-T16 (`docs/specs/kernel-shim.md`).
 
-## 6. The toolchain blocker
+## 6. The toolchain
 
-The development machine has .NET 10, git, and CMake, but **no MSVC C++ toolchain and no vcpkg**.
-Everything from P1-T04 onward is native, so none of it can be compiled or run locally. `build.ps1`
-detects this and skips the native step; CI builds the shim skeleton.
+Resolved. The development machine now has:
 
-Before Phase 1 can continue past this review:
+| | |
+|---|---|
+| Visual Studio Build Tools 2026 | 18.9.12112.369, MSVC toolset 14.51.36231 |
+| vcpkg | 2026-07-27, at `C:cpkg`, `VCPKG_ROOT` set |
+| Pinned dependencies | OCCT 8.0.1, Eigen 5.0.1 |
 
-1. Install Visual Studio Build Tools with the C++ workload.
-2. Bootstrap vcpkg and set `VCPKG_ROOT`.
-3. Replace the placeholder `builtin-baseline` in `native/vcpkg.json`
-   (`vcpkg x-update-baseline --add-initial-baseline`).
-4. Run the timeboxed OCCT spike PLAN.md §14 item 2 asks for, and write up
-   `docs/notes/occt-spike.md`.
+`build.ps1` now compiles `openmcad_occt.dll` with MSVC and it behaves as designed:
 
-Step 4 matters more than it looks. The spike is where assumptions about OCCT's version, build
-flags, threading, and determinism get verified — and this abstraction was designed around those
-assumptions without any of them having been tested.
+- All 49 IDL operations are exported, none unexpected.
+- The two-call buffer pattern works: a null buffer reports the required size, a sized buffer fills.
+- A stubbed operation returns `NOT_IMPLEMENTED` through the exception firewall with a diagnostic
+  naming the operation. Nothing unwinds across the C ABI.
+- Every generated null-pointer guard fires and names the offending parameter.
+
+One trap worth recording. CMake with no generator takes the first compiler on `PATH`, and this
+machine has MinGW from a WinLibs install. The first successful native build was therefore linked
+against the MinGW runtime — which cannot link against the MSVC-built OCCT that vcpkg produces for
+the `x64-windows` triplet. It would have failed at P1-T06 with a confusing link error. `build.ps1`
+now selects the generator explicitly from the installed Visual Studio version and asserts that
+CMake configured MSVC, so the failure cannot recur silently.
+
+Still to do before P1-T06: run `vcpkg install` for OCCT (a one-off build of an hour or more), and
+the timeboxed OCCT spike PLAN.md §14 asks for. The spike remains the point at which the
+assumptions this abstraction was designed around — OCCT's determinism, threading, and behaviour
+under the retry ladder — get tested rather than assumed.

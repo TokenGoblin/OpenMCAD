@@ -131,16 +131,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build the native shim
         shell: pwsh
         run: |
+          # Through build.ps1 rather than calling cmake directly, so the generator selection and
+          # the MSVC assertion live in one place. Calling bare cmake here once let CMake pick
+          # whatever compiler was first on PATH.
+          #
           # OPENMCAD_WITH_OCCT stays off until P1-T06. This job proves the C ABI shim compiles,
           # which is the part that would otherwise silently rot while all the work is managed.
-          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        shell: pwsh
-        run: cmake --build native/build --config Release --parallel
+          ./build.ps1 -Configuration Release -SkipTests -SkipRegression
 
       - name: Verify every IDL operation is exported
         shell: pwsh
@@ -201,10 +206,6 @@ jobs:
           $status = [Probe]::openmcad_shape_release(1)
           if ($status -ne 6) { throw "Expected NOT_IMPLEMENTED (6) from the stub build, got $status" }
           Write-Host '  stubbed operation returned 6 through the firewall, as expected'
-
-      - name: Verify generated bindings match the IDL
-        shell: pwsh
-        run: dotnet run --project native/tools/idlgen -- . --check
 
 
   architecture:

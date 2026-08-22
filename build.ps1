@@ -93,8 +93,80 @@ function Find-MsvcToolchain {
         -property installationPath 2>$null
 
     if ([string]::IsNullOrWhiteSpace($path)) { return $null }
-    return $path
+
+    $version = & $vswhere -latest -products * `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+        -property installationVersion 2>$null
+
+    return [pscustomobject]@{
+        Path    = $path.Trim()
+        Version = $version.Trim()
+        Major   = [int]($version.Split('.')[0])
+    }
 }
+
+<#
+.SYNOPSIS
+    Maps an installed Visual Studio major version to its CMake generator.
+
+.DESCRIPTION
+    Naming the generator is not optional, and getting this wrong is silent. CMake with no
+    generator picks the first compiler it finds on PATH, and on a machine that also has MinGW --
+    which a WinLibs install puts there -- that is g++, not MSVC. The build then succeeds and
+    produces a DLL linked against the MinGW runtime, which cannot link against the MSVC-built OCCT
+    that vcpkg produces for the x64-windows triplet. That happened here, and the only reason it
+    was caught is that the CMake output names the compiler it chose.
+#>
+function Get-CMakeGenerator {
+    param([int]$Major)
+
+    switch ($Major) {
+        18      { 'Visual Studio 18 2026' }
+        17      { 'Visual Studio 17 2022' }
+        16      { 'Visual Studio 16 2019' }
+        default { throw "Unsupported Visual Studio major version $Major. Add its generator to Get-CMakeGenerator." }
+    }
+}
+
+<#
+.SYNOPSIS
+    Fails the build unless CMake actually configured itself to use MSVC.
+
+.DESCRIPTION
+    A belt to the generator's braces. The failure this guards against does not look like a
+    failure, so it has to be asserted rather than assumed.
+#>
+function Assert-MsvcConfigured {
+    param([string]$BuildDirectory)
+
+    # CMakeCXXCompiler.cmake rather than CMakeCache.txt: the Visual Studio generator does not put
+    # CMAKE_CXX_COMPILER in the cache at all, so an assertion reading the cache passes vacuously
+    # under Ninja and throws under VS. This file is written by both.
+    $record = Get-ChildItem -Path $BuildDirectory -Recurse -Filter 'CMakeCXXCompiler.cmake' `
+        -ErrorAction SilentlyContinue | Select-Object -First 1
+
+    if (-not $record) {
+        throw "CMake wrote no CMakeCXXCompiler.cmake under $BuildDirectory."
+    }
+
+    $content = Get-Content $record.FullName -Raw
+
+    if ($content -notmatch 'set\(CMAKE_CXX_COMPILER_ID "([^"]+)"\)') {
+        throw 'CMakeCXXCompiler.cmake does not record a compiler id.'
+    }
+
+    $id = $Matches[1]
+    $path = if ($content -match 'set\(CMAKE_CXX_COMPILER "([^"]+)"\)') { $Matches[1] } else { '(unknown)' }
+
+    if ($id -ne 'MSVC') {
+        throw ("CMake configured the '$id' compiler at $path rather than MSVC. " +
+               'The native shim must be built with MSVC: vcpkg builds OCCT with it on the ' +
+               'x64-windows triplet, and the two runtimes cannot be linked together.')
+    }
+
+    Write-Host "    compiler: $id at $path"
+}
+
 
 # --- Clean ---------------------------------------------------------------------------------
 if ($Clean) {
@@ -143,11 +215,20 @@ elseif ($null -eq (Find-MsvcToolchain)) {
     Write-Skip 'no MSVC C++ toolchain found (install Visual Studio Build Tools with the C++ workload)'
 }
 else {
+    $msvc = Find-MsvcToolchain
+    $generator = Get-CMakeGenerator -Major $msvc.Major
+    Write-Host "    toolchain: $($msvc.Version) at $($msvc.Path)"
+    Write-Host "    generator: $generator"
+
     $cmakeArgs = @(
         '-S', (Join-Path $RepoRoot 'native')
         '-B', $NativeBuildDir
+
+        # Named explicitly. Without it CMake takes the first compiler on PATH, which on a machine
+        # that also has MinGW is g++ -- see Get-CMakeGenerator.
+        '-G', $generator
+        '-A', 'x64'
         '-DCMAKE_INSTALL_PREFIX=' + $NativeInstallDir
-        '-DCMAKE_BUILD_TYPE=' + $Configuration
     )
 
     if ($WithOcct) {
@@ -163,6 +244,8 @@ else {
     Write-Host "    cmake $($cmakeArgs -join ' ')"
     & cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE." }
+
+    Assert-MsvcConfigured -BuildDirectory $NativeBuildDir
 
     & cmake --build $NativeBuildDir --config $Configuration --parallel
     if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE." }

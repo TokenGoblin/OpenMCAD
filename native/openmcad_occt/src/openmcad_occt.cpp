@@ -71,14 +71,16 @@ OpenMcadStatus fail_null(const char* operation, const char* parameter) noexcept
 {
     try
     {
-        std::string detail = "the required output parameter '";
+        // Not "output parameter": the generated guards also cover input pointers such as a
+        // transform or a vector, and telling someone their input is an output wastes their time.
+        std::string detail = "the required pointer parameter '";
         detail.append(parameter != nullptr ? parameter : "?");
         detail.append("' was null");
         record_error(operation, detail.c_str());
     }
     catch (...)
     {
-        record_error(operation, "a required output parameter was null");
+        record_error(operation, "a required pointer parameter was null");
     }
 
     return OPENMCAD_ERROR_INVALID_INPUT;
