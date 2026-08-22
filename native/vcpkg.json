@@ -4,26 +4,40 @@
   "version-string": "0.1.0",
   "description": "Native dependencies for the OpenMCAD geometry and constraint-solver shims.",
   "homepage": "https://github.com/openmcad/openmcad",
+  "$comment-determinism": [
+    "PLAN.md 5.2.3 and ADR-0011 make reproducible geometry a hard requirement, and the two levers",
+    "are the OCCT version and its build flags. Both are pinned here.",
+    "",
+    "The tbb feature is deliberately NOT enabled. It brings Intel Threading Building Blocks into",
+    "OCCT and turns on internal parallelism, whose results can vary with scheduling. The plan is",
+    "explicit: disable parallel execution inside OCCT and enable it only where proven",
+    "deterministic. Turning it on later must come with the double-rebuild diff proving it changed",
+    "nothing.",
+    "",
+    "vtk is not enabled either. OCCT ships its own visualisation layer; ADR-0008 renders with",
+    "Direct3D 12 through our own pipeline, so linking a second one would be dead weight in the",
+    "installer and one more thing to licence-audit."
+  ],
   "dependencies": [
     {
       "name": "opencascade",
-      "comment": "ADR-0001. The geometry kernel. Pinned via builtin-baseline below; do not float it. Determinism (PLAN.md 5.2.3) depends on a fixed OCCT version AND fixed build flags."
+      "default-features": false,
+      "features": [
+        "freetype"
+      ]
     },
-    {
-      "name": "eigen3",
-      "comment": "ADR-0006. Required by planegcs. MPL2; the optional LGPL-licensed components are excluded by the default feature set. See PLAN.md 8.6."
-    }
+    "eigen3"
   ],
-  "builtin-baseline": "0000000000000000000000000000000000000000",
-  "overrides": [],
-  "vcpkg-configuration": {
-    "comment": [
-      "P0-T06 sets up the manifest only. Two things must be settled before the Phase 1 spike:",
-      "1. Replace builtin-baseline with a real vcpkg commit SHA. It is a placeholder so the",
-      "   manifest is syntactically complete without silently pinning to a version nobody chose.",
-      "   Run: vcpkg x-update-baseline --add-initial-baseline",
-      "2. Record the resolved OCCT version and its build flags in docs/notes/occt-spike.md.",
-      "   PLAN.md 14 asks for a three-day timeboxed spike before Phase 1 for exactly this reason."
-    ]
-  }
+  "$comment-features": [
+    "freetype: text rendering. Needed by the sketch text tool at P8-T02, and cheap to carry.",
+    "eigen3: required by planegcs (ADR-0006). MPL-2.0; its optional LGPL components are excluded",
+    "  by the default feature set, which THIRD-PARTY-NOTICES.md records."
+  ],
+  "builtin-baseline": "127402f1c75bb3d5ff6bce04b285faa4930a5aca",
+  "$comment-baseline": [
+    "The baseline fixes the vcpkg registry commit, and therefore the exact version of every",
+    "dependency. Update it deliberately -- vcpkg x-update-baseline -- and re-run the corpus with",
+    "--determinism afterwards, because a kernel version change is exactly the sort of thing that",
+    "silently perturbs topology."
+  ]
 }
