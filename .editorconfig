@@ -88,6 +88,11 @@ dotnet_diagnostic.CA5394.severity = none    # non-cryptographic Random
 dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA2007.severity = none
 dotnet_diagnostic.CS1591.severity = none
+# xUnit1051 wants TestContext.Current.CancellationToken threaded through every awaited call.
+# Almost every kernel method takes one as a trailing optional parameter, so honouring it would add
+# a token argument to several hundred call sites and bury the assertions. Test-level timeouts in
+# Microsoft.Testing.Platform already bound a hung test.
+dotnet_diagnostic.xUnit1051.severity = none
 
 [src/OpenMCAD.ViewModels/**.cs]
 # Data-bound properties must be instance members to be bindable, so "could be static" is not

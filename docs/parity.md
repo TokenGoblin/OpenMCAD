@@ -5,7 +5,7 @@ far better than a percentage, because a percentage of an asymptote is meaningles
 
 **Legend:** ⬜ not started · 🟨 partial · ✅ target met for the stated scope
 
-_Last updated: 2026-08-22, end of Phase 0._
+_Last updated: 2026-08-22, Phase 1 in progress (abstraction complete, native shim blocked)._
 
 | Capability area | Target | Lands in | Status |
 |---|---|---|---|
@@ -45,6 +45,10 @@ and "0% of everything" would misrepresent the state of the repository.
 | Shell that launches (ribbon, docking, placeholder viewport) | P0-T10 | ✅ |
 | Headless CLI | P0-T11 | ✅ |
 | Native shim skeleton (C ABI, exception firewall, two-call pattern) | P0-T06 | 🟨 authored and CI-built; OCCT not yet linked |
-| Geometry kernel behind `IGeometryKernel` | P1 | ⬜ |
+| Kernel abstraction, dispatcher, owning handles | P1-T01/02/07/08 | ✅ |
+| `FakeKernel` — deterministic analytic mock | P1-T09 | ✅ |
+| Kernel contract battery | P1-T10 | ✅ one implementation; second lands with P1-T06 |
+| OCCT behind `IGeometryKernel` | P1-T04/05/06 | ⬜ blocked on the C++ toolchain |
+| Retry ladder | P1-T11 | 🟨 contract implemented, mechanism blocked on P1-T06 |
 | Regression corpus | P1-T14 | ⬜ |
 | Topological naming | P3 | ⬜ |

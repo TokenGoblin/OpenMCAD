@@ -102,6 +102,39 @@ public sealed class ProjectGraphTests
     }
 
     [Fact]
+    public void EveryTestProjectFollowsTheNamingConvention()
+    {
+        // Directory.Build.props keys IsTestProject off a ".Tests" suffix, and build.ps1 discovers
+        // hosts by the same glob. A project named "FooTests" therefore compiles without xunit and
+        // is skipped by the runner -- it does not fail, it silently tests nothing, which is the
+        // worst failure mode a test suite can have. This caught exactly that during P1-T10.
+        List<string> violations =
+        [
+            .. ProjectCatalog.AllProjects()
+                .Select(p => Path.GetFileNameWithoutExtension(p.Name))
+                .Where(name => name.EndsWith("Tests", StringComparison.Ordinal)
+                    && !name.EndsWith(".Tests", StringComparison.Ordinal)),
+        ];
+
+        violations.Should().BeEmpty(
+            "a test project must be named <Something>.Tests or it is silently excluded from the run");
+    }
+
+    [Fact]
+    public void EveryProjectUnderTestsIsATestProject()
+    {
+        List<string> violations =
+        [
+            .. new DirectoryInfo(Path.Combine(ProjectCatalog.RepoRoot.FullName, "tests"))
+                .GetFiles("*.csproj", SearchOption.AllDirectories)
+                .Select(p => Path.GetFileNameWithoutExtension(p.Name))
+                .Where(name => !name.EndsWith(".Tests", StringComparison.Ordinal)),
+        ];
+
+        violations.Should().BeEmpty("everything under tests/ must be discoverable by the runner");
+    }
+
+    [Fact]
     public void NoProjectPinsItsOwnPackageVersions()
     {
         // P0-T03: central package management is the single source of truth. A Version attribute

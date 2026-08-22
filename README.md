@@ -23,7 +23,10 @@ AP242 and other exchange formats, sheet metal, surfacing, and a stable public pl
 | Headless CLI (`omcad`) | ✅ P0-T11 |
 | Structured logging and DI composition root | ✅ P0-T09 |
 | Native shim skeleton (CMake, C ABI, exception firewall) | ✅ P0-T06 — authored, not yet linked to OCCT |
-| Geometry kernel | ⬜ Phase 1 |
+| Kernel abstraction, single-threaded dispatcher, owning handles | ✅ P1-T01/02/07/08 |
+| `FakeKernel` — deterministic analytic mock | ✅ P1-T09 |
+| Kernel contract battery | ✅ P1-T10 |
+| OCCT geometry kernel | ⬜ P1-T04/05/06 — needs a C++ toolchain |
 | Viewport | ⬜ Phase 2 |
 | Documents, rebuild, topological naming | ⬜ Phase 3 |
 | Sketcher | ⬜ Phase 4 |

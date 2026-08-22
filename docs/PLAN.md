@@ -863,21 +863,21 @@ Four epochs, eighteen phases. Each phase states a **goal**, **exit criteria** (m
 
 **Tasks.**
 
-- [ ] **P1-T01** Define `IGeometryKernel` with the Phase 1 operation subset: primitives, extrude, revolve, boolean, fillet, chamfer, mass properties, bounding box, triangulate, BREP read/write, STEP write.
-- [ ] **P1-T02** Define `KernelShape`, `SubEntity`, `HistoryMap`, `OperationRole`, `OperationResult` (`Success`/`Failed`/`Degraded`) per §5.1.
-- [ ] **P1-T03** Design `kernel.api.json` IDL schema; write `tools/idlgen` emitting the C header, the C dispatch layer, and `[LibraryImport]` C# bindings.
-- [ ] **P1-T04** Implement the shim handle table: `uint64` tags with generation counters, stale-tag detection, reference counting, explicit release.
-- [ ] **P1-T05** Implement the exception firewall: catch `Standard_Failure`, `std::exception`, `...`; thread-local diagnostic record; `openmcad_last_error()`. Call `OSD::SetSignal` at init.
-- [ ] **P1-T06** Implement the Phase 1 operations in the shim, each returning a populated `HistoryMap` with deliberate `OperationRole` values. **A missing or `Unknown` role fails review.**
-- [ ] **P1-T07** `SafeHandle`-derived C# shape wrapper with deterministic release marshalled to the kernel thread.
-- [ ] **P1-T08** `KernelDispatcher`: dedicated thread, priority queue (interactive > rebuild > background), cancellation at operation boundaries, per-call instrumentation, off-thread debug assertion.
-- [ ] **P1-T09** `OpenMCAD.Kernel.Fake`: deterministic mock implementing the full interface with simple analytic geometry and a synthetic but *realistic* history map. This is a first-class deliverable, not a stub.
-- [ ] **P1-T10** Kernel contract test suite, parameterized over both implementations.
-- [ ] **P1-T11** Implement the retry ladder (§5.2.4) for boolean and fillet, with per-rung logging and the health metric.
-- [ ] **P1-T12** Determinism audit: pin OCCT build flags, disable nondeterministic parallelism, sort all returned collections by a stable geometric key. Add the double-rebuild diff test.
+- [x] **P1-T01** Define `IGeometryKernel` with the Phase 1 operation subset: primitives, extrude, revolve, boolean, fillet, chamfer, mass properties, bounding box, triangulate, BREP read/write, STEP write.
+- [x] **P1-T02** Define `KernelShape`, `SubEntity`, `HistoryMap`, `OperationRole`, `OperationResult` (`Success`/`Failed`/`Degraded`) per §5.1.
+- [ ] **P1-T03** Design `kernel.api.json` IDL schema; write `tools/idlgen` emitting the C header, the C dispatch layer, and `[LibraryImport]` C# bindings. *(Deliberately held until the §14 review of P1-T01/T02: the IDL describes the surface below `IGeometryKernel`, so generating against a design that may change would be wasted work. See `docs/specs/kernel-abstraction.md`.)*
+- [ ] **P1-T04** Implement the shim handle table: `uint64` tags with generation counters, stale-tag detection, reference counting, explicit release. *(Blocked: no MSVC toolchain on the dev machine.)*
+- [ ] **P1-T05** Implement the exception firewall: catch `Standard_Failure`, `std::exception`, `...`; thread-local diagnostic record; `openmcad_last_error()`. Call `OSD::SetSignal` at init. *(Blocked: no MSVC toolchain. The C-side pattern is already written in `native/openmcad_occt/src/openmcad_occt.cpp`.)*
+- [ ] **P1-T06** Implement the Phase 1 operations in the shim, each returning a populated `HistoryMap` with deliberate `OperationRole` values. **A missing or `Unknown` role fails review.** *(Blocked: no MSVC toolchain, and the §14 OCCT spike has not run.)*
+- [x] **P1-T07** `SafeHandle`-derived C# shape wrapper with deterministic release marshalled to the kernel thread.
+- [x] **P1-T08** `KernelDispatcher`: dedicated thread, priority queue (interactive > rebuild > background), cancellation at operation boundaries, per-call instrumentation, off-thread debug assertion.
+- [x] **P1-T09** `OpenMCAD.Kernel.Fake`: deterministic mock implementing the full interface with simple analytic geometry and a synthetic but *realistic* history map. This is a first-class deliverable, not a stub.
+- [x] **P1-T10** Kernel contract test suite, parameterized over both implementations.
+- [ ] **P1-T11** Implement the retry ladder (§5.2.4) for boolean and fillet, with per-rung logging and the health metric. *(Blocked on P1-T06. The observable contract — `RetryRung` on every result, `Degraded` for partial success — is implemented and tested.)*
+- [ ] **P1-T12** Determinism audit: pin OCCT build flags, disable nondeterministic parallelism, sort all returned collections by a stable geometric key. Add the double-rebuild diff test. *(Blocked on P1-T06. A miniature determinism check runs in the contract battery today.)*
 - [ ] **P1-T13** Repro-bundle capture: on kernel failure, serialize inputs + operation + parameters to a bundle directory.
 - [ ] **P1-T14** `tests/regression` runner and the first three corpus fixtures; wire into `nightly-regression.yml`.
-- [ ] **P1-T15** Benchmark harness for kernel operations; record a baseline.
+- [ ] **P1-T15** Benchmark harness for kernel operations; record a baseline. *(Blocked on P1-T06; benchmarking `FakeKernel` would measure nothing useful.)*
 - [ ] **P1-T16** Document the shim extension procedure in `docs/specs/kernel-shim.md` — every later phase adds operations, and this must be a 30-minute task, not an archaeology expedition.
 
 ---

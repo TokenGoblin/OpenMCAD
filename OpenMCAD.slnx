@@ -21,7 +21,11 @@
   <Folder Name="/tests/arch/">
     <Project Path="tests/arch/OpenMCAD.Architecture.Tests/OpenMCAD.Architecture.Tests.csproj" />
   </Folder>
+  <Folder Name="/tests/contract/">
+    <Project Path="tests/contract/OpenMCAD.Kernel.Contract.Tests/OpenMCAD.Kernel.Contract.Tests.csproj" />
+  </Folder>
   <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/OpenMCAD.Kernel.Tests/OpenMCAD.Kernel.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Math.Tests/OpenMCAD.Math.Tests.csproj" />
   </Folder>
 </Solution>
