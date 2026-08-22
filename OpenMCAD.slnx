@@ -1,0 +1,27 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/OpenMCAD.Api/OpenMCAD.Api.csproj" />
+    <Project Path="src/OpenMCAD.App/OpenMCAD.App.csproj" />
+    <Project Path="src/OpenMCAD.Cli/OpenMCAD.Cli.csproj" />
+    <Project Path="src/OpenMCAD.Core/OpenMCAD.Core.csproj" />
+    <Project Path="src/OpenMCAD.Exchange/OpenMCAD.Exchange.csproj" />
+    <Project Path="src/OpenMCAD.Interaction/OpenMCAD.Interaction.csproj" />
+    <Project Path="src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <Project Path="src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
+    <Project Path="src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
+    <Project Path="src/OpenMCAD.Math/OpenMCAD.Math.csproj" />
+    <Project Path="src/OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
+    <Project Path="src/OpenMCAD.Render/OpenMCAD.Render.csproj" />
+    <Project Path="src/OpenMCAD.Shell/OpenMCAD.Shell.csproj" />
+    <Project Path="src/OpenMCAD.Solver.Planegcs/OpenMCAD.Solver.Planegcs.csproj" />
+    <Project Path="src/OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
+    <Project Path="src/OpenMCAD.ViewModels/OpenMCAD.ViewModels.csproj" />
+  </Folder>
+  <Folder Name="/tests/" />
+  <Folder Name="/tests/arch/">
+    <Project Path="tests/arch/OpenMCAD.Architecture.Tests/OpenMCAD.Architecture.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/OpenMCAD.Math.Tests/OpenMCAD.Math.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,100 @@
+# OpenMCAD — P0-T03
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,xml,props,targets,csproj,config}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{ps1,cmd}]
+end_of_line = crlf
+
+[*.{h,hpp,c,cpp}]
+indent_size = 4
+
+[*.cs]
+indent_size = 4
+csharp_using_directive_placement = outside_namespace:warning
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = when_multiline:suggestion
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_expression_bodied_methods = when_on_single_line:suggestion
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_prefer_pattern_matching = true:suggestion
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_style_prefer_readonly_struct = true:suggestion
+csharp_style_prefer_readonly_struct_member = true:suggestion
+
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+dotnet_style_readonly_field = true:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_object_initializer = true:suggestion
+dotnet_style_collection_initializer = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+dotnet_style_coalesce_expression = true:suggestion
+
+# Naming
+dotnet_naming_rule.interfaces_start_with_i.severity = warning
+dotnet_naming_rule.interfaces_start_with_i.symbols = interface_symbols
+dotnet_naming_rule.interfaces_start_with_i.style = i_prefix
+dotnet_naming_symbols.interface_symbols.applicable_kinds = interface
+dotnet_naming_style.i_prefix.required_prefix = I
+dotnet_naming_style.i_prefix.capitalization = pascal_case
+
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_field_symbols
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_symbols.private_field_symbols.applicable_kinds = field
+dotnet_naming_symbols.private_field_symbols.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+# --- Analyzer severities -----------------------------------------------------
+# Escalated: these encode PLAN.md invariants.
+dotnet_diagnostic.CS8600.severity = error   # null-literal conversion
+dotnet_diagnostic.CS8602.severity = error   # dereference of possibly-null
+dotnet_diagnostic.CS8603.severity = error   # possible null return
+dotnet_diagnostic.CS8604.severity = error   # possible null argument
+dotnet_diagnostic.CS8618.severity = error   # non-nullable uninitialised
+dotnet_diagnostic.CA2007.severity = error   # ConfigureAwait — matters for ADR-0004 dispatcher
+dotnet_diagnostic.CA1063.severity = error   # IDisposable implemented correctly (SafeHandle work)
+dotnet_diagnostic.CA1816.severity = error   # GC.SuppressFinalize
+
+# Relaxed: noise for this codebase's style, not defects.
+dotnet_diagnostic.CA1002.severity = none    # do not expose List<T>
+dotnet_diagnostic.CA1031.severity = none    # catch general exception (boundary firewalls do this on purpose)
+dotnet_diagnostic.CA1034.severity = none    # nested types
+dotnet_diagnostic.CA1062.severity = none    # nullable reference types cover this
+dotnet_diagnostic.CA1303.severity = none    # literals as localised params (localisation lands P6-T12)
+dotnet_diagnostic.CA1848.severity = none    # LoggerMessage delegates — revisit in P15
+dotnet_diagnostic.CA1873.severity = none    # eager log-argument evaluation — same fix as CA1848, revisit in P15
+dotnet_diagnostic.CA5394.severity = none    # non-cryptographic Random
+
+[tests/**/*.cs]
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.CS1591.severity = none
+
+[src/OpenMCAD.ViewModels/**.cs]
+# Data-bound properties must be instance members to be bindable, so "could be static" is not
+# actionable advice here. Scoped to this layer only, not disabled repository-wide.
+dotnet_diagnostic.CA1822.severity = none
+
+[src/OpenMCAD.Shell/**.cs]
+# XAML-generated partials and event handlers routinely trip these.
+dotnet_diagnostic.CA1822.severity = none
+dotnet_diagnostic.CA1812.severity = none

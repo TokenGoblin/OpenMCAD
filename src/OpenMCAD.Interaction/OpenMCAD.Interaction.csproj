@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenMCAD.Render/OpenMCAD.Render.csproj" />
+    <ProjectReference Include="../OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
+  </ItemGroup>
+
+</Project>

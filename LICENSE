@@ -1,21 +1,43 @@
-MIT License
+OpenMCAD — LICENCE NOT YET DETERMINED
+=====================================
 
-Copyright (c) 2026 The OpenMCAD Authors
+No licence has been chosen for this project yet. This file is a deliberate placeholder,
+not an oversight.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Until a licence is committed here, no permission to use, copy, modify, or distribute this
+software is granted. Absence of a licence means all rights reserved by default; do not
+assume otherwise.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+WHY THIS IS OPEN
+----------------
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The plan this project is built from (docs/PLAN.md) points in two directions at once. The
+name says open source. Section 17 of the plan schedules licensing and activation work
+(node-locked and floating licences, trial mode, offline activation), which is proprietary
+product work. Both are legitimate products. They are not the same product, and the choice
+belongs to the project owner.
+
+The options and the constraint each one places on the dependencies are set out in:
+
+    docs/adr/0017-project-name-and-licence.md
+
+WHAT IS ALREADY TRUE
+--------------------
+
+The architecture does not foreclose any option. The geometry kernel (OCCT) and the
+constraint solver (planegcs) are both LGPL-2.1 (OCCT with the Open CASCADE Exception), and
+both are confined to separately replaceable dynamic libraries by design -- see ADR-0003 and
+ADR-0006. That was decided for engineering reasons and happens to keep every licensing door
+open.
+
+BEFORE FIRST PUBLIC RELEASE
+---------------------------
+
+Section 8.6 of the plan requires legal review of the licence posture before first public
+release, not after. That instruction stands.
+
+THIRD-PARTY COMPONENTS
+----------------------
+
+See THIRD-PARTY-NOTICES.md. Third-party components carry their own licences, which apply
+regardless of what is eventually chosen for this project.

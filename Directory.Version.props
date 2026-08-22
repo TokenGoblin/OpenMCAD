@@ -1,0 +1,44 @@
+<Project>
+  <!--
+    P0-T14 — Versioning scheme.
+
+    OpenMCAD uses Semantic Versioning 2.0.0 with build metadata:
+
+        <major>.<minor>.<patch>[-<prerelease>][+<buildmetadata>]
+
+      major     Breaking change to the public API surface (OpenMCAD.Api) or to the
+                on-disk file format in a way that is not migratable. Rare, deliberate.
+      minor     New capability, backwards compatible. One bump per shipped phase, typically.
+      patch     Bug fixes only.
+      prerelease  alpha (Epoch A), beta (Epoch B/C), rc (pre-release candidates).
+      buildmetadata  Set by CI only: <yyyyMMdd>.<buildnumber>.<shortsha>. Never set locally.
+
+    The FILE FORMAT schema version (PLAN.md 5.8) is versioned independently and is an
+    integer, not a semver. Do not couple them.
+
+    The PUBLIC API version (OpenMCAD.Api, ADR-0012) tracks this file's major.minor and is
+    gated by the api-surface baseline check in CI.
+  -->
+  <PropertyGroup>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>alpha</VersionSuffix>
+
+    <!-- CI overrides this with: <yyyyMMdd>.<run_number>.<shortsha> -->
+    <BuildMetadata Condition="'$(BuildMetadata)' == ''"></BuildMetadata>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!-- Assembly/File version stay numeric-only; informational carries the full semver. -->
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+  </PropertyGroup>
+
+  <Target Name="OpenMCADStampInformationalVersion" BeforeTargets="GetAssemblyVersion">
+    <PropertyGroup>
+      <_OmSemVer>$(VersionPrefix)</_OmSemVer>
+      <_OmSemVer Condition="'$(VersionSuffix)' != ''">$(_OmSemVer)-$(VersionSuffix)</_OmSemVer>
+      <_OmSemVer Condition="'$(BuildMetadata)' != ''">$(_OmSemVer)+$(BuildMetadata)</_OmSemVer>
+      <InformationalVersion>$(_OmSemVer)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>

@@ -1,0 +1,80 @@
+<Project>
+
+  <Import Project="Directory.Version.props" />
+
+  <PropertyGroup>
+    <!-- ADR-0014: .NET 10 LTS, C# 14, nullable + warnings-as-errors from the first commit.
+         Only OpenMCAD.Shell overrides TargetFramework to net10.0-windows. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>9999</WarningLevel>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+    <!-- Determinism (ADR-0011: rebuild determinism starts with build determinism). -->
+    <Deterministic>true</Deterministic>
+    <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Central package management (P0-T03). -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+
+    <!-- Source Link / symbols. -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- Precision rule (PLAN.md 4.4): geometry is double. Keep IEEE semantics honest. -->
+    <Prefer32Bit>false</Prefer32Bit>
+
+    <Company>OpenMCAD</Company>
+    <Product>OpenMCAD</Product>
+    <Authors>OpenMCAD contributors</Authors>
+    <NeutralLanguage>en-US</NeutralLanguage>
+
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+    <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+  </PropertyGroup>
+
+  <!-- Library defaults; test/app projects override below. -->
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true'">
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Tests are allowed to skip XML docs and to use non-public API patterns freely. -->
+    <NoWarn>$(NoWarn);CA1707;CA2007;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+    <!-- xunit.v3 runs on Microsoft.Testing.Platform. VSTest (Microsoft.NET.Test.Sdk +
+         xunit.runner.visualstudio) is not supported on the .NET 10 SDK, so neither is
+         referenced; the test project builds as its own executable test host. -->
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+    <PackageReference Include="FluentAssertions" />
+    <Using Include="Xunit" />
+    <Using Include="FluentAssertions" />
+  </ItemGroup>
+
+  <!-- Source Link matters for binaries that leave this machine, and only CI produces those.
+       Enabling it on a checkout with no commit or no remote emits three warnings per project and
+       nothing useful, so it is gated on the CI flag rather than made unconditional. -->
+  <ItemGroup Condition="'$(ContinuousIntegrationBuild)' == 'true'">
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

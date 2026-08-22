@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "openmcad-native",
+  "version-string": "0.1.0",
+  "description": "Native dependencies for the OpenMCAD geometry and constraint-solver shims.",
+  "homepage": "https://github.com/openmcad/openmcad",
+  "dependencies": [
+    {
+      "name": "opencascade",
+      "comment": "ADR-0001. The geometry kernel. Pinned via builtin-baseline below; do not float it. Determinism (PLAN.md 5.2.3) depends on a fixed OCCT version AND fixed build flags."
+    },
+    {
+      "name": "eigen3",
+      "comment": "ADR-0006. Required by planegcs. MPL2; the optional LGPL-licensed components are excluded by the default feature set. See PLAN.md 8.6."
+    }
+  ],
+  "builtin-baseline": "0000000000000000000000000000000000000000",
+  "overrides": [],
+  "vcpkg-configuration": {
+    "comment": [
+      "P0-T06 sets up the manifest only. Two things must be settled before the Phase 1 spike:",
+      "1. Replace builtin-baseline with a real vcpkg commit SHA. It is a placeholder so the",
+      "   manifest is syntactically complete without silently pinning to a version nobody chose.",
+      "   Run: vcpkg x-update-baseline --add-initial-baseline",
+      "2. Record the resolved OCCT version and its build flags in docs/notes/occt-spike.md.",
+      "   PLAN.md 14 asks for a three-day timeboxed spike before Phase 1 for exactly this reason."
+    ]
+  }
+}

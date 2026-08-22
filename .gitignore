@@ -1,0 +1,33 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+native/build/
+native/install/
+*.user
+*.suo
+.vs/
+.vscode/
+.idea/
+
+# vcpkg
+vcpkg_installed/
+native/third_party/vcpkg/
+
+# Test / tooling output
+TestResults/
+BenchmarkDotNet.Artifacts/
+coverage*.xml
+*.trx
+repro-bundles/
+
+# Logs
+logs/
+*.binlog
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store

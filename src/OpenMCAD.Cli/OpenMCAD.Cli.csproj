@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Not "openmcad": the shell produces OpenMCAD.exe, and Windows paths are
+         case-insensitive, so the two would collide the moment an installer puts both in one
+         directory (P17-T01). "omcad" is short to type in the CI and test invocations that use
+         it constantly, and unambiguous. -->
+    <AssemblyName>omcad</AssemblyName>
+    <RootNamespace>OpenMCAD.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenMCAD.App/OpenMCAD.App.csproj" />
+    <ProjectReference Include="../OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
+    <ProjectReference Include="../OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+  </ItemGroup>
+
+</Project>

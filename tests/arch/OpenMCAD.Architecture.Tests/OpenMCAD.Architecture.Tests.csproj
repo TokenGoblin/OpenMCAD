@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Must load the Windows-TFM shell assembly to assert on it. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NetArchTest.Rules" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The project-graph rules read the csproj files themselves, so the tests need to know
+         where the repository root is at run time. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>RepoRoot</_Parameter1>
+      <_Parameter2>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../'))</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.Math/OpenMCAD.Math.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Solver.Planegcs/OpenMCAD.Solver.Planegcs.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Core/OpenMCAD.Core.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Exchange/OpenMCAD.Exchange.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Render/OpenMCAD.Render.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Interaction/OpenMCAD.Interaction.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Api/OpenMCAD.Api.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.App/OpenMCAD.App.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.ViewModels/OpenMCAD.ViewModels.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Shell/OpenMCAD.Shell.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Cli/OpenMCAD.Cli.csproj" />
+  </ItemGroup>
+
+</Project>

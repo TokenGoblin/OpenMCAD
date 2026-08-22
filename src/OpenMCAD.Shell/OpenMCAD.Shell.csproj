@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- ADR-0007 / ADR-0014: the ONLY project permitted a Windows-specific TFM. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>OpenMCAD</AssemblyName>
+    <RootNamespace>OpenMCAD.Shell</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- XAML-generated partials do not carry XML docs. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fluent.Ribbon" />
+    <PackageReference Include="Dirkster.AvalonDock" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../OpenMCAD.ViewModels/OpenMCAD.ViewModels.csproj" />
+    <ProjectReference Include="../OpenMCAD.Render/OpenMCAD.Render.csproj" />
+    <ProjectReference Include="../OpenMCAD.App/OpenMCAD.App.csproj" />
+    <ProjectReference Include="../OpenMCAD.Interaction/OpenMCAD.Interaction.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,196 @@
+name: CI
+
+# P0-T08. Target: under 15 minutes per PR (PLAN.md 8.4).
+#
+# This workflow deliberately runs the same build.ps1 a developer runs. Divergence between the
+# local build and the CI build is how "works on my machine" becomes a weekly event, and it is
+# cheap to prevent at the start and expensive to unpick later.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.configuration }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Source Link and the build-metadata stamp both want real history.
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      # OCCT takes a long time to build from source, so the binary cache is not a nicety.
+      # Not exercised until P1-T06 turns OPENMCAD_WITH_OCCT on, but wired now so the first
+      # kernel build does not also debug its own caching.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Compute build metadata
+        id: meta
+        shell: pwsh
+        run: |
+          # P0-T14: <yyyyMMdd>.<run number>.<short sha>. Set only in CI; never locally.
+          $stamp = "{0}.{1}.{2}" -f (Get-Date -Format 'yyyyMMdd'), $env:GITHUB_RUN_NUMBER, $env:GITHUB_SHA.Substring(0, 7)
+          "value=$stamp" >> $env:GITHUB_OUTPUT
+          Write-Host "BuildMetadata = $stamp"
+
+      - name: Build and test
+        shell: pwsh
+        env:
+          BuildMetadata: ${{ steps.meta.outputs.value }}
+          ContinuousIntegrationBuild: true
+        run: ./build.ps1 -Configuration ${{ matrix.configuration }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.configuration }}
+          path: artifacts/test-results/**/*.trx
+          if-no-files-found: warn
+
+      - name: Publish application
+        if: matrix.configuration == 'Release'
+        shell: pwsh
+        env:
+          BuildMetadata: ${{ steps.meta.outputs.value }}
+        run: |
+          dotnet publish src/OpenMCAD.Shell/OpenMCAD.Shell.csproj `
+            --configuration Release --no-build `
+            --output artifacts/publish/shell
+          dotnet publish src/OpenMCAD.Cli/OpenMCAD.Cli.csproj `
+            --configuration Release --no-build `
+            --output artifacts/publish/cli
+
+      - name: Smoke-test the published CLI
+        if: matrix.configuration == 'Release'
+        shell: pwsh
+        run: |
+          # PLAN.md 8.4 requires main to always be installable. The cheapest possible proof that
+          # the published output actually runs, rather than merely having been produced.
+          $output = & ./artifacts/publish/cli/omcad.exe version
+          $output | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw "omcad version exited with $LASTEXITCODE" }
+          if ($output -notmatch 'OpenMCAD') { throw 'omcad version did not identify itself' }
+
+      - name: Upload artifact
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmcad-${{ steps.meta.outputs.value }}
+          path: artifacts/publish/**
+          if-no-files-found: error
+
+  native:
+    name: Native shims
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          # OPENMCAD_WITH_OCCT stays off until P1-T06. This job proves the C ABI shim compiles,
+          # which is the part that would otherwise silently rot while all the work is managed.
+          cmake -S native -B native/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build native/build --config Release --parallel
+
+      - name: Verify the expected exports exist
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path native/build -Recurse -Filter openmcad_occt.dll | Select-Object -First 1
+          if (-not $dll) { throw 'openmcad_occt.dll was not produced' }
+          Write-Host "Built $($dll.FullName)"
+
+          # dumpbin comes from the MSVC toolchain that just built the DLL.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $dumpbin = Get-ChildItem -Path "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
+
+          if (-not $dumpbin) { Write-Warning 'dumpbin not found; skipping export check'; exit 0 }
+
+          $exports = & $dumpbin.FullName /EXPORTS $dll.FullName | Out-String
+          foreach ($name in @('openmcad_version', 'openmcad_last_error', 'openmcad_initialize', 'openmcad_shutdown')) {
+            if ($exports -notmatch $name) { throw "Expected export '$name' is missing" }
+            Write-Host "  export ok: $name"
+          }
+
+  architecture:
+    name: Architecture rules
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build
+        run: dotnet build OpenMCAD.slnx --configuration Debug --nologo
+
+      - name: Run architecture tests
+        shell: pwsh
+        run: |
+          # Run separately from the main suite so a layering violation is reported as such,
+          # rather than buried among unrelated failures.
+          & ./artifacts/bin/OpenMCAD.Architecture.Tests/debug/OpenMCAD.Architecture.Tests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Architecture rules violated (exit $LASTEXITCODE)" }

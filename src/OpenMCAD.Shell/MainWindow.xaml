@@ -1,0 +1,123 @@
+<fluent:RibbonWindow x:Class="OpenMCAD.Shell.MainWindow"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                     xmlns:fluent="urn:fluent-ribbon"
+                     xmlns:avalondock="https://github.com/Dirkster99/AvalonDock"
+                     xmlns:local="clr-namespace:OpenMCAD.Shell"
+                     xmlns:vm="clr-namespace:OpenMCAD.ViewModels;assembly=OpenMCAD.ViewModels"
+                     mc:Ignorable="d"
+                     d:DataContext="{d:DesignInstance Type=vm:MainWindowViewModel}"
+                     Title="{Binding Title}"
+                     Height="800"
+                     Width="1280"
+                     WindowStartupLocation="CenterScreen">
+
+    <fluent:RibbonWindow.Resources>
+
+        <!--
+            Implicit template: any ToolPanel placed in the docking manager renders like this.
+            An implicit DataTemplate keyed on the view model type is used in preference to
+            DockingManager.LayoutItemTemplate, because that property applies to every layout item
+            and would therefore also replace the viewport document with this template.
+        -->
+        <DataTemplate DataType="{x:Type vm:ToolPanel}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock Margin="12"
+                           TextWrapping="Wrap"
+                           Opacity="0.75"
+                           Text="{Binding Placeholder}" />
+            </ScrollViewer>
+        </DataTemplate>
+
+        <Style x:Key="AnchorableItemStyle" TargetType="{x:Type avalondock:LayoutAnchorableItem}">
+            <!-- AvalonDock projects the source item onto the LayoutAnchorable, so Title and
+                 ContentId are read from the Model, not from Model.Content. -->
+            <Setter Property="Title" Value="{Binding Model.Title}" />
+            <Setter Property="ContentId" Value="{Binding Model.ContentId}" />
+            <Setter Property="CanClose" Value="False" />
+        </Style>
+
+        <Style x:Key="DocumentItemStyle" TargetType="{x:Type avalondock:LayoutDocumentItem}">
+            <Setter Property="CanClose" Value="False" />
+        </Style>
+
+        <local:LayoutItemStyleSelector x:Key="LayoutItemStyles"
+                                       AnchorableStyle="{StaticResource AnchorableItemStyle}"
+                                       DocumentStyle="{StaticResource DocumentItemStyle}" />
+    </fluent:RibbonWindow.Resources>
+
+    <DockPanel>
+
+        <!-- Ribbon (P0-T10 skeleton; the full command surface lands in P6-T01). -->
+        <fluent:Ribbon DockPanel.Dock="Top">
+            <fluent:Ribbon.Menu>
+                <fluent:Backstage Header="File">
+                    <fluent:BackstageTabControl>
+                        <fluent:BackstageTabItem Header="About">
+                            <StackPanel Margin="24">
+                                <TextBlock Text="{Binding Title}" FontSize="24" />
+                                <TextBlock Margin="0,12,0,0"
+                                           TextWrapping="Wrap"
+                                           MaxWidth="640"
+                                           Text="A parametric, feature-based mechanical CAD system for Windows. This is the Phase 0 skeleton: the shell launches, logs, and docks. No geometry exists yet." />
+                            </StackPanel>
+                        </fluent:BackstageTabItem>
+                    </fluent:BackstageTabControl>
+                </fluent:Backstage>
+            </fluent:Ribbon.Menu>
+
+            <fluent:RibbonTabItem Header="Home">
+                <fluent:RibbonGroupBox Header="Sketch">
+                    <fluent:Button Header="New Sketch" IsEnabled="False" SizeDefinition="Large" />
+                </fluent:RibbonGroupBox>
+                <fluent:RibbonGroupBox Header="Features">
+                    <fluent:Button Header="Extrude" IsEnabled="False" SizeDefinition="Large" />
+                    <fluent:Button Header="Revolve" IsEnabled="False" SizeDefinition="Large" />
+                    <fluent:Button Header="Fillet" IsEnabled="False" SizeDefinition="Large" />
+                </fluent:RibbonGroupBox>
+            </fluent:RibbonTabItem>
+
+            <fluent:RibbonTabItem Header="View">
+                <fluent:RibbonGroupBox Header="Orientation">
+                    <fluent:Button Header="Zoom to Fit" IsEnabled="False" SizeDefinition="Large" />
+                </fluent:RibbonGroupBox>
+            </fluent:RibbonTabItem>
+        </fluent:Ribbon>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem Content="{Binding StatusText}" />
+        </StatusBar>
+
+        <!-- Docking layout (P0-T10 skeleton; persisted per-user layouts land in P6-T02). -->
+        <avalondock:DockingManager x:Name="Docking"
+                                   AnchorablesSource="{Binding Panels}"
+                                   LayoutItemContainerStyleSelector="{StaticResource LayoutItemStyles}">
+            <avalondock:LayoutRoot>
+                <avalondock:LayoutPanel Orientation="Horizontal">
+                    <avalondock:LayoutAnchorablePaneGroup DockWidth="340" Orientation="Vertical">
+                        <avalondock:LayoutAnchorablePane />
+                    </avalondock:LayoutAnchorablePaneGroup>
+                    <avalondock:LayoutDocumentPaneGroup>
+                        <avalondock:LayoutDocumentPane>
+                            <avalondock:LayoutDocument Title="Viewport" ContentId="Viewport" CanClose="False">
+                                <!-- Replaced by the HwndHost-hosted D3D12 surface in P2-T02. -->
+                                <Border Background="#FF2B2F36">
+                                    <TextBlock Foreground="#FFB8BEC9"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="520"
+                                               TextAlignment="Center"
+                                               Text="{Binding DataContext.ViewportPlaceholder, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                </Border>
+                            </avalondock:LayoutDocument>
+                        </avalondock:LayoutDocumentPane>
+                    </avalondock:LayoutDocumentPaneGroup>
+                </avalondock:LayoutPanel>
+            </avalondock:LayoutRoot>
+        </avalondock:DockingManager>
+
+    </DockPanel>
+</fluent:RibbonWindow>

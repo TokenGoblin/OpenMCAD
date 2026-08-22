@@ -1,0 +1,33 @@
+* text=auto eol=lf
+
+*.sln        text eol=crlf
+*.csproj     text eol=lf
+*.props      text eol=lf
+*.targets    text eol=lf
+*.cs         text eol=lf diff=csharp
+*.xaml       text eol=lf
+*.ps1        text eol=crlf
+*.cmd        text eol=crlf
+*.sh         text eol=lf
+*.h          text eol=lf
+*.cpp        text eol=lf
+*.md         text eol=lf
+*.json       text eol=lf
+*.yml        text eol=lf
+
+# Regression corpus binaries: git-lfs (P0-T01, per PLAN.md 8.2)
+*.ompart     filter=lfs diff=lfs merge=lfs -text
+*.omasm      filter=lfs diff=lfs merge=lfs -text
+*.omdrw      filter=lfs diff=lfs merge=lfs -text
+*.brep       filter=lfs diff=lfs merge=lfs -text
+*.step       filter=lfs diff=lfs merge=lfs -text
+*.stp        filter=lfs diff=lfs merge=lfs -text
+*.iges       filter=lfs diff=lfs merge=lfs -text
+*.igs        filter=lfs diff=lfs merge=lfs -text
+*.stl        filter=lfs diff=lfs merge=lfs -text
+*.3mf        filter=lfs diff=lfs merge=lfs -text
+*.x_t        filter=lfs diff=lfs merge=lfs -text
+*.x_b        filter=lfs diff=lfs merge=lfs -text
+*.sat        filter=lfs diff=lfs merge=lfs -text
+*.png        filter=lfs diff=lfs merge=lfs -text
+*.mesh       filter=lfs diff=lfs merge=lfs -text
