@@ -1409,7 +1409,7 @@ Read this before starting any session.
 For the first Claude Code session on an empty repository, in order:
 
 1. **P0-T01 → P0-T14.** Finish Phase 0 completely. Do not start Phase 1 with a half-configured repo — everything after compounds on it.
-2. Before Phase 1, spend a timeboxed **three days on an OCCT spike** outside the repo: build it via vcpkg, call five operations from a throwaway C++ program, and confirm the version, build flags, and behavior you are about to design around. Write it up in `docs/notes/occt-spike.md`. Assumptions verified here are worth ten times what they cost.
+2. ~~Before Phase 1, spend a timeboxed **three days on an OCCT spike** outside the repo~~ — **done**, see `docs/notes/occt-spike.md`. OCCT 8.0.1 via vcpkg, TBB off, seven operations exercised. Determinism confirmed bit-for-bit within and across processes. Three findings change how P1-T06 must be written: untouched entities are absent from the history map, a blend face is not reachable from the faces it joins, and `Build()` failure does not always throw.
 3. **P1-T01 → P1-T03** define the shape of everything downstream. Review the `IGeometryKernel` surface and the IDL design with a human before implementing against them.
 
 The single most important thing this plan asks for: **build the regression corpus from Phase 1, and never let a fix ship without a fixture.** Everything else is recoverable. That is the discipline that separates a CAD system that gets better every year from one that oscillates forever.

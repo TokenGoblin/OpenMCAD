@@ -124,8 +124,10 @@ Answering these before P1-T06 is cheaper than answering them after.
    kernel-specific concept in the kernel-agnostic result type a leak, or the honest reporting of
    something the user genuinely needs to know?
 
-5. **`WriteStepAsync` takes a `Stream`.** Convenient and testable, but OCCT's STEP writer wants a
-   file path and will need a temporary file. Worth changing to a path before the shim is written.
+5. ~~**`WriteStepAsync` takes a `Stream`.**~~ **Settled by the spike.** `STEPControl_Writer::Write`
+   takes a path, confirmed. The IDL already declares `write_step` with a `utf8` path parameter, so
+   the shim is right; the managed `WriteStepAsync(Stream)` will marshal through a temporary file.
+   Worth revisiting only if temporary-file churn shows up in a profile.
 
 ---
 
@@ -190,7 +192,19 @@ the `x64-windows` triplet. It would have failed at P1-T06 with a confusing link 
 now selects the generator explicitly from the installed Visual Studio version and asserts that
 CMake configured MSVC, so the failure cannot recur silently.
 
-Still to do before P1-T06: run `vcpkg install` for OCCT (a one-off build of an hour or more), and
-the timeboxed OCCT spike PLAN.md §14 asks for. The spike remains the point at which the
-assumptions this abstraction was designed around — OCCT's determinism, threading, and behaviour
-under the retry ladder — get tested rather than assumed.
+Both remaining items are done. OCCT 8.0.1 is built and installed (42 minutes, cached), and the
+§14 spike has run — see `docs/notes/occt-spike.md`.
+
+The spike confirmed the assumption that mattered most: **OCCT is deterministic**, bit-for-bit,
+within a process and across processes. ADR-0011 and everything resting on it — the geometry cache,
+undo, the naming layer — have a measured basis rather than a hope.
+
+It also found three things that change how P1-T06 must be written, none of which change this
+design:
+
+1. Untouched entities are **absent** from OCCT's history map, so `OperationRole.Retained` must be
+   filled by a survivor sweep in the shim rather than read from the map.
+2. A blend face is reachable from the edge it replaced but **not** from the faces it lies between,
+   so `AddNewBetween` must be fed adjacency computed from the input before the operation runs.
+3. An impossible blend returns `IsDone() == false` rather than throwing, so the exception firewall
+   is necessary but not sufficient — every `Build()` needs an explicit check.

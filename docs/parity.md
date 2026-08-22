@@ -48,7 +48,8 @@ and "0% of everything" would misrepresent the state of the repository.
 | Kernel abstraction, dispatcher, owning handles | P1-T01/02/07/08 | ✅ |
 | `FakeKernel` — deterministic analytic mock | P1-T09 | ✅ |
 | Kernel contract battery | P1-T10 | ✅ one implementation; second lands with P1-T06 |
-| OCCT behind `IGeometryKernel` | P1-T04/05/06 | ⬜ blocked on the C++ toolchain |
+| OCCT built and verified (spike) | §14 | ✅ 8.0.1, deterministic, TBB off |
+| OCCT behind `IGeometryKernel` | P1-T04/05/06 | ⬜ unblocked; next |
 | Retry ladder | P1-T11 | 🟨 contract implemented, mechanism blocked on P1-T06 |
 | C ABI generated from a single IDL | P1-T03 | ✅ 49 operations, five artefacts |
 | Repro-bundle capture on kernel failure | P1-T13 | ✅ |

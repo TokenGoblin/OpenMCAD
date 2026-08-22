@@ -170,6 +170,29 @@ Ordering is part of the contract. Return entity collections in a canonical, geom
 so sorting by tag is reproducible. Determinism starts here (ADR-0011); a face set returned in
 memory-allocation order silently makes every downstream name unstable.
 
+### Three things the OCCT spike found
+
+Measured, not assumed — see `docs/notes/occt-spike.md`. Each one is a silent-wrong-answer path,
+which is why they are called out here rather than left to be rediscovered.
+
+**Untouched entities are absent from the history map.** Cutting a cylinder from a box, OCCT
+reported 2 of 6 target faces as modified, none as deleted, and said *nothing at all* about the
+other 4. `OperationRole.Retained` therefore cannot be read from OCCT. After the kernel call, sweep
+the input entities: any with no history entry and not deleted survived, and OCCT keeps the same
+`TShape` for them, so `TopoDS_Shape::IsSame` against a map of the output finds them. Write this
+once as a helper. Omitting it produces history maps missing most of their entries and names that
+fail to resolve through operations that did not touch them.
+
+**A blend face is not reachable from the faces it joins.** `Generated(filleted edge)` gives the
+blend face; `Generated(adjacent face)` gives nothing. Since `AddNewBetween` wants the two faces,
+capture edge-to-face adjacency from the **input** shape with `TopExp::MapShapesAndAncestors`
+*before* building — afterwards the input edge is gone and the relationship cannot be recovered.
+
+**`Build()` failing does not always throw.** A 50 mm fillet on a 10 mm box returned
+`IsDone() == false` and left the shape unmodified. Reading `Shape()` without checking would hand
+back the input as a Success. Check `IsDone()` after every `Build()`; the firewall only catches the
+failures that throw.
+
 ### The retry ladder
 
 For anything marked `fragile`, work through PLAN.md 5.2.4 rather than attempting once:
