@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/native/" />
+  <Folder Name="/native/tools/" />
+  <Folder Name="/native/tools/idlgen/">
+    <Project Path="native/tools/idlgen/OpenMCAD.IdlGen.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/OpenMCAD.Api/OpenMCAD.Api.csproj" />
     <Project Path="src/OpenMCAD.App/OpenMCAD.App.csproj" />
@@ -25,6 +30,7 @@
     <Project Path="tests/contract/OpenMCAD.Kernel.Contract.Tests/OpenMCAD.Kernel.Contract.Tests.csproj" />
   </Folder>
   <Folder Name="/tests/unit/">
+    <Project Path="tests/unit/OpenMCAD.IdlGen.Tests/OpenMCAD.IdlGen.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Kernel.Tests/OpenMCAD.Kernel.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Math.Tests/OpenMCAD.Math.Tests.csproj" />
   </Folder>

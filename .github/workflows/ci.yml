@@ -142,26 +142,70 @@ jobs:
         shell: pwsh
         run: cmake --build native/build --config Release --parallel
 
-      - name: Verify the expected exports exist
+      - name: Verify every IDL operation is exported
         shell: pwsh
         run: |
           $dll = Get-ChildItem -Path native/build -Recurse -Filter openmcad_occt.dll | Select-Object -First 1
           if (-not $dll) { throw 'openmcad_occt.dll was not produced' }
           Write-Host "Built $($dll.FullName)"
 
-          # dumpbin comes from the MSVC toolchain that just built the DLL.
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          $dumpbin = Get-ChildItem -Path "$vs\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
-            Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1
+          $dumpbin = Get-ChildItem -Path (Join-Path $vs 'VC/Tools/MSVC') -Recurse -Filter dumpbin.exe |
+            Where-Object { $_.FullName -match 'Hostx64' } | Select-Object -First 1
 
           if (-not $dumpbin) { Write-Warning 'dumpbin not found; skipping export check'; exit 0 }
 
           $exports = & $dumpbin.FullName /EXPORTS $dll.FullName | Out-String
-          foreach ($name in @('openmcad_version', 'openmcad_last_error', 'openmcad_initialize', 'openmcad_shutdown')) {
-            if ($exports -notmatch $name) { throw "Expected export '$name' is missing" }
-            Write-Host "  export ok: $name"
+
+          # The IDL is the contract. Every operation in it must be present in the binary, or the
+          # C# bindings would fail to resolve at the first call rather than at build time.
+          $idl = Get-Content native/kernel.api.json -Raw | ConvertFrom-Json
+          $missing = @()
+          foreach ($operation in $idl.operations) {
+            $symbol = "$($idl.prefix)_$($operation.name)"
+            if ($exports -notmatch [regex]::Escape($symbol)) { $missing += $symbol }
           }
+
+          if ($missing.Count -gt 0) { throw "Missing exports: $($missing -join ', ')" }
+          Write-Host "All $($idl.operations.Count) IDL operations are exported."
+
+      - name: Confirm the firewall converts failures into status codes
+        shell: pwsh
+        run: |
+          # OPENMCAD_WITH_OCCT is off in this job, so the geometric operations throw
+          # not_implemented. That the firewall turns that into a status code, rather than letting
+          # it unwind across the C ABI, is the single most important property of the boundary --
+          # and it is cheap enough to prove on every build.
+          $dll = (Get-ChildItem -Path native/build -Recurse -Filter openmcad_occt.dll | Select-Object -First 1).FullName
+          $escaped = $dll.Replace('', '/')
+
+          $source = @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class Probe {
+            const string Lib = @"ESCAPED_PATH";
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            public static extern int openmcad_initialize();
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            public static extern int openmcad_shape_release(ulong shape);
+          }
+          "@.Replace('ESCAPED_PATH', $escaped)
+
+          Add-Type -TypeDefinition $source
+
+          if ([Probe]::openmcad_initialize() -ne 0) { throw 'openmcad_initialize failed' }
+          Write-Host '  initialize: ok'
+
+          # shape_release is stubbed in this build, so it must report NOT_IMPLEMENTED (6).
+          $status = [Probe]::openmcad_shape_release(1)
+          if ($status -ne 6) { throw "Expected NOT_IMPLEMENTED (6) from the stub build, got $status" }
+          Write-Host '  stubbed operation returned 6 through the firewall, as expected'
+
+      - name: Verify generated bindings match the IDL
+        shell: pwsh
+        run: dotnet run --project native/tools/idlgen -- . --check
+
 
   architecture:
     name: Architecture rules

@@ -1,0 +1,1194 @@
+{
+  "$comment": [
+    "P1-T03 - the single source of truth for the C ABI between OpenMCAD and the geometry kernel.",
+    "",
+    "tools/idlgen turns this file into five artefacts (see docs/specs/kernel-shim.md):",
+    "  native/openmcad_occt/include/openmcad_occt.g.h      C declarations",
+    "  native/openmcad_occt/include/openmcad_ops.g.h       hand-written implementation signatures",
+    "  native/openmcad_occt/src/openmcad_dispatch.g.cpp    unpacking, handle lookup, exception firewall",
+    "  native/openmcad_occt/src/openmcad_stubs.g.cpp       not-implemented fallbacks",
+    "  src/OpenMCAD.Kernel.Occt/Interop/OcctBindings.g.cs  LibraryImport declarations",
+    "",
+    "Only operation BODIES are hand-written. ADR-0003: this is the difference between a",
+    "maintainable 300-operation surface and a clerical nightmare.",
+    "",
+    "Editing rules:",
+    "  - Append operations; do not reorder or rename shipped ones. The C ABI is a compatibility",
+    "    surface once anything links against it.",
+    "  - Every operation returns int32_t OpenMcadStatus. There is no other return channel.",
+    "  - No pointers to kernel-owned memory ever cross. Bulk data uses the two-call pattern:",
+    "    pass a null buffer to learn the required size, then call again with one that size.",
+    "  - Mark fragile operations so the generator threads the retry ladder through them."
+  ],
+  "version": 1,
+  "prefix": "openmcad",
+  "library": "openmcad_occt",
+  "operations": [
+    {
+      "name": "initialize",
+      "csharp": "Initialize",
+      "group": "lifetime",
+      "summary": "Initialises the shim. Must be called once per process before any other entry point. Installs the OCCT signal handler so a floating-point fault inside the kernel becomes a catchable failure rather than a process death.",
+      "fragile": false,
+      "handwritten": true,
+      "parameters": []
+    },
+    {
+      "name": "shutdown",
+      "csharp": "Shutdown",
+      "group": "lifetime",
+      "summary": "Releases process-wide shim resources. Optional; provided so leak detection has a clean baseline.",
+      "fragile": false,
+      "handwritten": true,
+      "parameters": []
+    },
+    {
+      "name": "version",
+      "csharp": "Version",
+      "group": "lifetime",
+      "summary": "Returns the shim and kernel version as UTF-8.",
+      "fragile": false,
+      "handwritten": true,
+      "parameters": [
+        {
+          "name": "text",
+          "type": "utf8_out",
+          "summary": "The version string."
+        }
+      ]
+    },
+    {
+      "name": "shape_release",
+      "csharp": "ShapeRelease",
+      "group": "lifetime",
+      "summary": "Drops one reference to a shape. The shape and all its sub-entities become invalid when the last reference goes.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to release."
+        }
+      ]
+    },
+    {
+      "name": "shape_add_ref",
+      "csharp": "ShapeAddRef",
+      "group": "lifetime",
+      "summary": "Takes an additional reference to a shape.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to reference."
+        }
+      ]
+    },
+    {
+      "name": "history_release",
+      "csharp": "HistoryRelease",
+      "group": "lifetime",
+      "summary": "Releases a history map.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map to release."
+        }
+      ]
+    },
+    {
+      "name": "mesh_release",
+      "csharp": "MeshRelease",
+      "group": "lifetime",
+      "summary": "Releases a tessellation.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh to release."
+        }
+      ]
+    },
+    {
+      "name": "last_error",
+      "csharp": "LastError",
+      "group": "diagnostics",
+      "summary": "Returns a description of the most recent failure on the calling thread.",
+      "fragile": false,
+      "handwritten": true,
+      "parameters": [
+        {
+          "name": "text",
+          "type": "utf8_out",
+          "summary": "The description."
+        }
+      ]
+    },
+    {
+      "name": "diagnostic_count",
+      "csharp": "DiagnosticCount",
+      "group": "diagnostics",
+      "summary": "Returns how many diagnostics the last operation produced.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "count",
+          "type": "i32_out",
+          "summary": "The number of diagnostics."
+        }
+      ]
+    },
+    {
+      "name": "diagnostic_severity",
+      "csharp": "DiagnosticSeverity",
+      "group": "diagnostics",
+      "summary": "Returns one diagnostic severity.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "index",
+          "type": "i32",
+          "summary": "The diagnostic index."
+        },
+        {
+          "name": "severity",
+          "type": "i32_out",
+          "summary": "0 information, 1 warning, 2 error."
+        }
+      ]
+    },
+    {
+      "name": "diagnostic_code",
+      "csharp": "DiagnosticCode",
+      "group": "diagnostics",
+      "summary": "Returns one diagnostic stable code.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "index",
+          "type": "i32",
+          "summary": "The diagnostic index."
+        },
+        {
+          "name": "code",
+          "type": "utf8_out",
+          "summary": "The code, such as OMK2003."
+        }
+      ]
+    },
+    {
+      "name": "diagnostic_message",
+      "csharp": "DiagnosticMessage",
+      "group": "diagnostics",
+      "summary": "Returns one diagnostic user-facing message.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "index",
+          "type": "i32",
+          "summary": "The diagnostic index."
+        },
+        {
+          "name": "message",
+          "type": "utf8_out",
+          "summary": "The message."
+        }
+      ]
+    },
+    {
+      "name": "diagnostic_entities",
+      "csharp": "DiagnosticEntities",
+      "group": "diagnostics",
+      "summary": "Returns the entities one diagnostic refers to.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "index",
+          "type": "i32",
+          "summary": "The diagnostic index."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The entity tags."
+        }
+      ]
+    },
+    {
+      "name": "diagnostics_clear",
+      "csharp": "DiagnosticsClear",
+      "group": "diagnostics",
+      "summary": "Discards the diagnostics from the last operation.",
+      "fragile": false,
+      "parameters": []
+    },
+    {
+      "name": "create_box",
+      "csharp": "CreateBox",
+      "group": "primitives",
+      "summary": "Creates a box with its minimum corner at the placement origin.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "size_x",
+          "type": "f64",
+          "summary": "Extent along local X, in metres."
+        },
+        {
+          "name": "size_y",
+          "type": "f64",
+          "summary": "Extent along local Y, in metres."
+        },
+        {
+          "name": "size_z",
+          "type": "f64",
+          "summary": "Extent along local Z, in metres."
+        },
+        {
+          "name": "placement",
+          "type": "transform",
+          "summary": "Where the local frame sits."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "create_cylinder",
+      "csharp": "CreateCylinder",
+      "group": "primitives",
+      "summary": "Creates a cylinder about the local Z axis.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "radius",
+          "type": "f64",
+          "summary": "Radius in metres."
+        },
+        {
+          "name": "height",
+          "type": "f64",
+          "summary": "Height in metres."
+        },
+        {
+          "name": "placement",
+          "type": "transform",
+          "summary": "Where the local frame sits."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "create_sphere",
+      "csharp": "CreateSphere",
+      "group": "primitives",
+      "summary": "Creates a sphere centred on the placement origin.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "radius",
+          "type": "f64",
+          "summary": "Radius in metres."
+        },
+        {
+          "name": "placement",
+          "type": "transform",
+          "summary": "Where the local frame sits."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "create_cone",
+      "csharp": "CreateCone",
+      "group": "primitives",
+      "summary": "Creates a cone or truncated cone about the local Z axis.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "bottom_radius",
+          "type": "f64",
+          "summary": "Radius at the base, in metres."
+        },
+        {
+          "name": "top_radius",
+          "type": "f64",
+          "summary": "Radius at the top, in metres."
+        },
+        {
+          "name": "height",
+          "type": "f64",
+          "summary": "Height in metres."
+        },
+        {
+          "name": "placement",
+          "type": "transform",
+          "summary": "Where the local frame sits."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "create_torus",
+      "csharp": "CreateTorus",
+      "group": "primitives",
+      "summary": "Creates a torus about the local Z axis.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "major_radius",
+          "type": "f64",
+          "summary": "Distance from the axis to the tube centre."
+        },
+        {
+          "name": "minor_radius",
+          "type": "f64",
+          "summary": "Tube radius."
+        },
+        {
+          "name": "placement",
+          "type": "transform",
+          "summary": "Where the local frame sits."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "create_polygon_profile",
+      "csharp": "CreatePolygonProfile",
+      "group": "primitives",
+      "summary": "Creates a closed planar profile from an outline.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "points",
+          "type": "vec2_array",
+          "summary": "The outline in the frame XY plane, without a repeated closing point."
+        },
+        {
+          "name": "frame",
+          "type": "transform",
+          "summary": "Maps the profile plane into the world."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "extrude",
+      "csharp": "Extrude",
+      "group": "construction",
+      "summary": "Sweeps a profile along a straight path.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "profile",
+          "type": "shape",
+          "summary": "The profile to sweep."
+        },
+        {
+          "name": "direction",
+          "type": "vec3",
+          "summary": "The sweep direction, unit length."
+        },
+        {
+          "name": "distance",
+          "type": "f64",
+          "summary": "How far to sweep, in metres."
+        },
+        {
+          "name": "capped",
+          "type": "bool",
+          "summary": "Whether to cap the ends, producing a solid."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "revolve",
+      "csharp": "Revolve",
+      "group": "construction",
+      "summary": "Sweeps a profile about an axis.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "profile",
+          "type": "shape",
+          "summary": "The profile to sweep."
+        },
+        {
+          "name": "axis_point",
+          "type": "vec3",
+          "summary": "A point on the axis."
+        },
+        {
+          "name": "axis_direction",
+          "type": "vec3",
+          "summary": "The axis direction, unit length."
+        },
+        {
+          "name": "angle",
+          "type": "f64",
+          "summary": "How far to revolve, in radians."
+        },
+        {
+          "name": "capped",
+          "type": "bool",
+          "summary": "Whether to cap the ends of a partial revolution."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "boolean",
+      "csharp": "Boolean",
+      "group": "modification",
+      "summary": "Combines bodies.",
+      "fragile": true,
+      "parameters": [
+        {
+          "name": "operation",
+          "type": "i32",
+          "summary": "0 union, 1 subtract, 2 intersect."
+        },
+        {
+          "name": "target",
+          "type": "shape",
+          "summary": "The body being modified."
+        },
+        {
+          "name": "tools",
+          "type": "shape_array",
+          "summary": "The bodies being combined with it."
+        },
+        {
+          "name": "tolerance",
+          "type": "f64",
+          "summary": "Model tolerance in metres."
+        },
+        {
+          "name": "fuzzy_tolerance",
+          "type": "f64",
+          "summary": "Relaxed tolerance for rung 3, or zero for none."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        },
+        {
+          "name": "rung",
+          "type": "i32_out",
+          "summary": "Which rung of the retry ladder produced the result."
+        }
+      ]
+    },
+    {
+      "name": "fillet",
+      "csharp": "Fillet",
+      "group": "modification",
+      "summary": "Rounds edges.",
+      "fragile": true,
+      "parameters": [
+        {
+          "name": "body",
+          "type": "shape",
+          "summary": "The body to modify."
+        },
+        {
+          "name": "edges",
+          "type": "entity_array",
+          "summary": "The edges to round."
+        },
+        {
+          "name": "radii",
+          "type": "f64_array",
+          "summary": "One radius per edge, in metres."
+        },
+        {
+          "name": "tolerance",
+          "type": "f64",
+          "summary": "Model tolerance in metres."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        },
+        {
+          "name": "rung",
+          "type": "i32_out",
+          "summary": "Which rung of the retry ladder produced the result."
+        }
+      ]
+    },
+    {
+      "name": "chamfer",
+      "csharp": "Chamfer",
+      "group": "modification",
+      "summary": "Bevels edges.",
+      "fragile": true,
+      "parameters": [
+        {
+          "name": "body",
+          "type": "shape",
+          "summary": "The body to modify."
+        },
+        {
+          "name": "edges",
+          "type": "entity_array",
+          "summary": "The edges to bevel."
+        },
+        {
+          "name": "distances",
+          "type": "f64_array",
+          "summary": "One setback distance per edge, in metres."
+        },
+        {
+          "name": "tolerance",
+          "type": "f64",
+          "summary": "Model tolerance in metres."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        },
+        {
+          "name": "rung",
+          "type": "i32_out",
+          "summary": "Which rung of the retry ladder produced the result."
+        }
+      ]
+    },
+    {
+      "name": "mass_properties",
+      "csharp": "MassProperties",
+      "group": "queries",
+      "summary": "Computes volume, area, centroid, and inertia.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to measure."
+        },
+        {
+          "name": "density",
+          "type": "f64",
+          "summary": "Density in kilograms per cubic metre."
+        },
+        {
+          "name": "values",
+          "type": "f64_array_out",
+          "summary": "Eleven doubles: volume, area, centroid xyz, then Ixx Iyy Izz Ixy Ixz Iyz.",
+          "fixed": 11
+        },
+        {
+          "name": "accuracy",
+          "type": "i32_out",
+          "summary": "0 exact, 1 approximate."
+        }
+      ]
+    },
+    {
+      "name": "bounding_box",
+      "csharp": "BoundingBox",
+      "group": "queries",
+      "summary": "Computes the axis-aligned bound.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to bound."
+        },
+        {
+          "name": "values",
+          "type": "f64_array_out",
+          "summary": "Six doubles: min xyz then max xyz.",
+          "fixed": 6
+        }
+      ]
+    },
+    {
+      "name": "topology_counts",
+      "csharp": "TopologyCounts",
+      "group": "queries",
+      "summary": "Counts topological entities.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to count."
+        },
+        {
+          "name": "values",
+          "type": "i32_array_out",
+          "summary": "Six counts: solids, shells, faces, wires, edges, vertices.",
+          "fixed": 6
+        }
+      ]
+    },
+    {
+      "name": "enumerate",
+      "csharp": "Enumerate",
+      "group": "queries",
+      "summary": "Lists entities of one kind in canonical order.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to enumerate."
+        },
+        {
+          "name": "kind",
+          "type": "i32",
+          "summary": "The SubEntityKind to list."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The entity tags, in canonical order."
+        }
+      ]
+    },
+    {
+      "name": "entity_kind",
+      "csharp": "EntityKind",
+      "group": "queries",
+      "summary": "Returns what kind of entity a tag refers to.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The owning shape."
+        },
+        {
+          "name": "entity",
+          "type": "entity",
+          "summary": "The entity tag."
+        },
+        {
+          "name": "kind",
+          "type": "i32_out",
+          "summary": "The SubEntityKind."
+        }
+      ]
+    },
+    {
+      "name": "check_validity",
+      "csharp": "CheckValidity",
+      "group": "queries",
+      "summary": "Checks a shape for structural validity.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to check."
+        },
+        {
+          "name": "is_valid",
+          "type": "i32_out",
+          "summary": "Non-zero when the shape is sound."
+        },
+        {
+          "name": "is_closed",
+          "type": "i32_out",
+          "summary": "Non-zero when its shells are closed."
+        }
+      ]
+    },
+    {
+      "name": "triangulate",
+      "csharp": "Triangulate",
+      "group": "tessellation",
+      "summary": "Triangulates a shape, returning a mesh handle.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to tessellate."
+        },
+        {
+          "name": "chordal_deviation",
+          "type": "f64",
+          "summary": "Maximum deviation from the true surface, in metres."
+        },
+        {
+          "name": "angular_deviation",
+          "type": "f64",
+          "summary": "Maximum angle between adjacent facet normals, in radians."
+        },
+        {
+          "name": "relative",
+          "type": "bool",
+          "summary": "Whether the chordal deviation is relative to shape size."
+        },
+        {
+          "name": "compute_normals",
+          "type": "bool",
+          "summary": "Whether to compute per-vertex normals."
+        },
+        {
+          "name": "mesh",
+          "type": "mesh_out",
+          "summary": "The resulting mesh."
+        }
+      ]
+    },
+    {
+      "name": "mesh_counts",
+      "csharp": "MeshCounts",
+      "group": "tessellation",
+      "summary": "Returns a mesh size, so buffers can be allocated once.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "i32_array_out",
+          "summary": "Three counts: vertices, triangles, faces.",
+          "fixed": 3
+        }
+      ]
+    },
+    {
+      "name": "mesh_positions",
+      "csharp": "MeshPositions",
+      "group": "tessellation",
+      "summary": "Returns vertex positions as XYZ triples in metres.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "f64_array_out",
+          "summary": "Three doubles per vertex."
+        }
+      ]
+    },
+    {
+      "name": "mesh_normals",
+      "csharp": "MeshNormals",
+      "group": "tessellation",
+      "summary": "Returns per-vertex normals as XYZ triples.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "f64_array_out",
+          "summary": "Three doubles per vertex, empty if not computed."
+        }
+      ]
+    },
+    {
+      "name": "mesh_indices",
+      "csharp": "MeshIndices",
+      "group": "tessellation",
+      "summary": "Returns triangle vertex indices, three per triangle.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "i32_array_out",
+          "summary": "Three indices per triangle."
+        }
+      ]
+    },
+    {
+      "name": "mesh_triangle_faces",
+      "csharp": "MeshTriangleFaces",
+      "group": "tessellation",
+      "summary": "Returns the face index each triangle came from.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "i32_array_out",
+          "summary": "One index per triangle."
+        }
+      ]
+    },
+    {
+      "name": "mesh_faces",
+      "csharp": "MeshFaces",
+      "group": "tessellation",
+      "summary": "Returns the face tags the triangle attribution indexes into.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "u64_array_out",
+          "summary": "The face tags, in order."
+        }
+      ]
+    },
+    {
+      "name": "write_brep",
+      "csharp": "WriteBRep",
+      "group": "serialisation",
+      "summary": "Writes a shape to the kernel native format.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shape",
+          "type": "shape",
+          "summary": "The shape to write."
+        },
+        {
+          "name": "data",
+          "type": "byte_array_out",
+          "summary": "The bytes."
+        }
+      ]
+    },
+    {
+      "name": "read_brep",
+      "csharp": "ReadBRep",
+      "group": "serialisation",
+      "summary": "Reads a shape written by write_brep.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "data",
+          "type": "byte_array",
+          "summary": "The bytes to read."
+        },
+        {
+          "name": "result",
+          "type": "shape_out",
+          "summary": "The resulting shape."
+        },
+        {
+          "name": "history",
+          "type": "history_out",
+          "summary": "The correspondence between the inputs and the result."
+        }
+      ]
+    },
+    {
+      "name": "write_step",
+      "csharp": "WriteStep",
+      "group": "serialisation",
+      "summary": "Writes shapes as a STEP AP242 file.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "shapes",
+          "type": "shape_array",
+          "summary": "The shapes to write."
+        },
+        {
+          "name": "path",
+          "type": "utf8",
+          "summary": "Where to write. The OCCT writer wants a path, not a stream."
+        },
+        {
+          "name": "bytes_written",
+          "type": "i32_out",
+          "summary": "How many bytes were written."
+        }
+      ]
+    },
+    {
+      "name": "history_generated",
+      "csharp": "HistoryGenerated",
+      "group": "history",
+      "summary": "Returns the entities an input caused to come into existence.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "input",
+          "type": "entity",
+          "summary": "The input entity."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The generated entities, sorted."
+        }
+      ]
+    },
+    {
+      "name": "history_modified",
+      "csharp": "HistoryModified",
+      "group": "history",
+      "summary": "Returns the altered successors of an input.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "input",
+          "type": "entity",
+          "summary": "The input entity."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The successors, sorted."
+        }
+      ]
+    },
+    {
+      "name": "history_is_deleted",
+      "csharp": "HistoryIsDeleted",
+      "group": "history",
+      "summary": "Returns whether an input has no successor.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "input",
+          "type": "entity",
+          "summary": "The input entity."
+        },
+        {
+          "name": "deleted",
+          "type": "i32_out",
+          "summary": "Non-zero when the entity was consumed."
+        }
+      ]
+    },
+    {
+      "name": "history_new_entities",
+      "csharp": "HistoryNewEntities",
+      "group": "history",
+      "summary": "Returns the entities created from nothing.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The new entities, sorted."
+        }
+      ]
+    },
+    {
+      "name": "history_role_of",
+      "csharp": "HistoryRoleOf",
+      "group": "history",
+      "summary": "Returns what an output entity is, in the terms of the operation that made it.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "output",
+          "type": "entity",
+          "summary": "The output entity."
+        },
+        {
+          "name": "role",
+          "type": "i32_out",
+          "summary": "The OperationRole. Zero means unassigned, which is a defect."
+        }
+      ]
+    },
+    {
+      "name": "history_source_of",
+      "csharp": "HistorySourceOf",
+      "group": "history",
+      "summary": "Returns the input an output came from.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "output",
+          "type": "entity",
+          "summary": "The output entity."
+        },
+        {
+          "name": "source",
+          "type": "u64_out",
+          "summary": "The source entity tag, or zero for entities created from nothing."
+        }
+      ]
+    },
+    {
+      "name": "history_outputs",
+      "csharp": "HistoryOutputs",
+      "group": "history",
+      "summary": "Returns every output the map describes.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The outputs, sorted."
+        }
+      ]
+    },
+    {
+      "name": "history_inputs",
+      "csharp": "HistoryInputs",
+      "group": "history",
+      "summary": "Returns every input the map describes.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "history",
+          "type": "history",
+          "summary": "The history map."
+        },
+        {
+          "name": "entities",
+          "type": "u64_array_out",
+          "summary": "The inputs, sorted."
+        }
+      ]
+    }
+  ]
+}

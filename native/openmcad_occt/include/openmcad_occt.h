@@ -76,43 +76,10 @@ typedef uint64_t OpenMcadHandle;
 #define OPENMCAD_INVALID_HANDLE ((OpenMcadHandle)0)
 
 /*
- * Returns the shim version as a NUL-terminated UTF-8 string.
- *
- * Two-call pattern, and the smallest possible exercise of it: pass buffer = NULL to learn the
- * required size including the terminator, then call again with a buffer of at least that size.
- * P0-T06 exists to prove this contract end to end before three hundred operations depend on it.
+ * The operations themselves are declared in the generated openmcad_occt.g.h, which includes this
+ * header for the status codes, handle type, and export macros above. This file is the fixed
+ * preamble; that file is the surface.
  */
-OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_version(
-    char* buffer,
-    int32_t buffer_size,
-    int32_t* required_size);
-
-/*
- * Returns a description of the most recent failure on the calling thread.
- *
- * Same two-call pattern. The record is thread-local and is overwritten by the next failing call
- * on that thread, so read it immediately after a non-zero status.
- */
-OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_last_error(
-    char* buffer,
-    int32_t buffer_size,
-    int32_t* required_size);
-
-/*
- * Initialises the shim. Must be called once per process before any other entry point.
- *
- * From P1-T05 this is where OSD::SetSignal is called. That matters more than it sounds: without
- * it, a floating-point exception raised inside OCCT terminates the process instead of surfacing
- * as a catchable failure, and the user loses their session to a modelling operation that should
- * have reported "this fillet is impossible".
- */
-OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_initialize(void);
-
-/*
- * Releases process-wide shim resources. Optional; provided so leak detection under sustained
- * load (P15-T08) has a clean baseline to measure against.
- */
-OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_shutdown(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

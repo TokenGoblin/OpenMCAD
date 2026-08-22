@@ -14,6 +14,10 @@
 .PARAMETER Configuration
     Debug or Release. Defaults to Debug.
 
+.PARAMETER Generate
+    Regenerate the C ABI and its bindings from native/kernel.api.json, then continue. Run this
+    after editing the IDL and commit the result.
+
 .PARAMETER SkipNative
     Skip the native build. Implied automatically when no C++ toolchain is present.
 
@@ -40,6 +44,7 @@ param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
 
+    [switch]$Generate,
     [switch]$SkipNative,
     [switch]$SkipTests,
     [switch]$WithOcct,
@@ -94,6 +99,28 @@ if ($Clean) {
             Remove-Item -Recurse -Force $dir
             Write-Host "    removed $dir"
         }
+    }
+}
+
+# --- Code generation -------------------------------------------------------------------------
+# The generated C ABI is checked in (see native/tools/idlgen). Every build verifies it still
+# matches the IDL, because a stale binding is a crash at the boundary rather than a compile error.
+Write-Step 'Code generation'
+
+$idlgen = Join-Path $ArtifactsDir "bin/OpenMCAD.IdlGen/$($Configuration.ToLowerInvariant())/idlgen.exe"
+
+& dotnet build (Join-Path $RepoRoot 'native/tools/idlgen/OpenMCAD.IdlGen.csproj') `
+    --configuration $Configuration --nologo --verbosity quiet
+if ($LASTEXITCODE -ne 0) { throw "Building idlgen failed with exit code $LASTEXITCODE." }
+
+if ($Generate) {
+    & $idlgen $RepoRoot
+    if ($LASTEXITCODE -ne 0) { throw "Code generation failed with exit code $LASTEXITCODE." }
+}
+else {
+    & $idlgen $RepoRoot --check
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Generated bindings are out of step with native/kernel.api.json. Run ./build.ps1 -Generate.'
     }
 }
 

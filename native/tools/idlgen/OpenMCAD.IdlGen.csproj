@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>idlgen</AssemblyName>
+    <RootNamespace>OpenMCAD.IdlGen</RootNamespace>
+    <!-- A build-time tool, not part of the product. It is in the solution so it cannot rot. -->
+    <IsPackable>false</IsPackable>
+
+    <!-- Generated output must be byte-identical on every machine, so the whole tool runs under
+         the invariant culture (set in Main). CA1305 asks for an IFormatProvider on each of the
+         several hundred AppendLine calls that build the output; the global setting achieves the
+         same guarantee without burying the emitters in ceremony. -->
+    <NoWarn>$(NoWarn);CA1305</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenMCAD.IdlGen.Tests" />
+  </ItemGroup>
+
+</Project>
