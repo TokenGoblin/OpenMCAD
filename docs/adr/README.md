@@ -26,7 +26,7 @@ ADR that supersedes the old one and set the old one's status to `Superseded by A
 | [0014](0014-language-runtime.md) | .NET 10 LTS, C# 14, nullable, warnings-as-errors | Accepted |
 | [0015](0015-shell-libraries.md) | Shell libraries: Fluent.Ribbon and AvalonDock | Accepted |
 | [0016](0016-phase0-dependencies.md) | The Phase 0 dependency set | Accepted |
-| [0017](0017-project-name-and-licence.md) | Project name, and the outstanding licence decision | **Name accepted; licence undecided** |
+| [0017](0017-project-name-and-licence.md) | Project name and licence (MIT) | Accepted |
 
 ## Scheduled revisits
 
@@ -40,4 +40,3 @@ listed here so they are not forgotten between phases.
 | P14-T07 | ADR-0006 sketch solver | Decide with usage data whether to write a managed solver, licence DCM, or stay on planegcs. |
 | P15-T04 | ADR-0004 out-of-process kernel | Implement only if crash telemetry justifies it. |
 | P13-T09 | ADR-0001 kernel | Surfacing is where OCCT is weakest; the results are evidence for or against a Parasolid migration. |
-| Before first public release | ADR-0017 licence | Requires legal review (PLAN.md 8.6). |

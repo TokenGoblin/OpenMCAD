@@ -1,17 +1,14 @@
-# ADR-0017 — Project name, and the outstanding licence decision
+# ADR-0017 — Project name and licence
 
-- **Status:** Partially accepted. **The licence is NOT decided and blocks nothing in Phase 0, but
-  must be settled before the first public commit.**
-- **Date:** 2026-08-22
+- **Status:** Accepted
+- **Date:** 2026-08-22 (name), amended same day (licence)
 - **Supersedes:** none
 - **Task:** P0-T01
 
-## The name — decided
+## The name
 
 The codename in PLAN.md was *Anvil*. The chosen name is **OpenMCAD**, applied in Phase 0 as the
 plan instructs ("do it now, in Phase 0, not later").
-
-Consequences, all applied:
 
 | Thing | Value |
 |---|---|
@@ -27,52 +24,69 @@ Consequences, all applied:
 The CLI is **`omcad`**, not `openmcad`. Windows paths are case-insensitive, so an `openmcad.exe`
 next to `OpenMCAD.exe` collides the moment an installer places both in one directory (P17-T01).
 Discovering that at packaging time would have meant renaming a command that scripts and CI already
-depended on. `omcad` is also shorter to type, which matters for a command invoked constantly by
-the regression harness.
+depended on. `omcad` is also shorter to type, which matters for a command the regression harness
+invokes constantly.
 
-Two checks that should happen before any public announcement, neither of which blocks development:
-a trademark search, and confirming the name is not already in use by another CAD project.
+## The licence: MIT
 
-## The licence — NOT decided
+### Context
 
-No `LICENSE` file has been committed with a real licence, and this is deliberate rather than an
-oversight. Choosing a licence is a consequential, effectively irreversible act, and the plan pulls
-in two directions:
+PLAN.md was written as though for a commercial product: section 17 schedules licensing and
+activation, node-locked and floating, with trial mode and offline activation. That is not what this
+project is. It is an experiment in how far an AI agent can get building a system of this size, and
+it is intended to be shared publicly and read.
 
-- The **name** says open source.
-- **PLAN.md 8.6** discusses OCCT's exception as permitting "linking into proprietary applications",
-  and **P17-T03** schedules licensing and activation, node-locked and floating, with trial mode and
-  offline activation. That is proprietary-product work.
+That reframing settles a question the plan left genuinely open. There is no proprietary
+distribution to protect, so the licence should optimise for one thing: the lowest possible friction
+for someone reading, forking, or lifting an idea from it.
 
-These are reconcilable — open-core, or source-available with paid support — but they are different
-products with different consequences, and the decision is the owner's, not the implementing
-agent's.
+### Decision
 
-### Options, with the constraint each one imposes
+**MIT.**
 
-| Option | Consequence for the OCCT/planegcs dependency | Consequence for the plan |
-|---|---|---|
-| **GPL-3.0** | Simplest compliance posture. | Kills P17-T03 as written; no proprietary distribution. |
-| **LGPL-2.1** | Matches OCCT and planegcs exactly. Fewest surprises. | Plugins (ADR-0012) must be reasoned about carefully as derived works. |
-| **MPL-2.0** | Compatible; file-level copyleft. | Permits a proprietary shell over an open core. A common fit for open-core. |
-| **Apache-2.0 / MIT** | Requires care: OCCT's exception permits linking, and keeping `openmcad_occt.dll` separately replaceable (already the design) satisfies its conditions, but the analysis must be done, not assumed. | Maximally permissive; makes P17-T03 straightforward. |
-| **Source-available** (BSL, PolyForm) | Same OCCT analysis as permissive. | Fits P17-T03 best; is not open source, so the name would mislead. |
+Options considered and why they lost:
 
-### What is already true regardless of the choice
+| Option | Why not |
+|---|---|
+| Apache-2.0 | Equivalent permissions plus a patent grant and NOTICE mechanism. Worth it when corporate adoption or outside contribution is likely; here it is ceremony without a corresponding benefit. |
+| LGPL-2.1 | Would match OCCT and planegcs exactly and remove all compliance analysis. But copyleft on a demonstration project is friction for exactly the audience it is for, and it would force careful derived-work reasoning about the plugin API (ADR-0012). |
+| GPL-3.0 | Strongest copyleft, simplest compliance, and the family FreeCAD sits in. Heavier than this warrants and forecloses any later change of mind. |
 
-The architecture does not foreclose any of these. ADR-0003 keeps OCCT behind a separately
-replaceable dynamic library, which is exactly the condition the Open CASCADE Exception cares about,
-and ADR-0006 does the same for planegcs. That was chosen for engineering reasons and happens to
-keep every licensing door open.
+### Why MIT is compatible with the dependencies
 
-### Required before first public release
+The dependencies are copyleft, and the project is not. That combination is fine here, but for a
+specific reason worth writing down rather than assuming:
 
-PLAN.md 8.6 says it plainly, and it is worth repeating here: **get a lawyer to review the licence
-posture before first public release, not after.** This ADR is engineering context to hand to that
-review, not legal advice.
+- **OCCT** is LGPL-2.1 **with the Open CASCADE Exception**, which explicitly permits linking into
+  an application under different terms.
+- **planegcs** is plain LGPL-2.1, with no exception. LGPL permits use from a differently-licensed
+  application provided the user can replace the LGPL component — which dynamic linking satisfies.
+- **Eigen** is MPL-2.0, file-level copyleft, which places no condition on this project. Its
+  optional LGPL components must be excluded by build flag (tracked in `THIRD-PARTY-NOTICES.md`).
 
-## Action
+Both LGPL components live in separately replaceable dynamic libraries — `openmcad_occt.dll` and
+`openmcad_gcs.dll` — under ADR-0003 and ADR-0006. That was decided for engineering reasons (a flat
+C ABI, an exception firewall, a swap path to Parasolid) and independently happens to be exactly the
+structure the LGPL relinking condition asks for. Keep it that way: statically folding either
+library into a monolith would change the analysis.
 
-Replace `LICENSE` with the chosen licence text and update this ADR's status. Until then `LICENSE`
-states that the licence is undetermined, which is honest and prevents anyone from assuming a
-default.
+### Consequences
+
+- `THIRD-PARTY-NOTICES.md` must ship and stay accurate. PLAN.md 8.6 requires it to be
+  CI-generated so it cannot drift; that remains a Phase 1 follow-up.
+- **P17-T03 (licensing and activation) is now out of scope.** It was premised on a proprietary
+  product. Leaving it in the plan unmarked would send a future session building an activation
+  system nobody wants.
+- PLAN.md 8.6's instruction to have counsel review the licence posture before first public release
+  was written for the proprietary reading. For an MIT project depending on LGPL libraries through
+  dynamic linking, the posture is conventional and well travelled. The instruction is downgraded
+  from a blocker to a sensible precaution.
+
+### One honest caveat, not legal advice
+
+A licence grants copyright permissions, and in the United States material generated by AI without
+meaningful human authorship may not attract copyright in the first place. How that applies to a
+repository written largely by an agent under human direction is unsettled. Nobody has litigated it
+at this scale and it stops no one from applying MIT, which is why MIT is applied. But since the
+point of this repository is that an AI built it, the README says so plainly rather than implying
+sole human authorship.

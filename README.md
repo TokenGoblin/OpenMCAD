@@ -89,9 +89,19 @@ Read [`docs/PLAN.md`](docs/PLAN.md) section 12 before starting. In short:
 - No new NuGet dependency without an ADR ([`docs/adr/`](docs/adr/README.md)).
 - Do not improve the architecture opportunistically. Write an ADR proposal and stop.
 
+## How this was built
+
+OpenMCAD is an experiment in how far an AI coding agent can get building a system of this size,
+working from [`docs/PLAN.md`](docs/PLAN.md) phase by phase under human direction. Essentially all
+of the code here was written by Claude. That is the point of the repository, and it is stated
+plainly rather than left to be inferred — judge the code accordingly.
+
 ## Licence
 
-**Not yet determined.** See [ADR-0017](docs/adr/0017-project-name-and-licence.md) for the options
-and the constraints each imposes. This is a real open decision, not an oversight — do not assume a
-default. The dependencies (OCCT and planegcs, both LGPL-2.1, OCCT with the Open CASCADE Exception)
-are kept in separately replaceable dynamic libraries by design, which keeps every option open.
+[MIT](LICENSE).
+
+Third-party components keep their own licences; see
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md). The geometry kernel (OCCT) and constraint
+solver (planegcs) are LGPL-2.1 and are confined to separately replaceable dynamic libraries, which
+is both the engineering design (ADR-0003, ADR-0006) and what the LGPL relinking condition asks for.
+See [ADR-0017](docs/adr/0017-project-name-and-licence.md) for the full reasoning.

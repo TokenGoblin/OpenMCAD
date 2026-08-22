@@ -1269,7 +1269,7 @@ Four epochs, eighteen phases. Each phase states a **goal**, **exit criteria** (m
 
 - [ ] **P17-T01** Installer (MSIX and/or WiX), silent/enterprise deployment, per-machine and per-user modes, file associations, Explorer thumbnail and preview handlers.
 - [ ] **P17-T02** Update mechanism with staged rollout and rollback.
-- [ ] **P17-T03** Licensing and activation (node-locked and floating), trial mode, offline activation.
+- [ ] ~~**P17-T03** Licensing and activation (node-locked and floating), trial mode, offline activation.~~ **Out of scope** — the project is MIT licensed (ADR-0017); there is no proprietary distribution to gate.
 - [ ] **P17-T04** Crash reporting service and telemetry backend (§6.3), with the disclosed schema.
 - [ ] **P17-T05** In-app onboarding, tutorials, sample documents, contextual help; user documentation.
 - [ ] **P17-T06** Localization: complete the string catalogue, ship two to three locales, verify layout under text expansion.
