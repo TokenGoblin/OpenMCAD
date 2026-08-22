@@ -31,6 +31,14 @@
     <!-- Assembly/File version stay numeric-only; informational carries the full semver. -->
     <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
     <FileVersion>$(VersionPrefix).0</FileVersion>
+
+    <!--
+      The SDK otherwise appends "+<full git sha>" to InformationalVersion. Combined with the
+      BuildMetadata set below that yields two "+" segments, which is not valid semver 2.0.0 and
+      breaks any tool that parses the version. BuildMetadata is the single authority; it already
+      carries the short SHA.
+    -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <Target Name="OpenMCADStampInformationalVersion" BeforeTargets="GetAssemblyVersion">
