@@ -42,6 +42,10 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
 
+        // Before the window is built: XAML constructs the viewport during MainWindow's
+        // initialisation, and it reads this then.
+        ViewportHost.LoggerFactory = _loggerFactory;
+
         base.OnStartup(e);
 
         MainWindow = new MainWindow

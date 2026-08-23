@@ -102,16 +102,12 @@
                     <avalondock:LayoutDocumentPaneGroup>
                         <avalondock:LayoutDocumentPane>
                             <avalondock:LayoutDocument Title="Viewport" ContentId="Viewport" CanClose="False">
-                                <!-- Replaced by the HwndHost-hosted D3D12 surface in P2-T02. -->
-                                <Border Background="#FF2B2F36">
-                                    <TextBlock Foreground="#FFB8BEC9"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               TextWrapping="Wrap"
-                                               MaxWidth="520"
-                                               TextAlignment="Center"
-                                               Text="{Binding DataContext.ViewportPlaceholder, RelativeSource={RelativeSource AncestorType=Window}}" />
-                                </Border>
+                                <!--
+                                    The D3D12 surface (P2-T02). An airspace child window, so
+                                    nothing in WPF can be drawn over it: overlays belong in the
+                                    viewport's own rendering, not layered here in XAML.
+                                -->
+                                <local:ViewportHost />
                             </avalondock:LayoutDocument>
                         </avalondock:LayoutDocumentPane>
                     </avalondock:LayoutDocumentPaneGroup>
