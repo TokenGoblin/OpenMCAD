@@ -78,8 +78,11 @@ public sealed class FacePassTests
     [Fact]
     public void TheFrameConstantsMatchTheShaderPacking()
     {
-        // If this drifts, the geometry silently draws in the wrong place rather than failing.
-        FrameConstants.SizeInBytes.Should().Be(96);
+        // Two float4x4-worth of rows plus two padded float3s and a float2: 112 bytes, and both
+        // Surface.hlsl and Edges.hlsl declare exactly that. If this drifts, every field after the
+        // change reads from the wrong offset and the geometry silently draws somewhere else --
+        // there is no error, which is precisely why the number is asserted.
+        FrameConstants.SizeInBytes.Should().Be(112);
     }
 
     // --- Rendering ----------------------------------------------------------------------------

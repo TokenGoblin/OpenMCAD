@@ -9,6 +9,15 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!--
+      Flattening polylines into segments is an implementation detail of the upload path, but it is
+      pure arithmetic with off-by-one traps in it and deserves testing directly rather than only
+      through the pixels it eventually produces. Same arrangement as OpenMCAD.Kernel.
+    -->
+    <InternalsVisibleTo Include="OpenMCAD.Render.Tests" />
+  </ItemGroup>
+
   <!--
     ADR-0008. Vortice is a thin P/Invoke wrapper over D3D12, so referencing it from a plain
     net10.0 library is fine: the assembly still loads anywhere, and only the D3D12 implementation

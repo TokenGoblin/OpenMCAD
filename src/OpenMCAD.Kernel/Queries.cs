@@ -287,7 +287,22 @@ public sealed record MeshBuffer(
     public int VertexCount => Positions.Length;
 
     /// <summary>Gets the axis-aligned bound of the tessellation.</summary>
-    public Bounds3d Bounds => Bounds3d.FromPoints(Positions);
+    public Bounds3d Bounds
+    {
+        get
+        {
+            // Edge points count towards the extent, not just triangle vertices. For a solid they
+            // lie on its faces and change nothing, but a mesh may legitimately be edges alone -- a
+            // sketch, or a wireframe -- and reporting an empty extent for one of those makes it
+            // invisible: the viewport culls it against the frustum and zoom-to-fit skips it, both
+            // silently.
+            Bounds3d bounds = Bounds3d.FromPoints(Positions);
+
+            return EdgeSet.PolylineCount == 0
+                ? bounds
+                : Bounds3d.Union(bounds, Bounds3d.FromPoints(EdgeSet.Positions));
+        }
+    }
 
     /// <summary>
     /// Computes the enclosed volume by the divergence theorem over the triangles.

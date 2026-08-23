@@ -19,7 +19,7 @@ namespace OpenMCAD.Render.Direct3D12;
 /// this way they are readable next to it: get one wrong and the geometry appears somewhere
 /// unexpected rather than failing.
 /// </remarks>
-[StructLayout(LayoutKind.Explicit, Size = 96)]
+[StructLayout(LayoutKind.Explicit, Size = 112)]
 public struct FrameConstants
 {
     /// <summary>Sixteen floats, row-major, matching the <c>row_major</c> declaration in HLSL.</summary>
@@ -33,6 +33,15 @@ public struct FrameConstants
     /// <summary>Unit vector from the surface towards the light.</summary>
     [FieldOffset(80)]
     public Vector3 LightDirection;
+
+    /// <summary>The render target size in physical pixels.</summary>
+    /// <remarks>
+    /// Only the edge pass reads this, to give a line a width measured in pixels rather than in
+    /// metres. It lives in the shared block anyway: one constant buffer written once a frame and
+    /// bound by both passes is simpler than two that can disagree about the camera.
+    /// </remarks>
+    [FieldOffset(96)]
+    public Vector2 ViewportSize;
 
     /// <summary>Gets how many bytes to upload.</summary>
     public static int SizeInBytes => Marshal.SizeOf<FrameConstants>();
@@ -166,6 +175,12 @@ public sealed class FacePass : IDisposable
 
         foreach (BodyGeometry body in scene.Bodies)
         {
+            if (!body.HasFaces)
+            {
+                // Edges only -- a wireframe body. The edge pass will draw it.
+                continue;
+            }
+
             // Both the bounds and the frustum are in world space, so the origin shift the vertex
             // buffers are expressed in does not enter into it. Culling in the shifted frame would
             // work equally well but would mean this pass knowing about the shift, which belongs to

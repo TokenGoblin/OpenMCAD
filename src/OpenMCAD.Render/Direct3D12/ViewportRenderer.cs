@@ -51,6 +51,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly AutoResetEvent _fenceReached = new(false);
     private readonly DepthBuffer _depth;
     private readonly FacePass _faces;
+    private readonly EdgePass _edges;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -93,6 +94,7 @@ public sealed class ViewportRenderer : IDisposable
 
         _depth = new DepthBuffer(device.Device);
         _faces = new FacePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+        _edges = new EdgePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -124,6 +126,15 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets how many triangles the last frame drew.</summary>
     public int TrianglesDrawn => _faces.TrianglesDrawn;
+
+    /// <summary>Gets how many edge segments the last frame drew.</summary>
+    public int SegmentsDrawn => _edges.SegmentsDrawn;
+
+    /// <summary>Gets or sets how edges are drawn.</summary>
+    public EdgeStyle EdgeStyle { get; set; } = EdgeStyle.Default;
+
+    /// <summary>Gets or sets whether to draw edges at all.</summary>
+    public bool ShowEdges { get; set; } = true;
 
     /// <summary>Gets or sets what to draw.</summary>
     /// <remarks>
@@ -186,8 +197,6 @@ public sealed class ViewportRenderer : IDisposable
         _commands.RSSetScissorRect(_target.Width, _target.Height);
 
         DrawScene();
-
-        // The edge pass goes here (P2-T06).
 
         _commands.ResourceBarrierTransition(
             backBuffer, ResourceStates.RenderTarget, ResourceStates.Present);
@@ -260,6 +269,7 @@ public sealed class ViewportRenderer : IDisposable
 
         _scene?.Dispose();
         _uploads.Dispose();
+        _edges.Dispose();
         _faces.Dispose();
         _depth.Dispose();
         _fence.Dispose();
@@ -349,6 +359,7 @@ public sealed class ViewportRenderer : IDisposable
             ViewProjection = ToShaderMatrix(projection * shiftedView),
             CameraPosition = ToVector3(Camera.Position - origin),
             LightDirection = ToVector3(FacePass.KeyLightDirection(Camera)),
+            ViewportSize = new Vector2(_target.Width, _target.Height),
         };
 
         Span<byte> destination = _uploads.Allocate(FrameConstants.SizeInBytes, out int offset);
@@ -361,6 +372,14 @@ public sealed class ViewportRenderer : IDisposable
         Frustum frustum = Frustum.FromViewProjection(projection * Camera.ViewMatrix());
 
         _faces.Draw(_commands, _scene, address, frustum);
+
+        // Edges last, over the faces they bound. They carry their own depth bias rather than
+        // relying on draw order: order alone would put an edge in front of the face behind it as
+        // well, so the back of a solid would show its own far edges through the front.
+        if (ShowEdges)
+        {
+            _edges.Draw(_commands, _scene, address, EdgeStyle, frustum);
+        }
     }
 
     /// <summary>Waits for a fence value, returning at once if it has already passed.</summary>

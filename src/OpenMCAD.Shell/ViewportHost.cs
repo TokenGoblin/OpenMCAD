@@ -151,6 +151,7 @@ public sealed class ViewportHost : HwndHost
             Snapshot = _snapshot,
         };
 
+        _renderer.EdgeStyle = EdgeStyle.Default.AtScale(VisualTreeHelper.GetDpi(this).DpiScaleX);
         _renderer.ZoomToFit();
 
         // Driven by WPF's own frame tick rather than a timer. CompositionTarget.Rendering fires
@@ -239,6 +240,14 @@ public sealed class ViewportHost : HwndHost
 
         (int width, int height) = CurrentPixelSize();
         _target.Resize(width, height, waitForIdle: _renderer is null);
+
+        // Edge width is specified in physical pixels, so it has to be scaled or a hairline on a
+        // 150% display is two thirds the thickness the design intends. Reapplied on every resize
+        // because a window dragged to another monitor changes scale without being recreated.
+        if (_renderer is not null)
+        {
+            _renderer.EdgeStyle = EdgeStyle.Default.AtScale(VisualTreeHelper.GetDpi(this).DpiScaleX);
+        }
 
         // The first real size is worth a line. BuildWindowCore runs before WPF has measured
         // anything, so the swapchain is necessarily created at 1x1 and only reaches its true size
