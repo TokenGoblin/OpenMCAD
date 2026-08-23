@@ -116,12 +116,17 @@ public sealed partial class SwapChainTests
         using D3D12RenderDevice device = new(Software);
         using SwapChainTarget target = new(device, window.Handle, 256, 256);
 
-        // Without vsync, so the test does not wait on a display refresh it has no reason to.
-        List<int> seen = [];
-        for (int i = 0; i < SwapChainTarget.BufferCount * 2; ++i)
+        // Exactly BufferCount - 1 presents, which is the most a flip chain will accept before it
+        // blocks waiting for the display to release a buffer. Presenting more than that hangs on
+        // any machine where nothing is compositing the window -- a build agent, or a window that
+        // was never shown -- and a hung test is far worse than a missing one. Two presents still
+        // observe three distinct indices, which is the whole claim.
+        List<int> seen = [target.CurrentBackBufferIndex];
+
+        for (int i = 0; i < SwapChainTarget.BufferCount - 1; ++i)
         {
-            seen.Add(target.CurrentBackBufferIndex);
             target.Present(verticalSync: false).Should().BeTrue();
+            seen.Add(target.CurrentBackBufferIndex);
         }
 
         seen.Distinct().Should().HaveCount(
