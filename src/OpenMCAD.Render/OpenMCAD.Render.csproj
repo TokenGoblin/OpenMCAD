@@ -1,5 +1,26 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!--
+      The upload ring hands out spans over persistently mapped GPU memory, which is a raw pointer
+      by nature: the whole point is that the CPU writes straight into a buffer the GPU will read.
+      Confined to that one file; nothing else here needs it.
+    -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <!--
+    ADR-0008. Vortice is a thin P/Invoke wrapper over D3D12, so referencing it from a plain
+    net10.0 library is fine: the assembly still loads anywhere, and only the D3D12 implementation
+    of IRenderDevice fails at run time off Windows. ADR-0014 keeps the windows-specific target
+    framework confined to the shell, and a package reference does not breach that.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D12" />
+    <PackageReference Include="Vortice.DXGI" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../OpenMCAD.Core/OpenMCAD.Core.csproj" />
     <ProjectReference Include="../OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />

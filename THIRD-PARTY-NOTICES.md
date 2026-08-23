@@ -79,7 +79,13 @@ Notes that the table cannot carry:
 | Serilog.Extensions.Logging | 10.0.0 | Apache-2.0 |
 | Serilog.Sinks.Console | 6.1.1 | Apache-2.0 |
 | Serilog.Sinks.File | 7.0.0 | Apache-2.0 |
+| SharpGen.Runtime | 2.4.2-beta | MIT |
+| SharpGen.Runtime.COM | 2.4.2-beta | MIT |
 | System.CommandLine | 2.0.11 | MIT |
+| Vortice.Direct3D12 | 3.8.3 | MIT |
+| Vortice.DirectX | 3.8.3 | MIT |
+| Vortice.DXGI | 3.8.3 | MIT |
+| Vortice.Mathematics | 2.1.0 | MIT |
 
 ## Test-only components
 
