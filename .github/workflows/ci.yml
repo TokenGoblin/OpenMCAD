@@ -66,6 +66,28 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-
 
+      # The runner's preinstalled vcpkg is a shallow clone pinned to whatever commit the image
+      # happened to ship with, so the builtin-baseline in native/vcpkg.json is almost never in its
+      # history and `vcpkg install` fails before it does any work: "failed to git show
+      # versions/baseline.json". Fetching the single pinned commit is far cheaper than unshallowing
+      # the whole of microsoft/vcpkg, and keeps the pin doing its job -- loosening the baseline to
+      # whatever the image has would make the dependency set vary by runner image, which ADR-0011
+      # exists to prevent.
+      - name: Make the pinned vcpkg baseline available
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content native/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          Write-Host "Fetching vcpkg baseline $baseline into $root"
+
+          git -C $root fetch --depth 1 origin $baseline
+          if ($LASTEXITCODE -ne 0) {
+            # Older servers refuse a fetch by bare SHA. Unshallowing is slower but always works.
+            Write-Host 'Fetch by commit failed; unshallowing instead.'
+            git -C $root fetch --unshallow
+            if ($LASTEXITCODE -ne 0) { throw 'Could not make the pinned vcpkg baseline available.' }
+          }
+
       - name: Compute build metadata
         id: meta
         shell: pwsh

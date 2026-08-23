@@ -252,6 +252,25 @@ else {
             throw 'Neither VCPKG_ROOT nor VCPKG_INSTALLATION_ROOT is set, but -WithOcct needs vcpkg to supply OCCT. See native/vcpkg.json.'
         }
         $cmakeArgs += '-DCMAKE_TOOLCHAIN_FILE=' + (Join-Path $toolchain 'scripts/buildsystems/vcpkg.cmake')
+
+        # vcpkg resolves every dependency version from the commit named by builtin-baseline, so a
+        # vcpkg clone that does not contain that commit fails with a message about
+        # versions/baseline.json that says nothing about the actual cause. A shallow clone is the
+        # usual reason -- the GitHub runner images ship one -- and it is worth naming here, because
+        # the vcpkg error sends people to look at their manifest instead of their clone.
+        $baseline = (Get-Content (Join-Path $RepoRoot 'native/vcpkg.json') -Raw |
+            ConvertFrom-Json).'builtin-baseline'
+
+        if ($baseline) {
+            & git -C $toolchain cat-file -e "$baseline^{commit}" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw (
+                    "The vcpkg clone at $toolchain does not contain the baseline commit " +
+                    "$baseline that native/vcpkg.json pins, so dependency versions cannot be " +
+                    "resolved. It is probably a shallow clone. Run: " +
+                    "git -C $toolchain fetch --depth 1 origin $baseline")
+            }
+        }
     }
 
     Write-Host "    cmake $($cmakeArgs -join ' ')"
