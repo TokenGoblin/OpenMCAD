@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../OpenMCAD.Core/OpenMCAD.Core.csproj" />
+    <ProjectReference Include="../OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
   </ItemGroup>
 
 </Project>
