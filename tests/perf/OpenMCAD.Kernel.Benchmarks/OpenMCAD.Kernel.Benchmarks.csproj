@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!--
+      No custom AssemblyName. BenchmarkDotNet locates the project by matching the running exe's
+      name against a .csproj of the same name, so renaming the output makes it fail to generate
+      the per-benchmark host with a message that blames the boilerplate rather than the rename.
+    -->
+
+    <!--
+      BenchmarkDotNet spawns a separate process per benchmark and needs to see the project's own
+      assembly, so server GC and tiered PGO are left at their defaults rather than tuned here:
+      the numbers should describe the application's configuration, not the harness's.
+    -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
+  </ItemGroup>
+
+</Project>

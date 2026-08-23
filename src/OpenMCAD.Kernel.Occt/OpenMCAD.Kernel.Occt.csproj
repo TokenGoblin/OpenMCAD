@@ -10,7 +10,11 @@
 
   <!--
     The native shim and its OCCT dependency closure, produced by build.ps1's native step into
-    native/install/bin and written there by CMake's RUNTIME_DEPENDENCY_SET.
+    native/install/$(Configuration)/bin and written there by CMake's RUNTIME_DEPENDENCY_SET.
+
+    Per configuration, because CMake installs into one prefix: a shared directory lets a Debug and
+    a Release build overwrite each other's OCCT DLLs and leaves both CRT variants side by side,
+    so whichever built last is what every managed configuration loads.
 
     Content rather than None, deliberately: Content flows through a ProjectReference to the
     referencing project's output, and None does not. Test assemblies reference this project and
@@ -22,7 +26,7 @@
     "OcctKernel throws when constructed" rather than "the solution does not build".
   -->
   <PropertyGroup>
-    <OpenMcadNativeBinDir>$(MSBuildThisFileDirectory)../../native/install/bin/</OpenMcadNativeBinDir>
+    <OpenMcadNativeBinDir>$(MSBuildThisFileDirectory)../../native/install/$(Configuration)/bin/</OpenMcadNativeBinDir>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('$(OpenMcadNativeBinDir)')">

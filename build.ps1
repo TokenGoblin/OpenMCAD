@@ -62,7 +62,13 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = $PSScriptRoot
 $ArtifactsDir = Join-Path $RepoRoot 'artifacts'
 $NativeBuildDir = Join-Path $RepoRoot 'native/build'
-$NativeInstallDir = Join-Path $RepoRoot 'native/install'
+# Per configuration, not shared. CMake installs into one prefix, so a single directory means a
+# Debug build and a Release build overwrite each other's OCCT DLLs and leave both CRT variants
+# side by side -- and whichever ran last is what every managed configuration then loads. Mixing
+# debug and release runtimes is the kind of defect that produces crashes nobody can reproduce, and
+# a Debug shim silently benchmarked as Release is a number worse than no number.
+$NativeInstallRoot = Join-Path $RepoRoot 'native/install'
+$NativeInstallDir = Join-Path $NativeInstallRoot $Configuration
 $TestResultsDir = Join-Path $ArtifactsDir 'test-results'
 
 function Write-Step {
@@ -171,7 +177,7 @@ function Assert-MsvcConfigured {
 # --- Clean ---------------------------------------------------------------------------------
 if ($Clean) {
     Write-Step 'Cleaning'
-    foreach ($dir in @($ArtifactsDir, $NativeBuildDir, $NativeInstallDir)) {
+    foreach ($dir in @($ArtifactsDir, $NativeBuildDir, $NativeInstallRoot)) {
         if (Test-Path $dir) {
             Remove-Item -Recurse -Force $dir
             Write-Host "    removed $dir"
@@ -257,7 +263,7 @@ else {
     & cmake --build $NativeBuildDir --config $Configuration --parallel
     if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE." }
 
-    & cmake --install $NativeBuildDir --config $Configuration
+    & cmake --install $NativeBuildDir --config $Configuration --prefix $NativeInstallDir
     if ($LASTEXITCODE -ne 0) { throw "Native install failed with exit code $LASTEXITCODE." }
 
     $nativeBuilt = $true

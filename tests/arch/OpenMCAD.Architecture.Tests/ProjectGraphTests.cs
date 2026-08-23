@@ -135,6 +135,11 @@ public sealed class ProjectGraphTests
             "The corpus runner needs to replay every fixture twice on fresh kernels for the "
             + "determinism gate, and to select a kernel at run time. Neither fits a test host, so "
             + "it is an executable that build.ps1 and the nightly workflow invoke directly.",
+
+        ["OpenMCAD.Kernel.Benchmarks"] =
+            "BenchmarkDotNet is its own host: it spawns a process per benchmark, needs Release "
+            + "and a quiet machine, and takes minutes. Running it inside the test suite would "
+            + "make every build slow and every measurement worthless.",
     };
 
     [Fact]
