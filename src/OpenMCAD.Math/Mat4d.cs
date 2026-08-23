@@ -199,6 +199,145 @@ public readonly record struct Mat4d
             0, 0, 0, 1);
     }
 
+    /// <summary>
+    /// Builds a right-handed view matrix looking from <paramref name="eye"/> at
+    /// <paramref name="target"/>.
+    /// </summary>
+    /// <param name="eye">Where the camera is.</param>
+    /// <param name="target">What it looks at.</param>
+    /// <param name="up">Which way is up. Need not be perpendicular to the view direction.</param>
+    /// <returns>The world-to-view transform.</returns>
+    /// <exception cref="ArgumentException">
+    /// The eye coincides with the target, or <paramref name="up"/> is parallel to the view
+    /// direction, so no orientation is determined.
+    /// </exception>
+    /// <remarks>
+    /// <para>
+    /// Right-handed, with the camera looking down its own <b>negative</b> Z. That is the
+    /// convention the rest of this library already uses — <see cref="Vec3d.UnitZ"/> is up in the
+    /// world, and the kernel builds cylinders along Z — and mixing handedness between the view and
+    /// the projection is the classic way to end up with a scene that renders inside out.
+    /// </para>
+    /// <para>
+    /// Degenerate input throws rather than producing a matrix full of NaN. A camera whose target
+    /// has collapsed onto its eye is a bug in whatever moved it, and a NaN view matrix propagates
+    /// into every subsequent frame as a blank screen with no clue as to why.
+    /// </para>
+    /// </remarks>
+    public static Mat4d LookAt(Vec3d eye, Vec3d target, Vec3d up)
+    {
+        Vec3d forward = target - eye;
+        double distance = forward.Length;
+
+        if (distance < Tolerance.Linear)
+        {
+            throw new ArgumentException(
+                "The camera cannot look at a point it is already at: the eye and the target "
+                + "coincide, so no view direction is determined.",
+                nameof(target));
+        }
+
+        forward /= distance;
+
+        Vec3d right = Vec3d.Cross(forward, up);
+        double rightLength = right.Length;
+
+        if (rightLength < Tolerance.Linear)
+        {
+            throw new ArgumentException(
+                "The up direction is parallel to the view direction, so the camera's roll is not "
+                + "determined. Pick an up vector that is not along the line of sight.",
+                nameof(up));
+        }
+
+        right /= rightLength;
+
+        // Recomputed rather than taken from the caller, so a non-perpendicular up still produces
+        // an orthonormal basis instead of a subtly sheared view.
+        Vec3d trueUp = Vec3d.Cross(right, forward);
+
+        // Rows are the camera basis; the fourth column is the eye expressed in that basis. The
+        // camera looks along -Z, hence the negated forward row.
+        return new Mat4d(
+            right.X, right.Y, right.Z, -Vec3d.Dot(right, eye),
+            trueUp.X, trueUp.Y, trueUp.Z, -Vec3d.Dot(trueUp, eye),
+            -forward.X, -forward.Y, -forward.Z, Vec3d.Dot(forward, eye),
+            0.0, 0.0, 0.0, 1.0);
+    }
+
+    /// <summary>
+    /// Builds a right-handed perspective projection with a depth range of zero to one.
+    /// </summary>
+    /// <param name="verticalFieldOfView">The vertical field of view, in radians.</param>
+    /// <param name="aspectRatio">Width divided by height.</param>
+    /// <param name="nearPlane">Distance to the near plane. Must be positive.</param>
+    /// <param name="farPlane">Distance to the far plane.</param>
+    /// <returns>The view-to-clip transform.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">A parameter is out of range.</exception>
+    /// <remarks>
+    /// <para>
+    /// Depth maps to zero at the near plane and one at the far plane, which is Direct3D's
+    /// convention rather than OpenGL's minus-one-to-one. Getting this wrong costs half the depth
+    /// buffer and shows up as z-fighting long before anyone suspects the projection.
+    /// </para>
+    /// <para>
+    /// <b>The near plane is the number that matters.</b> Perspective depth precision is
+    /// overwhelmingly determined by the ratio of far to near, not by their difference: halving the
+    /// near plane costs as much precision as doubling the far one. A camera that fixes the near
+    /// plane at some small constant will z-fight on coplanar faces at any reasonable scene size,
+    /// which is why <c>Camera</c> derives both from the scene bounds instead.
+    /// </para>
+    /// </remarks>
+    public static Mat4d PerspectiveFieldOfView(
+        double verticalFieldOfView, double aspectRatio, double nearPlane, double farPlane)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(verticalFieldOfView);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(verticalFieldOfView, System.Math.PI);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(aspectRatio);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(nearPlane);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(farPlane, nearPlane);
+
+        double height = 1.0 / System.Math.Tan(verticalFieldOfView * 0.5);
+        double width = height / aspectRatio;
+        double range = farPlane / (nearPlane - farPlane);
+
+        return new Mat4d(
+            width, 0.0, 0.0, 0.0,
+            0.0, height, 0.0, 0.0,
+            0.0, 0.0, range, range * nearPlane,
+            0.0, 0.0, -1.0, 0.0);
+    }
+
+    /// <summary>
+    /// Builds a right-handed orthographic projection with a depth range of zero to one.
+    /// </summary>
+    /// <param name="width">The width of the view volume, in world units.</param>
+    /// <param name="height">The height of the view volume, in world units.</param>
+    /// <param name="nearPlane">Distance to the near plane. May be negative.</param>
+    /// <param name="farPlane">Distance to the far plane.</param>
+    /// <returns>The view-to-clip transform.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">A parameter is out of range.</exception>
+    /// <remarks>
+    /// Unlike the perspective case the near plane may be negative, and usually should be: an
+    /// orthographic CAD view is expected to show geometry behind the camera's nominal position
+    /// rather than clipping it, because moving the camera does not change what an orthographic
+    /// projection looks like and users do not expect it to clip.
+    /// </remarks>
+    public static Mat4d Orthographic(double width, double height, double nearPlane, double farPlane)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(farPlane, nearPlane);
+
+        double depth = 1.0 / (nearPlane - farPlane);
+
+        return new Mat4d(
+            2.0 / width, 0.0, 0.0, 0.0,
+            0.0, 2.0 / height, 0.0, 0.0,
+            0.0, 0.0, depth, depth * nearPlane,
+            0.0, 0.0, 0.0, 1.0);
+    }
+
     /// <summary>Returns the transpose of this matrix.</summary>
     public Mat4d Transposed() => new(
         M11, M21, M31, M41,
