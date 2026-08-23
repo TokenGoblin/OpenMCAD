@@ -26,10 +26,52 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
+  # OCCT from source is roughly three quarters of an hour on a runner, and both build
+  # configurations need the same binaries -- vcpkg builds a port's debug and release variants
+  # together. Doing it here, once, is the difference between one slow job and two.
+  #
+  # It also breaks a deadlock. The build jobs used to build OCCT themselves and hit the
+  # thirty-minute timeout; a timed-out job never reaches its cache-save step, so the cache stayed
+  # cold and the next run timed out in exactly the same place. Nothing would ever have gone green.
+  vcpkg:
+    name: Prime the vcpkg binary cache
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Make the pinned vcpkg baseline available
+        shell: pwsh
+        run: |
+          $baseline = (Get-Content native/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          $root = $env:VCPKG_INSTALLATION_ROOT
+          git -C $root fetch --depth 1 origin $baseline
+          if ($LASTEXITCODE -ne 0) {
+            git -C $root fetch --unshallow
+            if ($LASTEXITCODE -ne 0) { throw 'Could not make the pinned vcpkg baseline available.' }
+          }
+
+      - name: Build the dependencies
+        shell: pwsh
+        working-directory: native
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install --triplet x64-windows
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed (exit $LASTEXITCODE)" }
+
   build:
     name: Build and test (${{ matrix.configuration }})
+    needs: vcpkg
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     strategy:
       fail-fast: false
