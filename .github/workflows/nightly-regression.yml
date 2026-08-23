@@ -30,9 +30,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # TODO(P1-T06): add 'occt' once the shim implements the operations. The corpus is
-        # kernel-agnostic by design, so that is the whole integration.
-        kernel: [fake]
+        # Both, every night. The fake kernel is the fast signal and the reference; OCCT is what
+        # ships. A fixture that passes against one and fails against the other is the abstraction
+        # (ADR-0002) breaking, which is exactly what this corpus exists to catch.
+        kernel: [fake, occt]
 
     steps:
       - name: Checkout
@@ -45,8 +46,21 @@ jobs:
         with:
           global-json-file: global.json
 
+      # OCCT from source is most of an hour cold and seconds warm, so the binary cache carries
+      # the nightly as much as it carries CI.
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      # Built through build.ps1 rather than dotnet build, because the corpus needs the native
+      # shim and its OCCT dependency closure beside the runner, and only the native step produces
+      # those.
       - name: Build
-        run: dotnet build OpenMCAD.slnx --configuration Release --nologo
+        shell: pwsh
+        run: ./build.ps1 -Configuration Release -WithOcct -SkipTests -SkipRegression
 
       - name: Run the corpus with the determinism gate
         shell: pwsh
@@ -61,7 +75,7 @@ jobs:
 
       - name: Run the full test suite
         shell: pwsh
-        run: ./build.ps1 -Configuration Release -SkipRegression
+        run: ./build.ps1 -Configuration Release -WithOcct -SkipRegression
 
       - name: Upload test results
         if: always()

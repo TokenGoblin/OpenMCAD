@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../../../src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.App/OpenMCAD.App.csproj" />
   </ItemGroup>
 

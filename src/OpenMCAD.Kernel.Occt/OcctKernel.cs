@@ -82,8 +82,9 @@ public sealed class OcctKernel : GeometryKernelBase
         // cannot, which is exactly the difference this flag exists to express.
         ProducesExactMassProperties: true,
 
-        // P1-T11. The shim reports an honest rung today but only ever attempts one.
-        SupportsRetryLadder: false);
+        // P1-T11. Booleans climb model tolerance, conditioned inputs, then relaxed tolerance;
+        // blends climb model tolerance, conditioned inputs, then edge by edge.
+        SupportsRetryLadder: true);
 
     // --- Primitives ---------------------------------------------------------------------------------
 
@@ -572,7 +573,20 @@ public sealed class OcctKernel : GeometryKernelBase
 
             KernelShape produced = new(shape);
             HistoryMap map = NativeHistory.Read(history, inputs, produced);
-            ImmutableArray<KernelDiagnostic> diagnostics = Native.DrainDiagnostics();
+
+            // The subjects are what a diagnostic can name: the edges a blend was asked to apply
+            // to. The shim reports refused ones by tag, and this is what turns those back into
+            // entities the caller recognises.
+            Dictionary<ulong, SubEntity> named = [];
+            if (!subjects.IsDefaultOrEmpty)
+            {
+                foreach (SubEntity subject in subjects)
+                {
+                    named[subject.Tag] = subject;
+                }
+            }
+
+            ImmutableArray<KernelDiagnostic> diagnostics = Native.DrainDiagnostics(named);
 
             KernelShapeHandle handle = new(produced, this);
 

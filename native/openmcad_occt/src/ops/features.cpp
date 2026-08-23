@@ -36,31 +36,21 @@
 #include <BRepTools.hxx>
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
+#include <Precision.hxx>
+#include <Standard_Failure.hxx>
 #include <gp.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Vec.hxx>
 
 #include "openmcad_canonical.h"
 #include "openmcad_handles.h"
+#include "openmcad_ladder.h"
 #include "openmcad_ops.g.h"
 #include "openmcad_roles.h"
 
 namespace openmcad::ops {
 
 namespace {
-
-/*
- * Mirrors OpenMCAD.Kernel.RetryRung. The shim reports the managed enum's values directly rather
- * than a private numbering the managed side would have to translate: two numberings for one
- * concept is how a translation table ends up wrong in one direction only.
- */
-enum class Rung : int32_t
-{
-    NotApplicable = 0,
-    ModelTolerance = 1,
-    Conditioned = 2,
-    FuzzyTolerance = 3,
-};
 
 /* The three entity kinds an operation must account for, coarsest first. */
 constexpr TopAbs_ShapeEnum kMappedKinds[] = {TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX};
@@ -119,13 +109,20 @@ void mapReported(
     ShapeRef afterRef,
     TopAbs_ShapeEnum kind,
     Role generatedRole,
-    Role modifiedRole)
+    Role modifiedRole,
+    const Conditioned& correspondence)
 {
     for (const TopoDS_Shape& input : enumerate_canonical(before, kind))
     {
         const uint64_t inputTag = handles().store_entity(beforeRef, input).tag;
 
-        for (const TopoDS_Shape& made : builder.Generated(input))
+        // The builder saw the conditioned shape, if conditioning ran. The caller holds handles to
+        // the original, so the tag comes from the original and the question goes to its
+        // counterpart -- otherwise a rung-2 result reports an empty history and every entity in it
+        // looks newly created.
+        const TopoDS_Shape& asked = correspondence.of(input);
+
+        for (const TopoDS_Shape& made : builder.Generated(asked))
         {
             if (!present.Contains(made))
             {
@@ -138,7 +135,7 @@ void mapReported(
                 static_cast<int32_t>(generatedRole));
         }
 
-        for (const TopoDS_Shape& changed : builder.Modified(input))
+        for (const TopoDS_Shape& changed : builder.Modified(asked))
         {
             if (!present.Contains(changed))
             {
@@ -153,7 +150,7 @@ void mapReported(
 
         // Deliberately not "else if". An edge that is filleted away is both deleted and the reason
         // the blend face exists; HistoryMapBuilder permits that pair and the fillet case needs it.
-        if (builder.IsDeleted(input))
+        if (builder.IsDeleted(asked))
         {
             record.add_deleted(inputTag);
         }
@@ -169,7 +166,8 @@ void mapAll(
     ShapeRef afterRef,
     Role generatedRole,
     Role modifiedRole,
-    FallbackRoles fallback)
+    FallbackRoles fallback,
+    const Conditioned& correspondence)
 {
     const ShapeIndexedMap present = nameableEntities(after);
 
@@ -179,7 +177,7 @@ void mapAll(
         {
             mapReported(
                 record, builder, entry.first, entry.second, present, afterRef, kind,
-                generatedRole, modifiedRole);
+                generatedRole, modifiedRole, correspondence);
 
             sweep_retained(record, entry.first, entry.second, after, afterRef, kind);
         }
@@ -336,7 +334,7 @@ void completeSweep(
 
         mapReported(
             *record, builder, profile, profileRef, present, shape, kind, generated,
-            Role::Transformed);
+            Role::Transformed, Conditioned{});
 
         sweep_retained(*record, profile, profileRef, built, shape, kind);
     }
@@ -437,74 +435,183 @@ void boolean(
         throw invalid_input("A boolean needs at least one tool body.");
     }
 
-    const TopoDS_Shape& targetShape = handles().resolve(target);
+    // Resolve every handle up front, so a bad tag fails before any modelling work is done.
+    (void)handles().resolve(target);
+    for (uint64_t tag : tools)
+    {
+        (void)handles().resolve(ShapeRef{tag});
+    }
 
-    ShapeList arguments;
-    ShapeList toolShapes;
-    arguments.Append(targetShape);
+    if (operation < 0 || operation > 2)
+    {
+        throw invalid_input(
+            "Unknown boolean operation " + std::to_string(operation)
+            + ". Expected 0 union, 1 subtract, or 2 intersect.");
+    }
 
+    // The ladder (PLAN.md 5.2.4). Each rung is a complete attempt, and the loop exists so that
+    // adding a rung later is adding an entry rather than another level of nesting.
+    const Rung ladder[] = {Rung::ModelTolerance, Rung::Conditioned, Rung::FuzzyTolerance};
+
+    std::unique_ptr<BRepAlgoAPI_BooleanOperation> builder;
+    Conditioned targetConditioned;
+    std::vector<Conditioned> toolsConditioned;
+    TopoDS_Shape built;
+    Rung succeeded = Rung::NotApplicable;
+    std::string lastReason;
+
+    for (Rung attempt : ladder)
+    {
+        if (attempt == Rung::Conditioned)
+        {
+            targetConditioned = condition(handles().resolve(target));
+
+            toolsConditioned.clear();
+            toolsConditioned.reserve(tools.size());
+
+            bool repaired = targetConditioned.changed;
+            for (uint64_t tag : tools)
+            {
+                toolsConditioned.push_back(condition(handles().resolve(ShapeRef{tag})));
+                repaired = repaired || toolsConditioned.back().changed;
+            }
+
+            // Conditioning that changed nothing cannot change the outcome. Retrying an identical
+            // attempt to obtain an identical failure only spends the user's time.
+            if (!repaired)
+            {
+                note_rung_failed(
+                    "The boolean operation", attempt, "conditioning found nothing to repair");
+                continue;
+            }
+        }
+
+        switch (operation)
+        {
+            case 0:  builder = std::make_unique<BRepAlgoAPI_Fuse>(); break;
+            case 1:  builder = std::make_unique<BRepAlgoAPI_Cut>(); break;
+            default: builder = std::make_unique<BRepAlgoAPI_Common>(); break;
+        }
+
+        ShapeList arguments;
+        ShapeList toolShapes;
+
+        if (attempt == Rung::Conditioned)
+        {
+            arguments.Append(targetConditioned.shape);
+            for (const Conditioned& tool : toolsConditioned)
+            {
+                toolShapes.Append(tool.shape);
+            }
+        }
+        else
+        {
+            arguments.Append(handles().resolve(target));
+            for (uint64_t tag : tools)
+            {
+                toolShapes.Append(handles().resolve(ShapeRef{tag}));
+            }
+        }
+
+        builder->SetArguments(arguments);
+        builder->SetTools(toolShapes);
+
+        // ADR-0011. OCCT's parallel boolean partitions work across threads, and the order faces
+        // are merged in can change which of several tolerance-equal results comes out.
+        // Determinism is worth more here than the throughput, and ADR-0004 already confines the
+        // kernel to a single thread.
+        builder->SetRunParallel(false);
+
+        // The inputs are still owned by the handle table and may be referenced by another feature
+        // in the tree. Letting OCCT modify them in place would corrupt the history of operations
+        // that have already run.
+        builder->SetNonDestructive(true);
+
+        if (tolerance > 0.0)
+        {
+            builder->SetFuzzyValue(tolerance);
+        }
+
+        if (attempt == Rung::FuzzyTolerance)
+        {
+            // Relaxed by a defined factor of the model tolerance, not by whatever makes the
+            // failure go away. A fuzzy value large enough to fix anything is also large enough to
+            // merge two features the user meant to keep apart, and that result looks plausible
+            // while being wrong -- the outcome PLAN.md 6.1 exists to prevent. A caller who named a
+            // value has already made that judgement, so theirs is used instead.
+            const double base = tolerance > 0.0 ? tolerance : Precision::Confusion();
+            builder->SetFuzzyValue(fuzzy_tolerance > 0.0 ? fuzzy_tolerance : base * 100.0);
+        }
+
+        builder->Build();
+
+        if (builder->HasErrors())
+        {
+            std::ostringstream detail;
+            builder->DumpErrors(detail);
+            lastReason = detail.str();
+            note_rung_failed("The boolean operation", attempt, lastReason);
+            continue;
+        }
+
+        if (builder->Shape().IsNull())
+        {
+            lastReason = "the operation produced no geometry";
+            note_rung_failed("The boolean operation", attempt, lastReason);
+            continue;
+        }
+
+        built = builder->Shape();
+        succeeded = attempt;
+        break;
+    }
+
+    if (succeeded == Rung::NotApplicable)
+    {
+        // Rung 5. The message names what was tried and what to change, because "the boolean
+        // failed" leaves the user with nowhere to go.
+        std::string message =
+            "The boolean operation failed at every stage: at model tolerance, after repairing the "
+            "input bodies, and at a relaxed tolerance.";
+
+        if (!lastReason.empty())
+        {
+            message += " The kernel reported: " + lastReason;
+        }
+
+        message +=
+            " The bodies may not intersect at all, or they may touch exactly along a face, which "
+            "is ambiguous. Moving one body slightly so the overlap is unambiguous usually resolves "
+            "it.";
+
+        throw kernel_error(OPENMCAD_ERROR_KERNEL_FAILURE, message);
+    }
+
+    rung = static_cast<int32_t>(succeeded);
+
+    // History is mapped against the shapes the caller holds handles to, whichever rung produced
+    // the result. The correspondence carries the translation when conditioning ran.
     std::vector<std::pair<TopoDS_Shape, ShapeRef>> inputs;
-    inputs.emplace_back(targetShape, target);
-
+    inputs.emplace_back(handles().resolve(target), target);
     for (uint64_t tag : tools)
     {
         const ShapeRef toolRef{tag};
-        const TopoDS_Shape& tool = handles().resolve(toolRef);
-        toolShapes.Append(tool);
-        inputs.emplace_back(tool, toolRef);
+        inputs.emplace_back(handles().resolve(toolRef), toolRef);
     }
 
-    std::unique_ptr<BRepAlgoAPI_BooleanOperation> builder;
-    switch (operation)
+    Conditioned correspondence;
+    if (succeeded == Rung::Conditioned)
     {
-        case 0: builder = std::make_unique<BRepAlgoAPI_Fuse>(); break;
-        case 1: builder = std::make_unique<BRepAlgoAPI_Cut>(); break;
-        case 2: builder = std::make_unique<BRepAlgoAPI_Common>(); break;
-        default:
-            throw invalid_input(
-                "Unknown boolean operation " + std::to_string(operation)
-                + ". Expected 0 union, 1 subtract, or 2 intersect.");
-    }
-
-    builder->SetArguments(arguments);
-    builder->SetTools(toolShapes);
-
-    // ADR-0011. OCCT's parallel boolean partitions work across threads, and the order faces are
-    // merged in can change which of several tolerance-equal results comes out. Determinism is
-    // worth more here than the throughput, and ADR-0004 already confines the kernel to one thread.
-    builder->SetRunParallel(false);
-
-    // The inputs are still owned by the handle table and may be referenced by another feature in
-    // the tree. Letting OCCT modify them in place would corrupt the history of operations that
-    // have already run.
-    builder->SetNonDestructive(true);
-
-    if (tolerance > 0.0)
-    {
-        builder->SetFuzzyValue(tolerance);
-    }
-
-    // The ladder proper is P1-T11. Until it exists this reports what actually happened rather
-    // than a placeholder: a plain attempt at model tolerance, or -- if the caller asked for one
-    // explicitly -- a fuzzy attempt.
-    rung = static_cast<int32_t>(Rung::ModelTolerance);
-    if (fuzzy_tolerance > 0.0)
-    {
-        builder->SetFuzzyValue(fuzzy_tolerance);
-        rung = static_cast<int32_t>(Rung::FuzzyTolerance);
-    }
-
-    builder->Build();
-
-    if (builder->HasErrors())
-    {
-        reportFailure(*builder, "The boolean operation");
-    }
-
-    const TopoDS_Shape built = builder->Shape();
-    if (built.IsNull())
-    {
-        throw kernel_error(OPENMCAD_ERROR_KERNEL_FAILURE, "The boolean produced no geometry.");
+        correspondence = targetConditioned;
+        for (const Conditioned& tool : toolsConditioned)
+        {
+            // OCCT's own iterator, not the STL-compatible one: the latter yields values only, and
+            // merging two correspondences needs the keys.
+            for (ShapeImageMap::Iterator it(tool.image); it.More(); it.Next())
+            {
+                correspondence.image.Bind(it.Key(), it.Value());
+            }
+        }
     }
 
     const ShapeRef shape = handles().store(built);
@@ -513,7 +620,8 @@ void boolean(
     mapAll(
         *record, *builder, inputs, built, shape,
         Role::SplitPositive, Role::Trimmed,
-        FallbackRoles{Role::CoincidentFace, Role::IntersectionEdge, Role::IntersectionVertex});
+        FallbackRoles{Role::CoincidentFace, Role::IntersectionEdge, Role::IntersectionVertex},
+        correspondence);
 
     result.set(shape);
     history.set(handles().store(std::move(record)));
@@ -525,7 +633,15 @@ namespace {
  * Shared front half of fillet and chamfer: both take the same edge/value pairing, and both have to
  * reject the same mistakes.
  */
-std::vector<std::pair<TopoDS_Edge, double>> blendInputs(
+/* One selected edge: what the caller called it, which edge it is, and how much to take off. */
+struct BlendEdge
+{
+    uint64_t tag;
+    TopoDS_Edge edge;
+    double value;
+};
+
+std::vector<BlendEdge> blendInputs(
     ShapeRef body, std::span<const uint64_t> edges, std::span<const double> values,
     const char* valueName)
 {
@@ -542,7 +658,7 @@ std::vector<std::pair<TopoDS_Edge, double>> blendInputs(
             + ". The operation needs exactly one per edge.");
     }
 
-    std::vector<std::pair<TopoDS_Edge, double>> selected;
+    std::vector<BlendEdge> selected;
     selected.reserve(edges.size());
 
     for (size_t i = 0; i < edges.size(); ++i)
@@ -569,7 +685,7 @@ std::vector<std::pair<TopoDS_Edge, double>> blendInputs(
                 "Entity " + std::to_string(i) + " is not an edge, so it cannot be blended.");
         }
 
-        selected.emplace_back(TopoDS::Edge(entity), values[i]);
+        selected.push_back(BlendEdge{edges[i], TopoDS::Edge(entity), values[i]});
     }
 
     return selected;
@@ -591,11 +707,12 @@ std::vector<std::pair<TopoDS_Edge, double>> blendInputs(
 void mapBlendToNeighbours(
     HistoryRecord& record,
     BRepBuilderAPI_MakeShape& builder,
-    const std::vector<std::pair<TopoDS_Edge, double>>& edges,
+    const std::vector<BlendEdge>& edges,
     const TopoDS_Shape& before,
     ShapeRef beforeRef,
     const TopoDS_Shape& after,
     ShapeRef afterRef,
+    const Conditioned& correspondence,
     Role role)
 {
     ShapeAncestorMap edgeToFaces;
@@ -604,14 +721,14 @@ void mapBlendToNeighbours(
     ShapeIndexedMap present;
     TopExp::MapShapes(after, TopAbs_FACE, present);
 
-    for (const auto& entry : edges)
+    for (const BlendEdge& entry : edges)
     {
-        if (!edgeToFaces.Contains(entry.first))
+        if (!edgeToFaces.Contains(entry.edge))
         {
             continue;
         }
 
-        for (const TopoDS_Shape& made : builder.Generated(entry.first))
+        for (const TopoDS_Shape& made : builder.Generated(correspondence.of(entry.edge)))
         {
             if (made.ShapeType() != TopAbs_FACE || !present.Contains(made))
             {
@@ -620,7 +737,7 @@ void mapBlendToNeighbours(
 
             const uint64_t blendTag = handles().store_entity(afterRef, made).tag;
 
-            for (const TopoDS_Shape& neighbour : edgeToFaces.FindFromKey(entry.first))
+            for (const TopoDS_Shape& neighbour : edgeToFaces.FindFromKey(entry.edge))
             {
                 record.add_generated(
                     handles().store_entity(beforeRef, neighbour).tag,
@@ -634,30 +751,15 @@ void mapBlendToNeighbours(
 /* Shared tail of fillet and chamfer. */
 void completeBlend(
     BRepBuilderAPI_MakeShape& builder,
-    const std::vector<std::pair<TopoDS_Edge, double>>& edges,
+    const TopoDS_Shape& built,
+    const std::vector<BlendEdge>& edges,
     Role blendRole,
     const TopoDS_Shape& before,
     ShapeRef bodyRef,
+    const Conditioned& correspondence,
     ShapeOut result,
     HistoryOut history)
 {
-    const TopoDS_Shape built = builder.Shape();
-    if (built.IsNull())
-    {
-        throw kernel_error(OPENMCAD_ERROR_KERNEL_FAILURE, "The blend produced no geometry.");
-    }
-
-    // A blend that overruns its neighbours produces a self-intersecting body that OCCT still
-    // reports as done. Catching it here turns a corrupt model into a failed feature, which the
-    // rebuild can recover from.
-    if (!BRepCheck_Analyzer(built).IsValid())
-    {
-        throw kernel_error(
-            OPENMCAD_ERROR_KERNEL_FAILURE,
-            "The blend produced an invalid body. The radius is probably too large for the "
-            "geometry it has to fit into.");
-    }
-
     const ShapeRef shape = handles().store(built);
     auto record = std::make_unique<HistoryRecord>();
 
@@ -667,12 +769,212 @@ void completeBlend(
     mapAll(
         *record, builder, inputs, built, shape,
         blendRole, Role::Trimmed,
-        FallbackRoles{Role::BlendCornerFace, Role::BlendEdge, Role::IntersectionVertex});
+        FallbackRoles{Role::BlendCornerFace, Role::BlendEdge, Role::IntersectionVertex},
+        correspondence);
 
-    mapBlendToNeighbours(*record, builder, edges, before, bodyRef, built, shape, blendRole);
+    mapBlendToNeighbours(
+        *record, builder, edges, before, bodyRef, built, shape, correspondence, blendRole);
 
     result.set(shape);
     history.set(handles().store(std::move(record)));
+}
+
+
+/*
+ * One blend attempt: build the given subset of edges against the given body.
+ *
+ * Returns false rather than throwing, because every caller here is a rung that has somewhere else
+ * to go. The checks are deliberately strict -- IsDone alone is not enough, since a blend that
+ * overruns its neighbours produces a self-intersecting body that OCCT still reports as done, and
+ * a corrupt body is a worse outcome than a failed feature.
+ */
+template <typename Builder, typename Adder>
+bool attemptBlend(
+    const TopoDS_Shape& body,
+    const std::vector<BlendEdge>& edges,
+    const std::vector<size_t>& which,
+    const Conditioned& correspondence,
+    Adder&& add,
+    std::unique_ptr<Builder>& builder,
+    TopoDS_Shape& built,
+    std::string& reason)
+{
+    if (which.empty())
+    {
+        reason = "no edges to apply";
+        return false;
+    }
+
+    try
+    {
+        builder = std::make_unique<Builder>(body);
+
+        for (size_t index : which)
+        {
+            const TopoDS_Shape& edge = correspondence.of(edges[index].edge);
+
+            // Conditioning can remove an edge outright -- that is the point of it. An edge that no
+            // longer exists cannot be blended, and saying so is better than blending the wrong one.
+            if (edge.IsNull() || edge.ShapeType() != TopAbs_EDGE)
+            {
+                reason = "a selected edge did not survive input conditioning";
+                return false;
+            }
+
+            add(*builder, body, TopoDS::Edge(edge), edges[index].value);
+        }
+
+        builder->Build();
+    }
+    catch (const Standard_Failure& failure)
+    {
+        reason = failure.what();
+        return false;
+    }
+
+    if (!builder->IsDone())
+    {
+        reason = "the blend algorithm did not converge";
+        return false;
+    }
+
+    built = builder->Shape();
+    if (built.IsNull())
+    {
+        reason = "the blend produced no geometry";
+        return false;
+    }
+
+    if (!BRepCheck_Analyzer(built).IsValid())
+    {
+        reason = "the blend produced a self-intersecting body";
+        return false;
+    }
+
+    return true;
+}
+
+/*
+ * The blend ladder (PLAN.md 5.2.4, rungs 1, 2, 4 and 5).
+ *
+ * Rung 3 has no meaning here: a relaxed fuzzy tolerance is a boolean concept, and
+ * BRepFilletAPI has no equivalent knob. Rung 4 is where a blend earns the ladder -- one edge in a
+ * selection of twelve being impossible should cost the user that edge, not the whole feature.
+ *
+ * Rung 4 accumulates rather than bisecting: edges are added one at a time and kept if the build
+ * still succeeds. That is n builds rather than the n-squared of retrying every subset, and it
+ * catches interactions as well as individually impossible edges -- an edge that only fails in the
+ * presence of another is dropped when its turn comes.
+ */
+template <typename Builder, typename Adder>
+void runBlendLadder(
+    const char* operation,
+    ShapeRef body,
+    const std::vector<BlendEdge>& edges,
+    Adder&& add,
+    Role blendRole,
+    ShapeOut result,
+    HistoryOut history,
+    int32_t& rung)
+{
+    const TopoDS_Shape original = handles().resolve(body);
+
+    std::vector<size_t> all(edges.size());
+    for (size_t i = 0; i < edges.size(); ++i)
+    {
+        all[i] = i;
+    }
+
+    std::unique_ptr<Builder> builder;
+    TopoDS_Shape built;
+    std::string reason;
+    Conditioned correspondence;
+
+    // Rung 1.
+    if (attemptBlend(original, edges, all, correspondence, add, builder, built, reason))
+    {
+        rung = static_cast<int32_t>(Rung::ModelTolerance);
+        completeBlend(
+            *builder, built, edges, blendRole, original, body, correspondence, result, history);
+        return;
+    }
+
+    note_rung_failed(operation, Rung::ModelTolerance, reason);
+
+    // Rung 2.
+    Conditioned conditioned = condition(original);
+    if (conditioned.changed
+        && attemptBlend(conditioned.shape, edges, all, conditioned, add, builder, built, reason))
+    {
+        rung = static_cast<int32_t>(Rung::Conditioned);
+        completeBlend(
+            *builder, built, edges, blendRole, original, body, conditioned, result, history);
+        return;
+    }
+
+    note_rung_failed(
+        operation,
+        Rung::Conditioned,
+        conditioned.changed ? reason : "conditioning found nothing to repair");
+
+    // Rung 4. Back to the original body: conditioning did not help, and keeping it would rename
+    // entities for no benefit.
+    std::vector<size_t> kept;
+    std::vector<uint64_t> refused;
+
+    std::unique_ptr<Builder> partialBuilder;
+    TopoDS_Shape partialBuilt;
+
+    for (size_t i = 0; i < edges.size(); ++i)
+    {
+        std::vector<size_t> candidate = kept;
+        candidate.push_back(i);
+
+        std::unique_ptr<Builder> attempt;
+        TopoDS_Shape shape;
+        std::string ignored;
+
+        if (attemptBlend(original, edges, candidate, correspondence, add, attempt, shape, ignored))
+        {
+            kept = std::move(candidate);
+            partialBuilder = std::move(attempt);
+            partialBuilt = shape;
+        }
+        else
+        {
+            refused.push_back(edges[i].tag);
+        }
+    }
+
+    if (kept.empty())
+    {
+        // Rung 5. Every edge failed, so the message is about the operation rather than a subset.
+        throw kernel_error(
+            OPENMCAD_ERROR_KERNEL_FAILURE,
+            std::string(operation)
+            + " could not be applied to any of the selected edges, at model tolerance, after "
+              "repairing the body, or one edge at a time. The kernel reported: " + reason
+            + ". The value is most likely larger than the material available at these edges; try a "
+              "smaller one, or apply the blend before the feature that removed the material.");
+    }
+
+    // Degraded: some of what was asked for, and the caller is told exactly what was left out.
+    // Warning severity is what the managed layer keys Degraded off, so this is the signal as well
+    // as the explanation.
+    std::string message =
+        std::string(operation) + " was applied to " + std::to_string(kept.size()) + " of "
+        + std::to_string(edges.size()) + " selected edges. The remaining "
+        + std::to_string(refused.size())
+        + " could not be blended at the requested size -- there is not enough material at them, or "
+          "they meet in a corner the blender cannot resolve. Reduce the value on those edges, or "
+          "deselect them.";
+
+    report(1, "OMK3001", message, refused);
+
+    rung = static_cast<int32_t>(Rung::ModelTolerance);
+    completeBlend(
+        *partialBuilder, partialBuilt, edges, blendRole, original, body, correspondence,
+        result, history);
 }
 
 } /* namespace */
@@ -681,108 +983,75 @@ void fillet(
     ShapeRef body, std::span<const uint64_t> edges, std::span<const double> radii,
     double tolerance, ShapeOut result, HistoryOut history, int32_t& rung)
 {
-    const TopoDS_Shape& before = handles().resolve(body);
-    const std::vector<std::pair<TopoDS_Edge, double>> selected =
-        blendInputs(body, edges, radii, "radii");
-
-    BRepFilletAPI_MakeFillet builder(before);
-    for (const auto& entry : selected)
-    {
-        builder.Add(entry.second, entry.first);
-    }
-
-    builder.Build();
-    if (!builder.IsDone())
-    {
-        throw kernel_error(
-            OPENMCAD_ERROR_KERNEL_FAILURE,
-            "The fillet could not be built. The radius may exceed the space available at one of "
-            "the edges, or the selected edges may meet in a corner the blender cannot resolve.");
-    }
-
-    // The ladder is P1-T11. One attempt, at model tolerance, and it worked.
-    rung = static_cast<int32_t>(Rung::ModelTolerance);
     (void)tolerance;
 
-    completeBlend(builder, selected, Role::BlendFace, before, body, result, history);
+    runBlendLadder<BRepFilletAPI_MakeFillet>(
+        "The fillet",
+        body,
+        blendInputs(body, edges, radii, "radii"),
+        [](BRepFilletAPI_MakeFillet& builder, const TopoDS_Shape&, const TopoDS_Edge& edge,
+           double radius) { builder.Add(radius, edge); },
+        Role::BlendFace,
+        result,
+        history,
+        rung);
 }
 
 void chamfer(
     ShapeRef body, std::span<const uint64_t> edges, std::span<const double> distances,
     double tolerance, ShapeOut result, HistoryOut history, int32_t& rung)
 {
-    const TopoDS_Shape& before = handles().resolve(body);
-    const std::vector<std::pair<TopoDS_Edge, double>> selected =
-        blendInputs(body, edges, distances, "distances");
-
-    // A chamfer is measured from one of the two faces the edge divides, and OCCT wants to be told
-    // which. The ancestor map is built once rather than per edge: it is a full traversal.
-    ShapeAncestorMap edgeToFaces;
-    TopExp::MapShapesAndAncestors(before, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
-
-    // Canonical face order, computed once, so the reference face below is chosen the same way on
-    // every rebuild. Picking whichever face traversal happened to yield first would make the
-    // setback direction depend on traversal order and break ADR-0011.
-    const std::vector<TopoDS_Shape> canonicalFaces = enumerate_canonical(before, TopAbs_FACE);
-
-    BRepFilletAPI_MakeChamfer builder(before);
-    for (const auto& entry : selected)
-    {
-        if (!edgeToFaces.Contains(entry.first))
-        {
-            throw invalid_input("A selected edge bounds no face, so it cannot be chamfered.");
-        }
-
-        const ShapeList& faces = edgeToFaces.FindFromKey(entry.first);
-        if (faces.IsEmpty())
-        {
-            throw invalid_input("A selected edge bounds no face, so it cannot be chamfered.");
-        }
-
-        TopoDS_Shape reference;
-        for (const TopoDS_Shape& face : canonicalFaces)
-        {
-            bool bounds = false;
-            for (const TopoDS_Shape& candidate : faces)
-            {
-                bounds = bounds || candidate.IsSame(face);
-            }
-
-            if (bounds)
-            {
-                reference = face;
-                break;
-            }
-        }
-
-        if (reference.IsNull())
-        {
-            throw kernel_error(
-                OPENMCAD_ERROR_KERNEL_FAILURE,
-                "A selected edge's adjacent faces are not part of the body being chamfered.");
-        }
-
-        // Both distances equal: a symmetric 45-degree chamfer. The face still has to be passed,
-        // because it is what the distances are measured from -- and choosing it canonically above
-        // is what keeps an asymmetric chamfer's direction stable across rebuilds.
-        builder.Add(entry.second, entry.second, entry.first, TopoDS::Face(reference));
-    }
-
-    builder.Build();
-    if (!builder.IsDone())
-    {
-        throw kernel_error(
-            OPENMCAD_ERROR_KERNEL_FAILURE,
-            "The chamfer could not be built. The setback may exceed the space available at one of "
-            "the edges.");
-    }
-
-    rung = static_cast<int32_t>(Rung::ModelTolerance);
     (void)tolerance;
 
-    // SetbackFace, not BlendFace: a chamfer face is planar and a fillet face is not, and a
-    // downstream selection that asks for "the rounded faces" must not pick up chamfers.
-    completeBlend(builder, selected, Role::SetbackFace, before, body, result, history);
+    runBlendLadder<BRepFilletAPI_MakeChamfer>(
+        "The chamfer",
+        body,
+        blendInputs(body, edges, distances, "distances"),
+        [](BRepFilletAPI_MakeChamfer& builder, const TopoDS_Shape& shape, const TopoDS_Edge& edge,
+           double distance)
+        {
+            // A chamfer is measured from one of the two faces the edge divides, and OCCT wants to
+            // be told which. Canonical order picks it, so an asymmetric chamfer measures from the
+            // same side on every rebuild rather than from whichever face traversal yielded first.
+            ShapeAncestorMap edgeToFaces;
+            TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
+
+            if (!edgeToFaces.Contains(edge))
+            {
+                throw invalid_input("A selected edge bounds no face, so it cannot be chamfered.");
+            }
+
+            const ShapeList& faces = edgeToFaces.FindFromKey(edge);
+            TopoDS_Shape reference;
+
+            for (const TopoDS_Shape& face : enumerate_canonical(shape, TopAbs_FACE))
+            {
+                bool bounds = false;
+                for (const TopoDS_Shape& candidate : faces)
+                {
+                    bounds = bounds || candidate.IsSame(face);
+                }
+
+                if (bounds)
+                {
+                    reference = face;
+                    break;
+                }
+            }
+
+            if (reference.IsNull())
+            {
+                throw invalid_input("A selected edge bounds no face, so it cannot be chamfered.");
+            }
+
+            // Both distances equal: a symmetric 45-degree chamfer. The face still has to be
+            // passed, because it is what the distances are measured from.
+            builder.Add(distance, distance, edge, TopoDS::Face(reference));
+        },
+        Role::SetbackFace,
+        result,
+        history,
+        rung);
 }
 
 } /* namespace openmcad::ops */

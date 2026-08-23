@@ -21,8 +21,7 @@ if(OPENMCAD_WITH_OCCT)
     file(GLOB OPENMCAD_OP_SOURCES CONFIGURE_DEPENDS "src/ops/*.cpp")
     if(NOT OPENMCAD_OP_SOURCES)
         message(FATAL_ERROR
-            "OPENMCAD_WITH_OCCT is on but native/openmcad_occt/src/ops is empty. "
-            "The operation bodies land at P1-T06.")
+            "OPENMCAD_WITH_OCCT is on but native/openmcad_occt/src/ops is empty.")
     endif()
 
     # The handle table and canonical ordering need OCCT types, so they join the OCCT build rather
@@ -31,6 +30,7 @@ if(OPENMCAD_WITH_OCCT)
     target_sources(openmcad_occt PRIVATE
         src/openmcad_handles.cpp
         src/openmcad_canonical.cpp
+        src/openmcad_ladder.cpp
         ${OPENMCAD_OP_SOURCES})
 else()
     # Not-implemented fallbacks, so the shim links and exports its whole ABI before any geometry
@@ -61,7 +61,6 @@ set_target_properties(openmcad_occt PROPERTIES
 )
 
 if(OPENMCAD_WITH_OCCT)
-    # TODO(P1-T06): find_package(OpenCASCADE CONFIG REQUIRED) and link the modules actually used.
     # Link the narrowest set that works. OCCT is large, and pulling in modules "just in case"
     # inflates the shipped payload and the surface that has to be licence-audited (PLAN.md 8.6).
     find_package(OpenCASCADE CONFIG REQUIRED)

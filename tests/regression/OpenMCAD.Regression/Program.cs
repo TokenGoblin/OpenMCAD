@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Fake;
+using OpenMCAD.Kernel.Occt;
 
 namespace OpenMCAD.Regression;
 
@@ -72,6 +73,8 @@ internal static class Program
                 diverged = CompareRuns(first, second);
             }
 
+            ReportLadderHealth(first);
+
             // Counted separately. A fixture that fails in run one and passes in run two is one
             // failing fixture and one divergence, not two failing fixtures -- summing them
             // produced output like "FAIL 2 of 1 fixtures".
@@ -140,11 +143,9 @@ internal static class Program
     private static IGeometryKernel CreateKernel(string name) => name.ToLowerInvariant() switch
     {
         "fake" => new FakeKernel(),
-
-        // TODO(P1-T06): "occt" => new OcctKernel(). The corpus is deliberately kernel-agnostic so
-        // that adding it here is the whole integration.
+        "occt" => new OcctKernel(),
         _ => throw new InvalidDataException(
-            $"Unknown kernel '{name}'. Known kernels: fake."),
+            $"Unknown kernel '{name}'. Known kernels: fake, occt."),
     };
 
     private static int Report(ImmutableArray<FixtureResult> results, bool verbose)
@@ -224,4 +225,50 @@ internal static class Program
         int index = Array.IndexOf(args, name);
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
+
+    /// <summary>
+    /// Prints the distribution of retry-ladder rungs across the corpus.
+    /// </summary>
+    /// <param name="results">The fixture results.</param>
+    /// <remarks>
+    /// PLAN.md 5.2.4 asks for this to be tracked over time: "if rung-1 success rate falls,
+    /// something regressed". It is reported rather than asserted on, deliberately. A threshold
+    /// here would either be so loose it never fires or so tight that adding one deliberately
+    /// hard fixture to the corpus breaks the build -- and the corpus is supposed to grow toward
+    /// the hard cases. A human reading a falling rate is the check.
+    /// </remarks>
+    private static void ReportLadderHealth(IReadOnlyList<FixtureResult> results)
+    {
+        List<RetryRung> rungs = [.. results.SelectMany(r => r.Rungs)];
+        if (rungs.Count == 0)
+        {
+            return;
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"Retry ladder: {rungs.Count} operations that could escalate");
+
+        foreach (RetryRung rung in Enum.GetValues<RetryRung>())
+        {
+            if (rung == RetryRung.NotApplicable)
+            {
+                continue;
+            }
+
+            int count = rungs.Count(r => r == rung);
+            if (count == 0)
+            {
+                continue;
+            }
+
+            double share = 100.0 * count / rungs.Count;
+            Console.WriteLine(
+                $"  {rung,-16} {count,4}  {share.ToString("F1", CultureInfo.InvariantCulture),5}%");
+        }
+
+        double firstRung = 100.0 * rungs.Count(r => r == RetryRung.ModelTolerance) / rungs.Count;
+        Console.WriteLine(
+            $"  first-rung success rate: {firstRung.ToString("F1", CultureInfo.InvariantCulture)}%");
+    }
+
 }

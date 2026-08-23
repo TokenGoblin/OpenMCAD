@@ -16,13 +16,20 @@ namespace OpenMCAD.Regression;
 /// produce different signatures have diverged, which is what the determinism gate compares.
 /// </param>
 /// <param name="Duration">How long the fixture took.</param>
+/// <param name="Rungs">
+/// Which rung of the retry ladder each step that reported one succeeded on (PLAN.md 5.2.4).
+/// Steps that do not run a ladder are absent rather than recorded as
+/// <see cref="RetryRung.NotApplicable"/>, so the rate below is over operations that could have
+/// escalated rather than over every step in the corpus.
+/// </param>
 public sealed record FixtureResult(
     Fixture Fixture,
     bool Passed,
     ImmutableArray<string> Failures,
     ImmutableArray<string> Skipped,
     string Signature,
-    TimeSpan Duration);
+    TimeSpan Duration,
+    ImmutableArray<RetryRung> Rungs);
 
 /// <summary>
 /// Replays a fixture against a kernel and checks it against its golden values.
@@ -55,6 +62,7 @@ public sealed class ScenarioRunner(IGeometryKernel kernel)
         Dictionary<string, KernelShapeHandle> shapes = new(StringComparer.Ordinal);
         HistoryMap lastHistory = HistoryMap.Empty;
         string signature = "(none)";
+        List<RetryRung> rungs = [];
 
         try
         {
@@ -62,6 +70,11 @@ public sealed class ScenarioRunner(IGeometryKernel kernel)
             {
                 OperationResult result = await ExecuteAsync(step, shapes, cancellationToken)
                     .ConfigureAwait(false);
+
+                if (result.Rung != RetryRung.NotApplicable)
+                {
+                    rungs.Add(result.Rung);
+                }
 
                 if (!result.TryGetShape(out KernelShapeHandle shape, out HistoryMap history))
                 {
@@ -98,7 +111,8 @@ public sealed class ScenarioRunner(IGeometryKernel kernel)
             [.. failures],
             [.. skipped],
             signature,
-            System.Diagnostics.Stopwatch.GetElapsedTime(started));
+            System.Diagnostics.Stopwatch.GetElapsedTime(started),
+            [.. rungs]);
     }
 
     private async Task<string> CheckAsync(

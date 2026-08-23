@@ -542,6 +542,88 @@ public sealed class KernelContractTests
         }
     }
 
+    // --- The retry ladder (P1-T11, PLAN.md 5.2.4) ----------------------------------------------
+
+    [Theory]
+    [MemberData(nameof(KernelImplementations.All), MemberType = typeof(KernelImplementations))]
+    public async Task HealthyOperation_ReportsThatItSucceededOnTheFirstRung(KernelFactory factory)
+    {
+        await using IGeometryKernel kernel = factory.Create();
+
+        if (!kernel.Capabilities.SupportsRetryLadder)
+        {
+            return;
+        }
+
+        using KernelShapeHandle box = await CreateAsync(
+            kernel.CreateBoxAsync(new BoxDefinition(1, 1, 1)));
+
+        ImmutableArray<SubEntity> edges =
+            (await kernel.EnumerateAsync(box.Shape, SubEntityKind.Edge)).Value;
+
+        OperationResult result = await kernel.FilletAsync(
+            new FilletDefinition(box.Shape, 0.1, edges[0]));
+
+        result.TryGetShape(out KernelShapeHandle rounded, out _).Should().BeTrue(result.Describe());
+        using (rounded)
+        {
+            // The health metric in PLAN.md 5.2.4 is the distribution of this value across the
+            // corpus. A blend this easy reporting anything but the first rung means either the
+            // ladder is firing when it should not, or something regressed in the kernel.
+            result.Rung.Should().Be(
+                RetryRung.ModelTolerance,
+                "a 0.1 fillet on a unit cube needs no help at all");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(KernelImplementations.All), MemberType = typeof(KernelImplementations))]
+    public async Task Blend_WhenOnlySomeEdgesFit_DegradesAndNamesTheOnesItSkipped(
+        KernelFactory factory)
+    {
+        await using IGeometryKernel kernel = factory.Create();
+
+        if (!kernel.Capabilities.SupportsRetryLadder)
+        {
+            return;
+        }
+
+        // A thin plate. The four short edges through the thickness have the whole plate to blend
+        // into; the eight long ones have only the thickness, so a radius between the two is
+        // possible for some of the selection and impossible for the rest.
+        using KernelShapeHandle plate = await CreateAsync(
+            kernel.CreateBoxAsync(new BoxDefinition(1.0, 1.0, 0.05)));
+
+        ImmutableArray<SubEntity> edges =
+            (await kernel.EnumerateAsync(plate.Shape, SubEntityKind.Edge)).Value;
+
+        edges.Should().HaveCount(12);
+
+        OperationResult result = await kernel.FilletAsync(
+            new FilletDefinition(plate.Shape, 0.2, [.. edges]));
+
+        // Rung 4: some of what was asked for, and an explicit account of the rest. Failing the
+        // whole feature because one edge of twelve was impossible is the behaviour the ladder
+        // exists to prevent.
+        result.Outcome.Should().Be(OperationOutcome.Degraded, result.Describe());
+
+        result.TryGetShape(out KernelShapeHandle blended, out _).Should().BeTrue();
+        using (blended)
+        {
+            (await kernel.CheckValidityAsync(blended.Shape)).Value.IsValid.Should().BeTrue(
+                "a partially applied blend must still leave a sound body");
+
+            KernelDiagnostic reported = result.Diagnostics.Should()
+                .ContainSingle(d => d.Code == KernelDiagnosticCodes.BlendPartiallyApplied).Subject;
+
+            reported.Entities.Should().NotBeEmpty(
+                "the user has to be told which edges to change, not merely that some failed");
+
+            reported.Entities.Should().BeSubsetOf(
+                edges, "every skipped edge must be one the caller actually selected");
+        }
+    }
+
     private static async Task<KernelShapeHandle> CreateAsync(ValueTask<OperationResult> operation)
     {
         OperationResult result = await operation;

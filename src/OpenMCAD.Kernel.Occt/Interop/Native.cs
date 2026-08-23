@@ -143,7 +143,14 @@ internal static class Native
     /// result is the whole reason <see cref="OperationOutcome.Degraded"/> exists, and dropping the
     /// warnings would silently turn one into a plain success.
     /// </remarks>
-    internal static ImmutableArray<KernelDiagnostic> DrainDiagnostics()
+    /// <param name="known">
+    /// The entities this operation was about, by tag. The shim reports bare tags on a diagnostic
+    /// and only the caller knows which shape owns them, so anything not in here is dropped rather
+    /// than attributed to a guess -- a diagnostic pointing at the wrong edge is worse than one
+    /// pointing at none.
+    /// </param>
+    internal static ImmutableArray<KernelDiagnostic> DrainDiagnostics(
+        IReadOnlyDictionary<ulong, SubEntity>? known = null)
     {
         Check(OcctBindings.DiagnosticCount(out int count), nameof(OcctBindings.DiagnosticCount));
 
@@ -173,18 +180,33 @@ internal static class Native
                     => OcctBindings.DiagnosticMessage(index, buffer, capacity, out required),
                 nameof(OcctBindings.DiagnosticMessage)));
 
-            // Entities are read but not attributed to an owning shape here: the shim reports raw
-            // tags, and only the caller knows which shape they belong to. OcctKernel re-owns them.
-            _ = Read<ulong>(
+            ulong[] tags = Read<ulong>(
                 (Span<ulong> buffer, int capacity, out int required)
                     => OcctBindings.DiagnosticEntities(index, buffer, capacity, out required),
                 nameof(OcctBindings.DiagnosticEntities));
 
+            ImmutableArray<SubEntity> entities = [];
+            if (tags.Length > 0 && known is not null)
+            {
+                ImmutableArray<SubEntity>.Builder named =
+                    ImmutableArray.CreateBuilder<SubEntity>(tags.Length);
+
+                foreach (ulong tag in tags)
+                {
+                    if (known.TryGetValue(tag, out SubEntity entity))
+                    {
+                        named.Add(entity);
+                    }
+                }
+
+                entities = named.ToImmutable();
+            }
+
             drained.Add(severity switch
             {
                 0 => KernelDiagnostic.Information(code, message),
-                1 => KernelDiagnostic.Warning(code, message),
-                _ => KernelDiagnostic.Error(code, message),
+                1 => KernelDiagnostic.Warning(code, message, entities),
+                _ => KernelDiagnostic.Error(code, message, entities),
             });
         }
 

@@ -16,6 +16,7 @@
  */
 
 #include <algorithm>
+#include <vector>
 #include <cmath>
 
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -25,8 +26,15 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepGProp.hxx>
+#include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
+#include <TopExp.hxx>
+#include <TopoDS.hxx>
 #include <TopAbs_ShapeEnum.hxx>
+#include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Quaternion.hxx>
 #include <gp_Trsf.hxx>
@@ -77,6 +85,111 @@ TopoDS_Shape place(const TopoDS_Shape& shape, const Transform& placement)
     return mover.Shape();
 }
 
+
+/*
+ * Names the parts of a primitive that is a surface of revolution.
+ *
+ * A box has six interchangeable planar faces and nothing to say about any of them, so PrimitiveFace
+ * is the honest answer there. A cylinder is different: it has a lateral wall, two ends, and a seam
+ * that exists only because the surface had to be cut open to be parameterised. Those are things a
+ * user points at and a name has to survive -- "the cylindrical face", "the top rim" -- and calling
+ * them all PrimitiveFace throws that away at the moment it is cheapest to record.
+ *
+ * The seam matters for a second reason. It is an artefact of parameterisation rather than of design
+ * intent, so a user selecting "all edges" should be able to exclude it, and a kernel swap that
+ * placed it elsewhere should be visible as a role change rather than as a silent renumbering.
+ *
+ * Start and end are decided by position along the axis, not by traversal order, so they mean the
+ * same thing after the primitive is moved.
+ */
+void nameRevolution(
+    HistoryRecord& record, ShapeRef shape, const TopoDS_Shape& built, const gp_Ax1& axis)
+{
+    // Faces: planar ones are caps, anything curved is the wall.
+    std::vector<std::pair<double, uint64_t>> caps;
+
+    for (const TopoDS_Shape& entity : enumerate_canonical(built, TopAbs_FACE))
+    {
+        const TopoDS_Face face = TopoDS::Face(entity);
+        const uint64_t tag = handles().store_entity(shape, face).tag;
+
+        GProp_GProps props;
+        BRepGProp::SurfaceProperties(face, props);
+        const double along = gp_Vec(axis.Location(), props.CentreOfMass()).Dot(gp_Vec(axis.Direction()));
+
+        if (BRepAdaptor_Surface(face).GetType() == GeomAbs_Plane)
+        {
+            caps.emplace_back(along, tag);
+        }
+        else
+        {
+            record.add_created(tag, static_cast<int32_t>(Role::SideWall));
+        }
+    }
+
+    std::sort(caps.begin(), caps.end());
+    for (size_t i = 0; i < caps.size(); ++i)
+    {
+        // A cone with a zero top radius has one cap, and it is the one the profile started from.
+        const Role role = i == 0 ? Role::StartCap : Role::EndCap;
+        record.add_created(caps[i].second, static_cast<int32_t>(role));
+    }
+
+    // Edges: seams and degenerate poles are parameterisation, circles bounding a cap are the
+    // profile at each end, anything else runs along the wall.
+    ShapeAncestorMap edgeToFaces;
+    TopExp::MapShapesAndAncestors(built, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
+
+    std::vector<std::pair<double, uint64_t>> rims;
+
+    for (const TopoDS_Shape& entity : enumerate_canonical(built, TopAbs_EDGE))
+    {
+        const TopoDS_Edge edge = TopoDS::Edge(entity);
+        const uint64_t tag = handles().store_entity(shape, edge).tag;
+
+        bool seam = BRep_Tool::Degenerated(edge);
+        bool bounded = false;
+
+        if (!seam && edgeToFaces.Contains(edge))
+        {
+            for (const TopoDS_Shape& face : edgeToFaces.FindFromKey(edge))
+            {
+                const TopoDS_Face owner = TopoDS::Face(face);
+                seam = seam || BRep_Tool::IsClosed(edge, owner);
+                bounded = bounded || BRepAdaptor_Surface(owner).GetType() == GeomAbs_Plane;
+            }
+        }
+
+        if (seam)
+        {
+            record.add_created(tag, static_cast<int32_t>(Role::Seam));
+        }
+        else if (bounded)
+        {
+            GProp_GProps props;
+            BRepGProp::LinearProperties(edge, props);
+            rims.emplace_back(
+                gp_Vec(axis.Location(), props.CentreOfMass()).Dot(gp_Vec(axis.Direction())), tag);
+        }
+        else
+        {
+            record.add_created(tag, static_cast<int32_t>(Role::SideEdge));
+        }
+    }
+
+    std::sort(rims.begin(), rims.end());
+    for (size_t i = 0; i < rims.size(); ++i)
+    {
+        const Role role = i == 0 ? Role::StartProfileEdge : Role::EndProfileEdge;
+        record.add_created(rims[i].second, static_cast<int32_t>(role));
+    }
+
+    for (uint64_t tag : tag_canonical(shape, TopAbs_VERTEX))
+    {
+        record.add_created(tag, static_cast<int32_t>(Role::PrimitiveVertex));
+    }
+}
+
 /*
  * Stores a freshly created shape and records every one of its entities as created from nothing.
  *
@@ -84,27 +197,42 @@ TopoDS_Shape place(const TopoDS_Shape& shape, const Transform& placement)
  * makes "the third edge of this box" nameable. Canonical ordering (see openmcad_canonical.h) is
  * what makes the ordinal mean the same thing on the next rebuild.
  */
-void completePrimitive(const TopoDS_Shape& built, ShapeOut result, HistoryOut history)
+void completePrimitive(
+    const TopoDS_Shape& built, ShapeOut result, HistoryOut history,
+    const gp_Ax1* revolutionAxis = nullptr)
 {
     const ShapeRef shape = handles().store(built);
     auto record = std::make_unique<HistoryRecord>();
 
-    const std::pair<TopAbs_ShapeEnum, Role> kinds[] = {
-        {TopAbs_FACE, Role::PrimitiveFace},
-        {TopAbs_EDGE, Role::PrimitiveEdge},
-        {TopAbs_VERTEX, Role::PrimitiveVertex},
-    };
-
-    for (const auto& [kind, role] : kinds)
+    if (revolutionAxis != nullptr)
     {
-        for (uint64_t tag : tag_canonical(shape, kind))
+        nameRevolution(*record, shape, built, *revolutionAxis);
+    }
+    else
+    {
+        const std::pair<TopAbs_ShapeEnum, Role> kinds[] = {
+            {TopAbs_FACE, Role::PrimitiveFace},
+            {TopAbs_EDGE, Role::PrimitiveEdge},
+            {TopAbs_VERTEX, Role::PrimitiveVertex},
+        };
+
+        for (const auto& [kind, role] : kinds)
         {
-            record->add_created(tag, static_cast<int32_t>(role));
+            for (uint64_t tag : tag_canonical(shape, kind))
+            {
+                record->add_created(tag, static_cast<int32_t>(role));
+            }
         }
     }
 
     result.set(shape);
     history.set(handles().store(std::move(record)));
+}
+
+/* Where a primitive's axis of revolution ends up once the placement has been applied. */
+gp_Ax1 placedAxis(const Transform& placement)
+{
+    return gp_Ax1(gp_Pnt(0.0, 0.0, 0.0), gp_Dir(0.0, 0.0, 1.0)).Transformed(toTrsf(placement));
 }
 
 } /* namespace */
@@ -133,8 +261,10 @@ void create_cylinder(
         throw invalid_input("A cylinder needs a positive radius and height.");
     }
 
+    const gp_Ax1 axis = placedAxis(placement);
     completePrimitive(
-        place(BRepPrimAPI_MakeCylinder(radius, height).Shape(), placement), result, history);
+        place(BRepPrimAPI_MakeCylinder(radius, height).Shape(), placement), result, history,
+        &axis);
 }
 
 void create_sphere(double radius, const Transform& placement, ShapeOut result, HistoryOut history)
@@ -144,8 +274,9 @@ void create_sphere(double radius, const Transform& placement, ShapeOut result, H
         throw invalid_input("A sphere needs a positive radius.");
     }
 
+    const gp_Ax1 axis = placedAxis(placement);
     completePrimitive(
-        place(BRepPrimAPI_MakeSphere(radius).Shape(), placement), result, history);
+        place(BRepPrimAPI_MakeSphere(radius).Shape(), placement), result, history, &axis);
 }
 
 void create_cone(
@@ -173,14 +304,17 @@ void create_cone(
     const double scale = std::max(bottom_radius, top_radius);
     if (std::abs(bottom_radius - top_radius) <= 1.0e-12 * std::max(scale, 1.0))
     {
+        const gp_Ax1 axis = placedAxis(placement);
         completePrimitive(
-            place(BRepPrimAPI_MakeCylinder(scale, height).Shape(), placement), result, history);
+            place(BRepPrimAPI_MakeCylinder(scale, height).Shape(), placement), result, history,
+            &axis);
         return;
     }
 
+    const gp_Ax1 axis = placedAxis(placement);
     completePrimitive(
         place(BRepPrimAPI_MakeCone(bottom_radius, top_radius, height).Shape(), placement),
-        result, history);
+        result, history, &axis);
 }
 
 void create_torus(
@@ -199,9 +333,10 @@ void create_torus(
             "through the axis and self-intersects.");
     }
 
+    const gp_Ax1 axis = placedAxis(placement);
     completePrimitive(
         place(BRepPrimAPI_MakeTorus(major_radius, minor_radius).Shape(), placement),
-        result, history);
+        result, history, &axis);
 }
 
 void create_polygon_profile(

@@ -56,9 +56,9 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      # OCCT takes a long time to build from source, so the binary cache is not a nicety.
-      # Not exercised until P1-T06 turns OPENMCAD_WITH_OCCT on, but wired now so the first
-      # kernel build does not also debug its own caching.
+      # OCCT takes a long time to build from source, so the binary cache is not a nicety: a cold
+      # cache is most of an hour, a warm one is seconds. The key is the manifest, so the cost is
+      # paid again only when the pinned OCCT version changes.
       - name: Cache vcpkg binaries
         uses: actions/cache@v4
         with:
@@ -80,7 +80,7 @@ jobs:
         env:
           BuildMetadata: ${{ steps.meta.outputs.value }}
           ContinuousIntegrationBuild: true
-        run: ./build.ps1 -Configuration ${{ matrix.configuration }}
+        run: ./build.ps1 -Configuration ${{ matrix.configuration }} -WithOcct
 
       - name: Upload test results
         if: always()

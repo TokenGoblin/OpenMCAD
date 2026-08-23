@@ -30,7 +30,7 @@
 
 .PARAMETER WithOcct
     Link OCCT into the native shim. Requires vcpkg with the manifest in native/vcpkg.json
-    restored. Off until P1-T06.
+    restored, located through VCPKG_ROOT or VCPKG_INSTALLATION_ROOT.
 
 .PARAMETER Clean
     Delete build outputs before building.
@@ -234,9 +234,16 @@ else {
     if ($WithOcct) {
         $cmakeArgs += '-DOPENMCAD_WITH_OCCT=ON'
 
+        # VCPKG_INSTALLATION_ROOT is what the GitHub Windows runners set; VCPKG_ROOT is the
+        # convention everywhere else. Accepting both keeps the workflow files free of a variable
+        # whose only job is to rename another one.
         $toolchain = $env:VCPKG_ROOT
         if ([string]::IsNullOrWhiteSpace($toolchain)) {
-            throw 'VCPKG_ROOT is not set, but -WithOcct needs vcpkg to supply OCCT. See native/vcpkg.json.'
+            $toolchain = $env:VCPKG_INSTALLATION_ROOT
+        }
+
+        if ([string]::IsNullOrWhiteSpace($toolchain)) {
+            throw 'Neither VCPKG_ROOT nor VCPKG_INSTALLATION_ROOT is set, but -WithOcct needs vcpkg to supply OCCT. See native/vcpkg.json.'
         }
         $cmakeArgs += '-DCMAKE_TOOLCHAIN_FILE=' + (Join-Path $toolchain 'scripts/buildsystems/vcpkg.cmake')
     }
