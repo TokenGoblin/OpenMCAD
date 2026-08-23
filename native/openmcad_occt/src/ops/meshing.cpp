@@ -1,0 +1,249 @@
+/*
+ * Tessellation (P1-T06).
+ *
+ * The viewport needs triangles; the kernel holds analytic surfaces. This is the only place the two
+ * meet, and the mesh it produces is a derived cache, never a source of truth: nothing here feeds
+ * back into geometry, and no query answers itself from a triangulation (see the bounding_box
+ * comment in queries.cpp for what goes wrong when one does).
+ *
+ * Triangles are attributed back to the face they came from, because selection in the viewport is a
+ * pick against a triangle that has to resolve to a nameable entity (ADR-0005).
+ */
+
+#include <algorithm>
+#include <cmath>
+#include <memory>
+
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Tool.hxx>
+#include <GeomAbs_SurfaceType.hxx>
+#include <IMeshTools_Parameters.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
+#include <gp_Dir.hxx>
+#include <gp_Pnt.hxx>
+#include <gp_Vec.hxx>
+
+#include "openmcad_canonical.h"
+#include "openmcad_handles.h"
+#include "openmcad_ops.g.h"
+
+namespace openmcad::ops {
+
+namespace {
+
+/*
+ * The outward normal of a face at one of its triangulation nodes.
+ *
+ * Taken from the surface rather than from the facet, so a coarsely tessellated cylinder still
+ * shades as a cylinder. Falls back to the facet normal where the surface has no well-defined
+ * tangent plane -- at a cone apex, or on a degenerate patch -- which is rare but not an error.
+ */
+bool surfaceNormalAt(
+    const BRepAdaptor_Surface& surface, double u, double v, gp_Vec& normal)
+{
+    gp_Pnt position;
+    gp_Vec du;
+    gp_Vec dv;
+    surface.D1(u, v, position, du, dv);
+
+    const gp_Vec candidate = du.Crossed(dv);
+    if (candidate.SquareMagnitude() < 1.0e-24)
+    {
+        return false;
+    }
+
+    normal = candidate.Normalized();
+    return true;
+}
+
+} /* namespace */
+
+void triangulate(
+    ShapeRef shape, double chordal_deviation, double angular_deviation, bool relative,
+    bool compute_normals, MeshOut mesh)
+{
+    if (chordal_deviation <= 0.0)
+    {
+        throw invalid_input("The chordal deviation must be positive.");
+    }
+
+    if (angular_deviation <= 0.0)
+    {
+        throw invalid_input("The angular deviation must be positive.");
+    }
+
+    const TopoDS_Shape& solid = handles().resolve(shape);
+
+    IMeshTools_Parameters parameters;
+    parameters.Deflection = chordal_deviation;
+    parameters.Angle = angular_deviation;
+    parameters.Relative = relative;
+
+    // ADR-0011 again, and for a sharper reason than the boolean. The parallel mesher assigns faces
+    // to threads and the per-face vertex ordering follows completion order, so the same body
+    // tessellated twice would produce the same triangles in a different order -- which is a
+    // different hash, and the determinism gate compares hashes.
+    parameters.InParallel = false;
+
+    // Let the mesher relax rather than fail on a face it cannot hit the deflection on. A slightly
+    // coarse triangle is a far better outcome for a viewport than no mesh at all.
+    parameters.AllowQualityDecrease = true;
+
+    // BRepMesh attaches the triangulation to the shape as a side effect. That is why write_brep
+    // pins withTriangles to false: otherwise a body's serialised bytes would depend on whether
+    // anything had rendered it.
+    BRepMesh_IncrementalMesh mesher(solid, parameters);
+    if (!mesher.IsDone())
+    {
+        throw kernel_error(
+            OPENMCAD_ERROR_KERNEL_FAILURE, "The shape could not be tessellated.");
+    }
+
+    auto record = std::make_unique<MeshRecord>();
+
+    // Canonical face order, so triangle attribution indexes the same faces in the same order on
+    // every run -- and so the face tags handed back match the ones enumerate() gives.
+    const std::vector<TopoDS_Shape> faces = enumerate_canonical(solid, TopAbs_FACE);
+
+    for (int32_t faceIndex = 0; faceIndex < static_cast<int32_t>(faces.size()); ++faceIndex)
+    {
+        const TopoDS_Face face = TopoDS::Face(faces[static_cast<size_t>(faceIndex)]);
+        record->faces.push_back(handles().store_entity(shape, face).tag);
+
+        TopLoc_Location location;
+        const Handle(Poly_Triangulation) triangulation = BRep_Tool::Triangulation(face, location);
+        if (triangulation.IsNull())
+        {
+            // A face the mesher declined. It keeps its tag and its slot in the attribution table
+            // so face indices stay aligned; it simply contributes no triangles.
+            continue;
+        }
+
+        const gp_Trsf& placement = location.Transformation();
+
+        // A reversed face has its triangles wound against the surface normal, so both the winding
+        // and the normals have to be flipped for the outward side to face outward.
+        const bool reversed = face.Orientation() == TopAbs_REVERSED;
+
+        const int32_t base = record->vertex_count();
+        const int nodes = triangulation->NbNodes();
+        const bool haveUv = triangulation->HasUVNodes();
+
+        std::unique_ptr<BRepAdaptor_Surface> surface;
+        if (compute_normals && haveUv)
+        {
+            surface = std::make_unique<BRepAdaptor_Surface>(face);
+        }
+
+        for (int i = 1; i <= nodes; ++i)
+        {
+            const gp_Pnt point = triangulation->Node(i).Transformed(placement);
+            record->positions.push_back(point.X());
+            record->positions.push_back(point.Y());
+            record->positions.push_back(point.Z());
+
+            if (!compute_normals)
+            {
+                continue;
+            }
+
+            gp_Vec normal(0.0, 0.0, 1.0);
+            bool known = false;
+
+            if (surface)
+            {
+                const gp_Pnt2d uv = triangulation->UVNode(i);
+                known = surfaceNormalAt(*surface, uv.X(), uv.Y(), normal);
+            }
+
+            if (!known)
+            {
+                // No tangent plane here -- a cone apex, or a face with no UV nodes. Zero is a
+                // deliberate sentinel: a renderer can detect it and fall back to a facet normal,
+                // which is better than shipping a confidently wrong direction.
+                normal = gp_Vec(0.0, 0.0, 0.0);
+            }
+            else
+            {
+                normal.Transform(placement);
+                if (reversed)
+                {
+                    normal.Reverse();
+                }
+            }
+
+            record->normals.push_back(normal.X());
+            record->normals.push_back(normal.Y());
+            record->normals.push_back(normal.Z());
+        }
+
+        for (int i = 1; i <= triangulation->NbTriangles(); ++i)
+        {
+            int a = 0;
+            int b = 0;
+            int c = 0;
+            triangulation->Triangle(i).Get(a, b, c);
+
+            if (reversed)
+            {
+                std::swap(b, c);
+            }
+
+            // OCCT nodes are 1-based within the face; the mesh is 0-based and global.
+            record->indices.push_back(base + a - 1);
+            record->indices.push_back(base + b - 1);
+            record->indices.push_back(base + c - 1);
+            record->triangleFaces.push_back(faceIndex);
+        }
+    }
+
+    mesh.set(handles().store(std::move(record)));
+}
+
+void mesh_counts(MeshRef mesh, OutBuffer<int32_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    const int32_t counts[3] = {
+        record.vertex_count(), record.triangle_count(), record.face_count()};
+
+    values.write(std::span<const int32_t>(counts, 3));
+}
+
+void mesh_positions(MeshRef mesh, OutBuffer<double> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const double>(record.positions.data(), record.positions.size()));
+}
+
+void mesh_normals(MeshRef mesh, OutBuffer<double> values)
+{
+    // Legitimately empty when triangulate was called with compute_normals false. The two-call
+    // protocol reports a required size of zero, which the managed side reads as "none", not as an
+    // error -- asking for normals that were not requested is a reasonable thing for a caller to do.
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const double>(record.normals.data(), record.normals.size()));
+}
+
+void mesh_indices(MeshRef mesh, OutBuffer<int32_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const int32_t>(record.indices.data(), record.indices.size()));
+}
+
+void mesh_triangle_faces(MeshRef mesh, OutBuffer<int32_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(
+        std::span<const int32_t>(record.triangleFaces.data(), record.triangleFaces.size()));
+}
+
+void mesh_faces(MeshRef mesh, OutBuffer<uint64_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const uint64_t>(record.faces.data(), record.faces.size()));
+}
+
+} /* namespace openmcad::ops */

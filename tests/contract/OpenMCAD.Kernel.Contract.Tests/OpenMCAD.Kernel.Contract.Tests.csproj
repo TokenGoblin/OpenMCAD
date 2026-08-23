@@ -1,8 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    Collections run one at a time. The OCCT shim keeps its handle table, error slot and diagnostic
+    queue in unsynchronised process-wide state, and OcctKernel refuses to construct while another
+    instance is alive, so two collections at once would fail on the second construction rather
+    than on anything about the geometry.
+  -->
+  <ItemGroup>
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../../../src/OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
   </ItemGroup>
 
 </Project>

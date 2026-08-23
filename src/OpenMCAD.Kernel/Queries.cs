@@ -170,7 +170,14 @@ public readonly record struct TessellationOptions(
     bool ComputeNormals = true)
 {
     /// <summary>Gets settings suitable for interactive display.</summary>
-    public static TessellationOptions Display => new();
+    /// <remarks>
+    /// Spelled out rather than written <c>new()</c>. On a record struct, <c>new()</c> binds to the
+    /// implicit parameterless constructor that zeroes every field -- it does <b>not</b> run the
+    /// primary constructor, so the default arguments above are skipped entirely. That produced a
+    /// zero chordal deviation here, which the FakeKernel silently ignored and OCCT rejected.
+    /// </remarks>
+    public static TessellationOptions Display
+        => new(Tolerance.DisplayChordal, AngularDeviation: 0.5, Relative: true, ComputeNormals: true);
 
     /// <summary>Gets settings suitable for export and analysis, an order of magnitude finer.</summary>
     public static TessellationOptions Fine => new(Tolerance.DisplayChordal / 10.0, 0.1);

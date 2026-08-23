@@ -48,6 +48,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_version(
     {
         openmcad::ops::version(
             openmcad::OutBuffer<char>{text, text_capacity, text_required});
+        if (!openmcad::buffer_satisfied(text, text_capacity, text_required))
+        {
+            openmcad::record_error("openmcad_version",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -106,6 +113,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_last_error(
     {
         openmcad::ops::last_error(
             openmcad::OutBuffer<char>{text, text_capacity, text_required});
+        if (!openmcad::buffer_satisfied(text, text_capacity, text_required))
+        {
+            openmcad::record_error("openmcad_last_error",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -153,6 +167,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_diagnostic_code(
         openmcad::ops::diagnostic_code(
             index,
             openmcad::OutBuffer<char>{code, code_capacity, code_required});
+        if (!openmcad::buffer_satisfied(code, code_capacity, code_required))
+        {
+            openmcad::record_error("openmcad_diagnostic_code",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -166,6 +187,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_diagnostic_message(
         openmcad::ops::diagnostic_message(
             index,
             openmcad::OutBuffer<char>{message, message_capacity, message_required});
+        if (!openmcad::buffer_satisfied(message, message_capacity, message_required))
+        {
+            openmcad::record_error("openmcad_diagnostic_message",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -179,6 +207,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_diagnostic_entities(
         openmcad::ops::diagnostic_entities(
             index,
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_diagnostic_entities",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -622,6 +657,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mass_properties(
             density,
             openmcad::OutBuffer<double>{values, values_capacity, values_required},
             *accuracy);
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mass_properties",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -635,6 +677,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_bounding_box(
         openmcad::ops::bounding_box(
             openmcad::ShapeRef{shape},
             openmcad::OutBuffer<double>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_bounding_box",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -648,6 +697,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_topology_counts(
         openmcad::ops::topology_counts(
             openmcad::ShapeRef{shape},
             openmcad::OutBuffer<int32_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_topology_counts",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -663,6 +719,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_enumerate(
             openmcad::ShapeRef{shape},
             kind,
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_enumerate",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -750,6 +813,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_counts(
         openmcad::ops::mesh_counts(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<int32_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_counts",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -763,6 +833,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_positions(
         openmcad::ops::mesh_positions(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<double>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_positions",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -776,6 +853,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_normals(
         openmcad::ops::mesh_normals(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<double>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_normals",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -789,6 +873,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_indices(
         openmcad::ops::mesh_indices(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<int32_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_indices",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -802,6 +893,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_triangle_faces(
         openmcad::ops::mesh_triangle_faces(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<int32_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_triangle_faces",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -815,6 +913,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_faces(
         openmcad::ops::mesh_faces(
             openmcad::MeshRef{mesh},
             openmcad::OutBuffer<uint64_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_faces",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -831,6 +936,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_write_brep(
         openmcad::ops::write_brep(
             openmcad::ShapeRef{shape},
             openmcad::OutBuffer<uint8_t>{data, data_capacity, data_required});
+        if (!openmcad::buffer_satisfied(data, data_capacity, data_required))
+        {
+            openmcad::record_error("openmcad_write_brep",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -899,6 +1011,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_history_generated(
             openmcad::HistoryRef{history},
             openmcad::EntityRef{input},
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_history_generated",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -914,6 +1033,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_history_modified(
             openmcad::HistoryRef{history},
             openmcad::EntityRef{input},
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_history_modified",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -947,6 +1073,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_history_new_entities(
         openmcad::ops::history_new_entities(
             openmcad::HistoryRef{history},
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_history_new_entities",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -1000,6 +1133,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_history_outputs(
         openmcad::ops::history_outputs(
             openmcad::HistoryRef{history},
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_history_outputs",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }
@@ -1013,6 +1153,13 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_history_inputs(
         openmcad::ops::history_inputs(
             openmcad::HistoryRef{history},
             openmcad::OutBuffer<uint64_t>{entities, entities_capacity, entities_required});
+        if (!openmcad::buffer_satisfied(entities, entities_capacity, entities_required))
+        {
+            openmcad::record_error("openmcad_history_inputs",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
         return OPENMCAD_OK;
     })
 }

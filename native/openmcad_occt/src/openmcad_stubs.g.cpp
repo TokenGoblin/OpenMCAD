@@ -53,45 +53,17 @@ void mesh_release(
 
 /* last_error: hand-written in every build; no stub. */
 
-void diagnostic_count(
-    int32_t&)
-{
-    throw openmcad::not_implemented("diagnostic_count");
-}
+/* diagnostic_count: hand-written in every build; no stub. */
 
-void diagnostic_severity(
-    int32_t,
-    int32_t&)
-{
-    throw openmcad::not_implemented("diagnostic_severity");
-}
+/* diagnostic_severity: hand-written in every build; no stub. */
 
-void diagnostic_code(
-    int32_t,
-    openmcad::OutBuffer<char>)
-{
-    throw openmcad::not_implemented("diagnostic_code");
-}
+/* diagnostic_code: hand-written in every build; no stub. */
 
-void diagnostic_message(
-    int32_t,
-    openmcad::OutBuffer<char>)
-{
-    throw openmcad::not_implemented("diagnostic_message");
-}
+/* diagnostic_message: hand-written in every build; no stub. */
 
-void diagnostic_entities(
-    int32_t,
-    openmcad::OutBuffer<uint64_t>)
-{
-    throw openmcad::not_implemented("diagnostic_entities");
-}
+/* diagnostic_entities: hand-written in every build; no stub. */
 
-void diagnostics_clear(
-    )
-{
-    throw openmcad::not_implemented("diagnostics_clear");
-}
+/* diagnostics_clear: hand-written in every build; no stub. */
 
 void create_box(
     double,

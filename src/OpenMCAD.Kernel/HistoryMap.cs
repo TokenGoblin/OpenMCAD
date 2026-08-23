@@ -30,6 +30,8 @@ public sealed class HistoryMap
     private readonly ImmutableHashSet<SubEntity> _deleted;
     private readonly ImmutableDictionary<SubEntity, OperationRole> _roles;
     private readonly ImmutableDictionary<SubEntity, SubEntity> _sources;
+    private readonly ImmutableArray<SubEntity> _outputOrder;
+    private readonly ImmutableArray<SubEntity> _inputOrder;
 
     internal HistoryMap(
         ImmutableDictionary<SubEntity, ImmutableArray<SubEntity>> generated,
@@ -37,13 +39,17 @@ public sealed class HistoryMap
         ImmutableHashSet<SubEntity> deleted,
         ImmutableArray<SubEntity> newEntities,
         ImmutableDictionary<SubEntity, OperationRole> roles,
-        ImmutableDictionary<SubEntity, SubEntity> sources)
+        ImmutableDictionary<SubEntity, SubEntity> sources,
+        ImmutableArray<SubEntity> outputOrder,
+        ImmutableArray<SubEntity> inputOrder)
     {
         _generated = generated;
         _modified = modified;
         _deleted = deleted;
         _roles = roles;
         _sources = sources;
+        _outputOrder = outputOrder;
+        _inputOrder = inputOrder;
         NewEntities = newEntities;
     }
 
@@ -56,7 +62,9 @@ public sealed class HistoryMap
         ImmutableHashSet<SubEntity>.Empty,
         [],
         ImmutableDictionary<SubEntity, OperationRole>.Empty,
-        ImmutableDictionary<SubEntity, SubEntity>.Empty);
+        ImmutableDictionary<SubEntity, SubEntity>.Empty,
+        [],
+        []);
 
     /// <summary>
     /// Gets the entities created from nothing, sorted.
@@ -67,12 +75,27 @@ public sealed class HistoryMap
     /// </remarks>
     public ImmutableArray<SubEntity> NewEntities { get; }
 
-    /// <summary>Gets every output entity this map describes, sorted.</summary>
-    public IEnumerable<SubEntity> Outputs => _roles.Keys.Order();
+    /// <summary>Gets every output entity this map describes, in the order the kernel reported them.</summary>
+    /// <remarks>
+    /// <para>
+    /// Reported order, not sorted order, and the distinction is what makes this deterministic.
+    /// Sorting means sorting by <see cref="SubEntity.Tag"/>, and a tag is a handle: it carries a
+    /// slot index and a generation counter, so an entity in a recycled slot sorts nowhere near an
+    /// otherwise identical entity in a fresh one. Two identical models built in the same process
+    /// then enumerate their outputs in different orders purely because of what was allocated
+    /// before them, which ADR-0011 forbids.
+    /// </para>
+    /// <para>
+    /// The kernel reports outputs in canonical, geometry-derived order (see the shim's
+    /// <c>enumerate_canonical</c>), and that order is preserved here rather than discarded and
+    /// reconstructed from numbers that mean nothing geometric.
+    /// </para>
+    /// </remarks>
+    public IEnumerable<SubEntity> Outputs => _outputOrder;
 
-    /// <summary>Gets every input entity this map describes, sorted.</summary>
-    public IEnumerable<SubEntity> Inputs
-        => _generated.Keys.Concat(_modified.Keys).Concat(_deleted).Distinct().Order();
+    /// <summary>Gets every input entity this map describes, in the order the kernel reported them.</summary>
+    /// <remarks>See <see cref="Outputs"/> for why this is not sorted.</remarks>
+    public IEnumerable<SubEntity> Inputs => _inputOrder;
 
     /// <summary>Gets a value indicating whether this map describes nothing.</summary>
     public bool IsEmpty => _roles.IsEmpty && _deleted.IsEmpty;

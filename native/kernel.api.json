@@ -134,6 +134,7 @@
       "group": "diagnostics",
       "summary": "Returns how many diagnostics the last operation produced.",
       "fragile": false,
+      "handwritten": true,
       "parameters": [
         {
           "name": "count",
@@ -148,6 +149,7 @@
       "group": "diagnostics",
       "summary": "Returns one diagnostic severity.",
       "fragile": false,
+      "handwritten": true,
       "parameters": [
         {
           "name": "index",
@@ -167,6 +169,7 @@
       "group": "diagnostics",
       "summary": "Returns one diagnostic stable code.",
       "fragile": false,
+      "handwritten": true,
       "parameters": [
         {
           "name": "index",
@@ -186,6 +189,7 @@
       "group": "diagnostics",
       "summary": "Returns one diagnostic user-facing message.",
       "fragile": false,
+      "handwritten": true,
       "parameters": [
         {
           "name": "index",
@@ -205,6 +209,7 @@
       "group": "diagnostics",
       "summary": "Returns the entities one diagnostic refers to.",
       "fragile": false,
+      "handwritten": true,
       "parameters": [
         {
           "name": "index",
@@ -224,6 +229,7 @@
       "group": "diagnostics",
       "summary": "Discards the diagnostics from the last operation.",
       "fragile": false,
+      "handwritten": true,
       "parameters": []
     },
     {

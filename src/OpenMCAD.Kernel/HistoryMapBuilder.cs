@@ -40,6 +40,21 @@ public sealed class HistoryMapBuilder
     private readonly Dictionary<SubEntity, OperationRole> _roles = [];
     private readonly Dictionary<SubEntity, SubEntity> _sources = [];
 
+    /*
+     * First-sight order, kept alongside the sets above.
+     *
+     * The sets answer "is this entity described?"; these answer "in what order did the kernel
+     * describe them?". The second question cannot be answered from the first, and it cannot be
+     * answered by sorting either: SubEntity sorts by tag, and a tag is a handle carrying a slot
+     * index and a generation counter, so recycled and fresh slots interleave unpredictably. The
+     * kernel reports in canonical, geometry-derived order, and that is what determinism needs
+     * preserved (ADR-0011).
+     */
+    private readonly List<SubEntity> _outputOrder = [];
+    private readonly List<SubEntity> _inputOrder = [];
+    private readonly List<SubEntity> _newOrder = [];
+    private readonly HashSet<SubEntity> _inputSeen = [];
+
     /// <summary>
     /// Records that <paramref name="input"/> caused <paramref name="output"/> to come into
     /// existence.
@@ -55,6 +70,7 @@ public sealed class HistoryMapBuilder
         Require(output, nameof(output));
         RequireRole(role, output);
 
+        NoteInput(input);
         AddTo(_generated, input, output);
         AssignRole(output, role);
         _sources.TryAdd(output, input);
@@ -75,6 +91,7 @@ public sealed class HistoryMapBuilder
         Require(output, nameof(output));
         RequireRole(role, output);
 
+        NoteInput(input);
         AddTo(_modified, input, output);
         AssignRole(output, role);
         _sources.TryAdd(output, input);
@@ -108,6 +125,7 @@ public sealed class HistoryMapBuilder
     public HistoryMapBuilder AddDeleted(SubEntity input)
     {
         Require(input, nameof(input));
+        NoteInput(input);
         _deleted.Add(input);
         return this;
     }
@@ -124,7 +142,11 @@ public sealed class HistoryMapBuilder
         Require(output, nameof(output));
         RequireRole(role, output);
 
-        _new.Add(output);
+        if (_new.Add(output))
+        {
+            _newOrder.Add(output);
+        }
+
         AssignRole(output, role);
         return this;
     }
@@ -150,12 +172,17 @@ public sealed class HistoryMapBuilder
         Require(output, nameof(output));
         RequireRole(role, output);
 
-        _new.Add(output);
+        if (_new.Add(output))
+        {
+            _newOrder.Add(output);
+        }
+
         AssignRole(output, role);
 
         foreach (SubEntity input in between)
         {
             Require(input, nameof(between));
+            NoteInput(input);
             AddTo(_generated, input, output);
         }
 
@@ -200,9 +227,11 @@ public sealed class HistoryMapBuilder
             Freeze(_generated),
             Freeze(_modified),
             [.. _deleted],
-            [.. _new.Order()],
+            [.. _newOrder],
             _roles.ToImmutableDictionary(),
-            _sources.ToImmutableDictionary());
+            _sources.ToImmutableDictionary(),
+            [.. _outputOrder],
+            [.. _inputOrder]);
     }
 
     private static void AddTo(
@@ -219,8 +248,23 @@ public sealed class HistoryMapBuilder
         set.Add(value);
     }
 
+    /// <summary>Records an input the first time it is described.</summary>
+    /// <param name="input">The input entity.</param>
+    private void NoteInput(SubEntity input)
+    {
+        if (_inputSeen.Add(input))
+        {
+            _inputOrder.Add(input);
+        }
+    }
+
     private void AssignRole(SubEntity output, OperationRole role)
     {
+        if (!_roles.ContainsKey(output))
+        {
+            _outputOrder.Add(output);
+        }
+
         if (_roles.TryGetValue(output, out OperationRole existing) && existing != role)
         {
             throw new InvalidOperationException(

@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <stdint.h>
 #include <string>
+#include <vector>
 
 #include "openmcad_occt.h"
 
@@ -95,6 +96,28 @@ struct Transform
         return result;
     }
 };
+
+/*
+ * Whether a two-call out buffer was actually filled.
+ *
+ * The generated dispatch calls this after every operation and reports
+ * OPENMCAD_ERROR_BUFFER_TOO_SMALL when it returns false. Without it the status says OK whether or
+ * not anything was written, and a caller whose buffer was one element short reads its own
+ * uninitialised memory believing the call succeeded.
+ *
+ * A null buffer is not a failure: that is the size query half of the protocol, and answering it is
+ * the call succeeding at what was asked.
+ */
+template <typename T>
+inline bool buffer_satisfied(const T* data, int32_t capacity, const int32_t* required) noexcept
+{
+    if (data == nullptr || required == nullptr)
+    {
+        return true;
+    }
+
+    return capacity >= *required;
+}
 
 /* --- spans in ------------------------------------------------------------------------------- */
 
@@ -241,6 +264,17 @@ OpenMcadStatus fail_null(const char* operation, const char* parameter) noexcept;
 /* Records a diagnostic for the calling thread. Defined in openmcad_occt.cpp. */
 void record_error(const char* operation, const char* detail) noexcept;
 
+/*
+ * Adds a structured diagnostic for the operation in progress.
+ *
+ * Severity is 0 information, 1 warning, 2 error. The code must come from the managed
+ * KernelDiagnosticCodes list -- it is stable and aggregated over, so inventing one here breaks the
+ * health metrics in PLAN.md 5.2.4. The message is shown to a user, so it must name the value and
+ * the entity and suggest what to do, not restate what the kernel said.
+ */
+void report(int32_t severity, const char* code, const std::string& message,
+            const std::vector<uint64_t>& entities = {});
+
 } /* namespace openmcad */
 
 /* --- the exception firewall ----------------------------------------------------------------------
@@ -255,7 +289,7 @@ void record_error(const char* operation, const char* detail) noexcept;
 
 #if defined(OPENMCAD_WITH_OCCT)
 #  include <Standard_Failure.hxx>
-#  define OPENMCAD_CATCH_KERNEL(op)                                         catch (const Standard_Failure& failure)                                 {                                                                           openmcad::record_error(op, failure.GetMessageString());                 return OPENMCAD_ERROR_KERNEL_FAILURE;                               }
+#  define OPENMCAD_CATCH_KERNEL(op)                                         catch (const Standard_Failure& failure)                                 {                                                                           openmcad::record_error(op, failure.what());                 return OPENMCAD_ERROR_KERNEL_FAILURE;                               }
 #else
 #  define OPENMCAD_CATCH_KERNEL(op)
 #endif

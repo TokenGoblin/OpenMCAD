@@ -8,4 +8,28 @@
     <ProjectReference Include="../OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
   </ItemGroup>
 
+  <!--
+    The native shim and its OCCT dependency closure, produced by build.ps1's native step into
+    native/install/bin and written there by CMake's RUNTIME_DEPENDENCY_SET.
+
+    Content rather than None, deliberately: Content flows through a ProjectReference to the
+    referencing project's output, and None does not. Test assemblies reference this project and
+    need the DLLs beside them, or every OCCT test fails with a DllNotFoundException that says
+    nothing about the real cause.
+
+    The condition matters as much as the items. A managed-only build (someone without the C++
+    toolchain, or `build.ps1` without -WithOcct) has no native/install, and this must degrade to
+    "OcctKernel throws when constructed" rather than "the solution does not build".
+  -->
+  <PropertyGroup>
+    <OpenMcadNativeBinDir>$(MSBuildThisFileDirectory)../../native/install/bin/</OpenMcadNativeBinDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(OpenMcadNativeBinDir)')">
+    <Content Include="$(OpenMcadNativeBinDir)*.dll"
+             Link="%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+
 </Project>

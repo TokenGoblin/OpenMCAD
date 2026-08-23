@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Fake;
+using OpenMCAD.Kernel.Occt;
 using OpenMCAD.Kernel.Operations;
 using OpenMCAD.Math;
 
@@ -29,8 +30,7 @@ public static class KernelImplementations
     public static TheoryData<KernelFactory> All =>
     [
         new KernelFactory("fake", () => new FakeKernel()),
-
-        // TODO(P1-T06): add OcctKernel here. Nothing else in this file changes.
+        new KernelFactory("occt", () => new OcctKernel()),
     ];
 }
 

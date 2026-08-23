@@ -17,6 +17,8 @@
 #if defined(OPENMCAD_WITH_OCCT)
 #  include <OSD.hxx>
 #  include <Standard_Version.hxx>
+
+#  include "openmcad_handles.h"
 #endif
 
 namespace openmcad {
@@ -31,6 +33,27 @@ namespace {
  * unreproducible data race exactly when the system is under most load.
  */
 thread_local std::string g_last_error;
+
+/*
+ * Diagnostics from the operation that just ran, per thread.
+ *
+ * Separate from the last-error string: that is one line of prose for a log, whereas these carry a
+ * stable code, a severity, and the entities at fault, and the managed side turns them into
+ * KernelDiagnostic objects. An operation may report several -- a fillet that failed on three of
+ * twelve edges has three things to say.
+ *
+ * Cleared at the start of each operation by the managed layer calling diagnostics_clear, not
+ * automatically: a caller that wants to accumulate across a retry ladder needs them to persist.
+ */
+struct Diagnostic
+{
+    int32_t severity = 2;
+    std::string code;
+    std::string message;
+    std::vector<uint64_t> entities;
+};
+
+thread_local std::vector<Diagnostic> g_diagnostics;
 
 std::string build_version()
 {
@@ -86,17 +109,48 @@ OpenMcadStatus fail_null(const char* operation, const char* parameter) noexcept
     return OPENMCAD_ERROR_INVALID_INPUT;
 }
 
+namespace {
+
+const Diagnostic& at(int32_t index)
+{
+    if (index < 0 || static_cast<size_t>(index) >= g_diagnostics.size())
+    {
+        throw invalid_input(
+            "Diagnostic index " + std::to_string(index) + " is out of range; there are "
+            + std::to_string(g_diagnostics.size()) + ".");
+    }
+
+    return g_diagnostics[static_cast<size_t>(index)];
+}
+
+} /* namespace */
+
+void report(int32_t severity, const char* code, const std::string& message,
+            const std::vector<uint64_t>& entities)
+{
+    try
+    {
+        g_diagnostics.push_back(Diagnostic{severity, code, message, entities});
+    }
+    catch (...)
+    {
+        /* Losing a diagnostic must not fail the operation that produced it. */
+    }
+}
+
 namespace ops {
 
 void initialize()
 {
+    g_diagnostics.clear();
+
 #if defined(OPENMCAD_WITH_OCCT)
     /*
      * P1-T05, and load-bearing. Without this an FPE raised inside OCCT terminates the process
      * instead of arriving at the firewall as a catchable Standard_Failure -- so a user loses their
      * session to a modelling operation that should have reported "this fillet is impossible".
      */
-    OSD::SetSignal(Standard_False);
+    OSD::SetSignal(false);
 #endif
 
     g_last_error.clear();
@@ -106,6 +160,14 @@ void shutdown()
 {
     g_last_error.clear();
     g_last_error.shrink_to_fit();
+    g_diagnostics.clear();
+    g_diagnostics.shrink_to_fit();
+
+#if defined(OPENMCAD_WITH_OCCT)
+    // Release every live shape. A non-zero count here at shutdown is a leak, and the count is
+    // what the leak test asserts on.
+    handles().clear();
+#endif
 }
 
 void version(openmcad::OutBuffer<char> text)
@@ -117,6 +179,37 @@ void version(openmcad::OutBuffer<char> text)
 void last_error(openmcad::OutBuffer<char> text)
 {
     write_utf8(text, g_last_error);
+}
+
+void diagnostic_count(int32_t& count)
+{
+    count = static_cast<int32_t>(g_diagnostics.size());
+}
+
+void diagnostic_severity(int32_t index, int32_t& severity)
+{
+    severity = at(index).severity;
+}
+
+void diagnostic_code(int32_t index, openmcad::OutBuffer<char> code)
+{
+    write_utf8(code, at(index).code);
+}
+
+void diagnostic_message(int32_t index, openmcad::OutBuffer<char> message)
+{
+    write_utf8(message, at(index).message);
+}
+
+void diagnostic_entities(int32_t index, openmcad::OutBuffer<uint64_t> entities)
+{
+    const std::vector<uint64_t>& tags = at(index).entities;
+    entities.write(std::span<const uint64_t>(tags.data(), tags.size()));
+}
+
+void diagnostics_clear()
+{
+    g_diagnostics.clear();
 }
 
 } /* namespace ops */

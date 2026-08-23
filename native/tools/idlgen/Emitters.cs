@@ -258,6 +258,31 @@ internal static class DispatchEmitter
                     ? $"        openmcad::ops::{operation.Name}();"
                     : $"        openmcad::ops::{operation.Name}(\n            "
                         + string.Join(",\n            ", arguments) + ");");
+                // Out-buffer parameters use the two-call protocol, and until now the generated
+                // dispatch returned OPENMCAD_OK regardless -- so a caller passing a buffer one
+                // element short got a success status with nothing written, and read whatever was
+                // already in its array. OPENMCAD_ERROR_BUFFER_TOO_SMALL was declared and
+                // documented but never actually returned by anything.
+                List<string> outBuffers = [.. operation.Parameters
+                    .Where(p => TypeTable.For(p.Type).IsOutBuffer)
+                    .Select(p => p.Name)];
+
+                foreach (string buffer in outBuffers)
+                {
+                    text.AppendLine(
+                        $"        if (!openmcad::buffer_satisfied({buffer}, {buffer}_capacity, "
+                        + $"{buffer}_required))");
+                    text.AppendLine("        {");
+                    text.AppendLine(
+                        $"            openmcad::record_error(\"{operation.CSymbol(document.Prefix)}\",");
+                    text.AppendLine(
+                        "                \"The buffer is too small. Call again with the "
+                        + "reported size.\");");
+                    text.AppendLine("            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;");
+                    text.AppendLine("        }");
+                    text.AppendLine();
+                }
+
                 text.AppendLine("        return OPENMCAD_OK;");
                 text.AppendLine("    })");
                 text.AppendLine("}");

@@ -9,13 +9,18 @@ namespace OpenMCAD.IdlGen;
 /// <param name="OpsArgument">The expression the dispatch layer passes to the implementation.</param>
 /// <param name="IsOutput">Whether this parameter carries a result outwards.</param>
 /// <param name="NeedsNullCheck">Whether the dispatch layer must reject a null pointer.</param>
+/// <param name="IsOutBuffer">
+/// Whether this is a two-call out buffer, so the dispatch layer must report
+/// <c>OPENMCAD_ERROR_BUFFER_TOO_SMALL</c> when the caller's buffer could not be filled.
+/// </param>
 public sealed record Marshalling(
     Func<string, string> CParameters,
     Func<string, string> CSharpParameters,
     Func<string, string> OpsParameter,
     Func<string, string> OpsArgument,
     bool IsOutput = false,
-    bool NeedsNullCheck = false);
+    bool NeedsNullCheck = false,
+    bool IsOutBuffer = false);
 
 /// <summary>
 /// The marshalling rules, one per IDL type.
@@ -202,35 +207,40 @@ public static class TypeTable
             n => $"Span<double> {n}, int {n}Capacity, out int {n}Required",
             n => $"openmcad::OutBuffer<double> {n}",
             n => $"openmcad::OutBuffer<double>{{{n}, {n}_capacity, {n}_required}}",
-            IsOutput: true),
+            IsOutput: true,
+            IsOutBuffer: true),
 
         ["i32_array_out"] = new(
             n => $"int32_t* {n}, int32_t {n}_capacity, int32_t* {n}_required",
             n => $"Span<int> {n}, int {n}Capacity, out int {n}Required",
             n => $"openmcad::OutBuffer<int32_t> {n}",
             n => $"openmcad::OutBuffer<int32_t>{{{n}, {n}_capacity, {n}_required}}",
-            IsOutput: true),
+            IsOutput: true,
+            IsOutBuffer: true),
 
         ["u64_array_out"] = new(
             n => $"uint64_t* {n}, int32_t {n}_capacity, int32_t* {n}_required",
             n => $"Span<ulong> {n}, int {n}Capacity, out int {n}Required",
             n => $"openmcad::OutBuffer<uint64_t> {n}",
             n => $"openmcad::OutBuffer<uint64_t>{{{n}, {n}_capacity, {n}_required}}",
-            IsOutput: true),
+            IsOutput: true,
+            IsOutBuffer: true),
 
         ["byte_array_out"] = new(
             n => $"uint8_t* {n}, int32_t {n}_capacity, int32_t* {n}_required",
             n => $"Span<byte> {n}, int {n}Capacity, out int {n}Required",
             n => $"openmcad::OutBuffer<uint8_t> {n}",
             n => $"openmcad::OutBuffer<uint8_t>{{{n}, {n}_capacity, {n}_required}}",
-            IsOutput: true),
+            IsOutput: true,
+            IsOutBuffer: true),
 
         ["utf8_out"] = new(
             n => $"char* {n}, int32_t {n}_capacity, int32_t* {n}_required",
             n => $"Span<byte> {n}, int {n}Capacity, out int {n}Required",
             n => $"openmcad::OutBuffer<char> {n}",
             n => $"openmcad::OutBuffer<char>{{{n}, {n}_capacity, {n}_required}}",
-            IsOutput: true),
+            IsOutput: true,
+            IsOutBuffer: true),
     };
 
     /// <summary>Gets every known IDL type name.</summary>
