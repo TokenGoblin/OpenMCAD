@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using OpenMCAD.App;
 using OpenMCAD.App.Diagnostics;
 using OpenMCAD.App.Hosting;
+using OpenMCAD.Kernel.Occt;
 
 namespace OpenMCAD.Cli;
 
@@ -61,9 +62,10 @@ internal static class Program
             Console.WriteLine($"  assembly version : {AppInfo.AssemblyVersion}");
             Console.WriteLine($"  log directory    : {AppInfo.LogDirectory}");
 
-            // TODO(P1-T01): report the native shim version via openmcad_version() once
-            // OpenMCAD.Kernel.Occt can load openmcad_occt.dll.
-            Console.WriteLine("  geometry kernel  : not yet linked (P1-T06)");
+            // Read from the shim rather than stated here. This line said "not yet linked" for
+            // three phases after it stopped being true, because nothing made it wrong -- a
+            // hard-coded status is only ever accurate on the day it is written.
+            Console.WriteLine($"  geometry kernel  : {OcctKernel.ShimVersion}");
             return 0;
         });
 

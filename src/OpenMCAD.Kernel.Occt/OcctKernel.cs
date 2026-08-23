@@ -70,6 +70,17 @@ public sealed class OcctKernel : GeometryKernelBase
     {
     }
 
+    /// <summary>
+    /// Gets the native shim's version string, or a note that it could not be read.
+    /// </summary>
+    /// <remarks>
+    /// Static, so that asking what kernel is present costs nothing. Reporting it through
+    /// <see cref="Capabilities"/> would mean constructing a kernel -- a dispatcher thread, an
+    /// OCCT initialisation and a disposal -- which is a great deal of machinery for a line of
+    /// output in <c>omcad version</c>.
+    /// </remarks>
+    public static string ShimVersion => NativeVersion.Value;
+
     /// <inheritdoc />
     public override KernelCapabilities Capabilities => new(
         Name: "occt",

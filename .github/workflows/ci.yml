@@ -134,7 +134,13 @@ jobs:
           $output = & ./artifacts/publish/cli/omcad.exe version
           $output | Write-Host
           if ($LASTEXITCODE -ne 0) { throw "omcad version exited with $LASTEXITCODE" }
-          if ($output -notmatch 'OpenMCAD') { throw 'omcad version did not identify itself' }
+
+          # Joined first. Against an array, -notmatch returns the elements that do not match
+          # rather than a boolean, so a multi-line output makes it truthy even when one of the
+          # lines matches perfectly -- this check failed on output that was entirely correct.
+          $text = $output -join "`n"
+          if ($text -notmatch 'OpenMCAD') { throw 'omcad version did not identify itself' }
+          if ($text -match 'not yet linked') { throw 'omcad version reports a kernel that is linked as missing' }
 
       - name: Upload artifact
         if: matrix.configuration == 'Release'
@@ -205,19 +211,23 @@ jobs:
           # it unwind across the C ABI, is the single most important property of the boundary --
           # and it is cheap enough to prove on every build.
           $dll = (Get-ChildItem -Path native/build -Recurse -Filter openmcad_occt.dll | Select-Object -First 1).FullName
-          $escaped = $dll.Replace('', '/')
+          if (-not $dll) { throw 'openmcad_occt.dll was not produced' }
 
           $source = @"
           using System;
           using System.Runtime.InteropServices;
           public static class Probe {
-            const string Lib = @"ESCAPED_PATH";
+            // A verbatim string, so a Windows path needs no escaping. There was a Replace here
+            // that tried to escape backslashes and had lost its argument -- it read
+            // .Replace('', '/'), which throws. Nothing had ever run it: this repository had no
+            // remote until today, so no workflow had ever executed.
+            const string Lib = @"DLL_PATH";
             [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
             public static extern int openmcad_initialize();
             [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
             public static extern int openmcad_shape_release(ulong shape);
           }
-          "@.Replace('ESCAPED_PATH', $escaped)
+          "@.Replace('DLL_PATH', $dll)
 
           Add-Type -TypeDefinition $source
 
