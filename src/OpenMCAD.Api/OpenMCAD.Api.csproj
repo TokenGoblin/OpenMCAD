@@ -1,5 +1,28 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    PLAN.md 5.12: this assembly carries a semver contract, so its public surface is a checked-in
+    file rather than whatever happens to be public today. The analyzer fails the build when a
+    public member is not in the baseline (RS0016) or is in the baseline but gone from the code
+    (RS0017), which turns "did that change break plugins?" from a review question into a build
+    error.
+
+    Applied here and nowhere else, on purpose. Every other assembly is internal to the application
+    and free to change; making them all track a baseline would be ceremony that teaches people to
+    ignore the errors.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="../OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
   </ItemGroup>

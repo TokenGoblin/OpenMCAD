@@ -9,13 +9,15 @@ namespace OpenMCAD.Api;
 /// Phase 2. Plugins never receive raw kernel handles (ADR-0012).
 /// </para>
 /// <para>
-/// This type exists so the assembly is never empty and so tests/arch has a stable anchor to
-/// resolve the layer by. It carries no behaviour. Substantive work on this layer begins at
+/// Internal here, unlike in the other layers. This assembly's public surface is the plugin
+/// contract (PLAN.md 5.12), and a marker type that exists only to describe the layer would be a
+/// permanent, meaningless member of it -- baselined, versioned, and impossible to remove later
+/// without a major version. The assembly is no longer empty in any case. Substantive work on this layer begins at
 /// P2-T14.
 /// </para>
 /// </remarks>
-public static class LayerInfo
+internal static class LayerInfo
 {
     /// <summary>Gets the short name of this layer, as used in PLAN.md 4.1.</summary>
-    public static string Name => "Api";
+    internal static string Name => "Api";
 }

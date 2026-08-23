@@ -132,6 +132,14 @@ Not redistributed with the application. Listed because they are part of the buil
 | xunit.v3.runner.common | 4.0.0 | Apache-2.0 |
 | xunit.v3.runner.inproc.console | 4.0.0 | Apache-2.0 |
 
+## Build-time only
+
+Consumed during compilation and absent from the output.
+
+| Package | Version | Licence |
+|---|---|---|
+| Microsoft.CodeAnalysis.PublicApiAnalyzers | 5.6.0 | MIT |
+
 ### Licences established outside the package
 
 These declare no licence in the package itself, so it was traced to the source.

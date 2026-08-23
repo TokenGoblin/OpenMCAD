@@ -221,14 +221,34 @@ public sealed class KernelDispatcherTests
     {
         KernelDispatcher dispatcher = new("test-kernel");
 
-        using ManualResetEventSlim gate = new(false);
-        Task blocker = AsTask(dispatcher.RunAsync("blocker", () => { _ = gate.Wait(TimeSpan.FromSeconds(5)); }));
-        await Task.Delay(20);
+        using ManualResetEventSlim occupied = new(false);
+        using ManualResetEventSlim release = new(false);
+
+        Task blocker = AsTask(dispatcher.RunAsync("blocker", () =>
+        {
+            occupied.Set();
+            _ = release.Wait(TimeSpan.FromSeconds(5));
+        }));
+
+        // Wait for the blocker to actually be running rather than sleeping and hoping. A fixed
+        // delay here was a guess about scheduling, and on a loaded machine it is the wrong guess.
+        occupied.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue("the kernel thread should have started the blocker");
 
         Task<int> pending = dispatcher.RunAsync("pending", () => 1).AsTask();
 
-        gate.Set();
-        await dispatcher.DisposeAsync();
+        // Shutdown must be requested before the kernel thread can reach "pending", or the thread
+        // completes it and there is nothing to cancel. That ordering used to be left to luck --
+        // the blocker was released first and the test passed only because shutdown usually won --
+        // and it cannot be arranged from outside, because DisposeAsync requests cancellation and
+        // then blocks in a join with no observable moment between the two. So disposal runs on
+        // another thread and the blocker is held until the flag actually flips.
+        Task disposal = Task.Run(async () => await dispatcher.DisposeAsync());
+
+        SpinWait.SpinUntil(() => dispatcher.IsShuttingDown, TimeSpan.FromSeconds(5))
+            .Should().BeTrue("disposal should have requested cancellation");
+
+        release.Set();
+        await disposal;
 
         // An await that never completes on shutdown looks exactly like a deadlock.
         Func<Task> act = async () => await pending;

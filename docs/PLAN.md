@@ -910,7 +910,7 @@ Four epochs, eighteen phases. Each phase states a **goal**, **exit criteria** (m
 - [ ] **P2-T11** Grid, origin triad, reference plane display, background gradient/environment.
 - [ ] **P2-T12** MSAA, FXAA, optional SSAO; a defensible default material and lighting setup.
 - [ ] **P2-T13** Perf harness: synthetic scenes at 100k / 1M / 5M triangles and 1k / 10k instances, asserted against §7.
-- [ ] **P2-T14** `OpenMCAD.Api` skeleton with the API-surface baseline tooling in CI (**establish now**, per §5.12).
+- [x] **P2-T14** `OpenMCAD.Api` skeleton with the API-surface baseline tooling in CI (**establish now**, per §5.12). *(`Microsoft.CodeAnalysis.PublicApiAnalyzers` against a checked-in `PublicAPI.Unshipped.txt`, applied to `OpenMCAD.Api` alone — making every assembly track a baseline would be ceremony that teaches people to ignore the errors. Verified in both directions: an unrecorded public member fails the build (RS0016) and a removed one fails it too (RS0017). The surface is deliberately tiny: `ApiVersion` and the plugin contract P2-T15 needs. §5.12's full list — documents, features, commands, event hooks — is not declared, because designing it against an implementation that does not exist is how you end up choosing between breaking plugins and freezing bad design, which is the trade §5.12 opens by naming. `LayerInfo` was made internal here so a marker type does not become a permanent, unremovable member of the plugin surface.)*
 - [ ] **P2-T15** `AssemblyLoadContext` plugin loader + a hello-world sample plugin that adds a ribbon button.
 
 ---

@@ -39,6 +39,7 @@
   </ItemGroup>
 
   <ItemGroup Label="Build / tooling">
+    <PackageVersion Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0" />
     <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.400" />
   </ItemGroup>
 

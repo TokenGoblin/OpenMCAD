@@ -367,6 +367,19 @@ public sealed class KernelDispatcher : IAsyncDisposable, IDisposable
         }
     }
 
+    /// <summary>Gets a value indicating whether shutdown has been requested.</summary>
+    /// <remarks>
+    /// Internal, and it exists for one test. Proving that pending work is cancelled on shutdown
+    /// requires ordering an enqueue, a cancellation and a thread release, and every way of doing
+    /// that from outside is either a race or a five-second wait -- <see cref="DisposeAsync"/>
+    /// requests cancellation and then blocks in a join, so a caller cannot see the moment between
+    /// the two. Observing the flag is what makes the test deterministic and quick.
+    ///
+    /// Safe to read after disposal: <see cref="CancellationTokenSource.IsCancellationRequested"/>
+    /// does not throw once the source is disposed.
+    /// </remarks>
+    internal bool IsShuttingDown => _shutdown.IsCancellationRequested;
+
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {

@@ -1,0 +1,15 @@
+#nullable enable
+OpenMCAD.Api.ApiVersion
+OpenMCAD.Api.IPlugin
+OpenMCAD.Api.IPlugin.ApiVersion.get -> System.Version!
+OpenMCAD.Api.IPlugin.Initialize(OpenMCAD.Api.IPluginHost! host) -> void
+OpenMCAD.Api.IPlugin.Name.get -> string!
+OpenMCAD.Api.IPlugin.Version.get -> System.Version!
+OpenMCAD.Api.IPluginHost
+OpenMCAD.Api.IPluginHost.ApiVersion.get -> System.Version!
+OpenMCAD.Api.IPluginHost.Logger.get -> Microsoft.Extensions.Logging.ILogger!
+static OpenMCAD.Api.ApiVersion.Major.get -> int
+static OpenMCAD.Api.ApiVersion.Minor.get -> int
+static OpenMCAD.Api.ApiVersion.Patch.get -> int
+static OpenMCAD.Api.ApiVersion.Supports(System.Version! required) -> bool
+static OpenMCAD.Api.ApiVersion.Value.get -> string!

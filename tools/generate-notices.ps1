@@ -121,7 +121,7 @@ function Get-ManagedPackages {
 
     # Build-time only: PrivateAssets="all" keeps it out of the output entirely. Listed by name
     # because the assets graph records the dependency but not that nothing of it is copied.
-    $buildOnly = @('Microsoft.SourceLink.GitHub')
+    $buildOnly = @('Microsoft.SourceLink.GitHub', 'Microsoft.CodeAnalysis.PublicApiAnalyzers')
 
     $nuget = Get-NuGetRoot
     $results = @()
