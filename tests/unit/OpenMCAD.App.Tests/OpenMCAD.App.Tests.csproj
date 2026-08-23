@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.App/OpenMCAD.App.csproj" />
+
+    <!--
+      The fixtures are referenced only so the build produces them before these tests run; the
+      loader is pointed at the files on disk. ReferenceOutputAssembly is off because loading them
+      into the test's own context would defeat the isolation being tested.
+    -->
+    <ProjectReference Include="../../fixtures/OpenMCAD.SamplePlugin/OpenMCAD.SamplePlugin.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../fixtures/OpenMCAD.SamplePlugin.Incompatible/OpenMCAD.SamplePlugin.Incompatible.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../fixtures/OpenMCAD.SamplePlugin.Faulty/OpenMCAD.SamplePlugin.Faulty.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../fixtures/OpenMCAD.SamplePlugin.Ambiguous/OpenMCAD.SamplePlugin.Ambiguous.csproj"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

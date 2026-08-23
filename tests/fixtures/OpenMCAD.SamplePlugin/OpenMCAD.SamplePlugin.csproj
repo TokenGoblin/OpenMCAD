@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      A real plugin, built as a real assembly, because the thing under test is cross-context
+      loading and an in-process stub would share the host's types by construction and prove
+      nothing. It is emitted next to the test binaries so the loader can be pointed at it.
+    -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Referenced, never copied. A plugin carrying its own OpenMCAD.Api.dll would define a
+         second IPlugin with the same name and the host's cast would fail. -->
+    <ProjectReference Include="../../../src/OpenMCAD.Api/OpenMCAD.Api.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>

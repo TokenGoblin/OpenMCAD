@@ -31,6 +31,11 @@
   </Folder>
   <Folder Name="/tests/regression/">
     <Project Path="tests/regression/OpenMCAD.Regression/OpenMCAD.Regression.csproj" />
+    <Project Path="tests/fixtures/OpenMCAD.SamplePlugin/OpenMCAD.SamplePlugin.csproj" />
+    <Project Path="tests/fixtures/OpenMCAD.SamplePlugin.Ambiguous/OpenMCAD.SamplePlugin.Ambiguous.csproj" />
+    <Project Path="tests/fixtures/OpenMCAD.SamplePlugin.Faulty/OpenMCAD.SamplePlugin.Faulty.csproj" />
+    <Project Path="tests/fixtures/OpenMCAD.SamplePlugin.Incompatible/OpenMCAD.SamplePlugin.Incompatible.csproj" />
+    <Project Path="tests/unit/OpenMCAD.App.Tests/OpenMCAD.App.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Api.Tests/OpenMCAD.Api.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Render.Tests/OpenMCAD.Render.Tests.csproj" />
     <Project Path="tests/perf/OpenMCAD.Kernel.Benchmarks/OpenMCAD.Kernel.Benchmarks.csproj" />

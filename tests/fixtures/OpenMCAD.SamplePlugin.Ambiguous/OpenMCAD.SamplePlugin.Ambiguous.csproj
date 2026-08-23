@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- A fixture assembly for one plugin-loader rejection path. Real, because the loader takes a
+         file path and an in-process stub would prove nothing about cross-context loading. -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.Api/OpenMCAD.Api.csproj" Private="false" />
+  </ItemGroup>
+
+</Project>
