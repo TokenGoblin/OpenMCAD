@@ -5,10 +5,18 @@ name: Nightly regression
 # the ones that decay silently: determinism, robustness, and the golden values that make a
 # regression visible at all.
 
+# The schedule is deliberately switched off. This repository is private, so Actions minutes are
+# billed, and Windows runners are charged at twice the rate -- an OCCT build from cold is around
+# 660 billable minutes, which would consume a monthly allowance in two nights. It ran on a
+# schedule while the workflow could not build OCCT at all and the cost was hypothetical; it is not
+# hypothetical now.
+#
+# Restore the schedule when either the repository is public, where Actions minutes are free, or a
+# spending limit is set deliberately. Until then this runs on request, and the local build --
+# which does build OCCT, on every commit -- is what actually covers the kernel.
 on:
-  schedule:
-    # 03:00 UTC daily. No particular reason beyond being outside working hours.
-    - cron: '0 3 * * *'
+  # schedule:
+  #   - cron: '0 3 * * *'
   # No kernel input yet: 'occt' is not a runnable choice until P1-T06, and an input the job
   # silently ignored would be worse than not offering it. Add it back, wired into the matrix with
   # fromJSON, when there is a second kernel to choose.
