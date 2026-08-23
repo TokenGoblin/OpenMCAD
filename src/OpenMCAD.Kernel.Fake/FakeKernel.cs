@@ -66,7 +66,12 @@ public sealed class FakeKernel : GeometryKernelBase
         Name: "fake",
         Version: "1.0",
         ProducesExactMassProperties: false,
-        SupportsRetryLadder: false);
+        SupportsRetryLadder: false,
+
+        // Its analytic geometry knows its faces but has no curve discretiser, and deriving edges
+        // from the triangles it emits would produce edges between coplanar facets that a user
+        // could select. Reported as absent rather than approximated.
+        ProducesEdgeTessellation: false);
 
     /// <summary>Gets the number of shapes currently alive, for leak tests.</summary>
     public int LiveShapeCount

@@ -187,6 +187,52 @@ public readonly record struct TessellationOptions(
 }
 
 /// <summary>
+/// The tessellated edges of a body, as polylines.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Concatenated rather than a jagged array: this is upload-shaped, and one buffer with offsets is
+/// what a renderer wants. Polyline <c>i</c> spans points <c>[Offsets[i], Offsets[i + 1])</c>, so
+/// <see cref="Offsets"/> carries one more entry than there are polylines and the last polyline
+/// needs no special case.
+/// </para>
+/// <para>
+/// Edges are a separate result rather than something derived from the triangles. A CAD edge is an
+/// entity the user selects and dimensions to; the boundary between two coplanar triangles is not
+/// one. Deriving them from the mesh would invent edges that do not exist and lose the ones that do.
+/// </para>
+/// </remarks>
+/// <param name="Positions">Every polyline point, concatenated, in metres.</param>
+/// <param name="Offsets">
+/// Where each polyline starts, plus a closing total. Empty when there are no edges.
+/// </param>
+/// <param name="Edges">Which edge each polyline represents.</param>
+public sealed record MeshEdges(
+    ImmutableArray<Vec3d> Positions,
+    ImmutableArray<int> Offsets,
+    ImmutableArray<SubEntity> Edges)
+{
+    /// <summary>Gets the empty edge set.</summary>
+    public static MeshEdges Empty { get; } = new([], [], []);
+
+    /// <summary>Gets the number of polylines.</summary>
+    public int PolylineCount => Edges.Length;
+
+    /// <summary>Returns the points of one polyline.</summary>
+    /// <param name="index">Which polyline.</param>
+    /// <returns>Its points.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">There is no such polyline.</exception>
+    public ReadOnlySpan<Vec3d> PointsOf(int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, PolylineCount);
+
+        int start = Offsets[index];
+        return Positions.AsSpan()[start..Offsets[index + 1]];
+    }
+}
+
+/// <summary>
 /// A triangulated approximation of a shape.
 /// </summary>
 /// <param name="Positions">Vertex positions in world coordinates and metres.</param>
@@ -199,6 +245,10 @@ public readonly record struct TessellationOptions(
 /// For each triangle, the index into <paramref name="Faces"/> of the face it came from.
 /// </param>
 /// <param name="Faces">The faces that contributed, in order.</param>
+/// <param name="Edges">
+/// The tessellated edges, or <see langword="null"/> when the kernel supplied none. Read it
+/// through <see cref="MeshBuffer.EdgeSet"/> rather than directly.
+/// </param>
 /// <remarks>
 /// <para>
 /// Positions are <b>double</b>. Converting to float happens at buffer-fill time relative to a
@@ -216,10 +266,19 @@ public sealed record MeshBuffer(
     ImmutableArray<Vec3d> Normals,
     ImmutableArray<int> Indices,
     ImmutableArray<int> TriangleFaces,
-    ImmutableArray<SubEntity> Faces)
+    ImmutableArray<SubEntity> Faces,
+    MeshEdges? Edges = null)
 {
     /// <summary>Gets an empty mesh.</summary>
     public static MeshBuffer Empty { get; } = new([], [], [], [], []);
+
+    /// <summary>Gets the tessellated edges, or an empty set when the kernel supplied none.</summary>
+    /// <remarks>
+    /// Optional on the record so that existing callers and fixtures that only care about triangles
+    /// need not construct an empty one, but never null here — a caller iterating edges should not
+    /// have to distinguish "no edges" from "edges not asked for".
+    /// </remarks>
+    public MeshEdges EdgeSet => Edges ?? MeshEdges.Empty;
 
     /// <summary>Gets the number of triangles.</summary>
     public int TriangleCount => Indices.Length / 3;

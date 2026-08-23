@@ -590,6 +590,40 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_faces(
     uint64_t mesh,
     uint64_t* values, int32_t values_capacity, int32_t* values_required);
 
+/*
+ * Returns where each edge polyline starts, plus a final total.
+ *
+ * @param mesh The mesh.
+ *
+ * @param values One point index per polyline, then the total point count, so polyline i
+ *        spans [values[i], values[i+1]). Empty when there are no edges.
+ */
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_offsets(
+    uint64_t mesh,
+    int32_t* values, int32_t values_capacity, int32_t* values_required);
+
+/*
+ * Returns edge polyline points as XYZ triples in metres.
+ *
+ * @param mesh The mesh.
+ *
+ * @param values Three doubles per point, concatenated across polylines.
+ */
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_positions(
+    uint64_t mesh,
+    double* values, int32_t values_capacity, int32_t* values_required);
+
+/*
+ * Returns the edge each polyline represents.
+ *
+ * @param mesh The mesh.
+ *
+ * @param values One edge tag per polyline, in the same order as the offsets.
+ */
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_tags(
+    uint64_t mesh,
+    uint64_t* values, int32_t values_capacity, int32_t* values_required);
+
 
 /* --- serialisation ------------------------------------------------------------- */
 

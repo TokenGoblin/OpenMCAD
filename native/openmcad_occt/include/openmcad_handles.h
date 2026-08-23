@@ -119,9 +119,24 @@ struct MeshRecord
     std::vector<int32_t> triangleFaces;/* one face index per triangle      */
     std::vector<uint64_t> faces;       /* face tags the indices refer to   */
 
+    /*
+     * Edge polylines, concatenated. Polyline i spans points [edgeOffsets[i], edgeOffsets[i+1]),
+     * so edgeOffsets has one more entry than there are polylines. Empty means no edges at all,
+     * not one empty polyline.
+     *
+     * Kept apart from the face vertices rather than indexed into them. An edge point and a face
+     * vertex coincide in space but not in the buffer -- the face array is grouped by face and an
+     * edge is shared between two of them -- and sharing would mean an index remap for no saving
+     * worth the bug.
+     */
+    std::vector<double> edgePositions;
+    std::vector<int32_t> edgeOffsets;
+    std::vector<uint64_t> edgeTags;
+
     int32_t vertex_count() const { return static_cast<int32_t>(positions.size() / 3); }
     int32_t triangle_count() const { return static_cast<int32_t>(indices.size() / 3); }
     int32_t face_count() const { return static_cast<int32_t>(faces.size()); }
+    int32_t edge_count() const { return static_cast<int32_t>(edgeTags.size()); }
 };
 
 /* --- the table ------------------------------------------------------------------------------ */

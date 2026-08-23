@@ -28,8 +28,8 @@ public sealed record Marshalling(
 /// <remarks>
 /// <para>
 /// This table is the entire boundary contract in one place, which is the point of generating rather
-/// than hand-writing: a rule stated here is applied identically to all forty-nine operations, and a
-/// mistake here is one mistake rather than forty-nine.
+/// than hand-writing: a rule stated here is applied identically to every operation, and a mistake
+/// here is one mistake rather than one per operation.
 /// </para>
 /// <para>
 /// The rules follow ADR-0003 without exception. Handles are opaque <c>uint64</c>. Nothing carries a

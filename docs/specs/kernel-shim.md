@@ -3,7 +3,7 @@
 **Task:** P1-T16, which states the requirement plainly — *"every later phase adds operations, and
 this must be a 30-minute task, not an archaeology expedition."*
 
-The kernel surface grows from 49 operations today to the 200–300 that ADR-0002 estimates a complete
+The kernel surface grows from 52 operations today to the 200–300 that ADR-0002 estimates a complete
 MCAD application needs. That is roughly one new operation every working week for several years. If
 each one costs an afternoon of working out which five files to touch, the arithmetic alone sinks
 the project.

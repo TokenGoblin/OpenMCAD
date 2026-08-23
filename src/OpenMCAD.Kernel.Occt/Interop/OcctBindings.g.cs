@@ -540,6 +540,42 @@ internal static partial class OcctBindings
         ulong mesh,
         Span<ulong> values, int valuesCapacity, out int valuesRequired);
 
+    /// <summary>Returns where each edge polyline starts, plus a final total.</summary>
+    /// <param name="mesh">The mesh.</param>
+    /// <param name="values">One point index per polyline, then the total point count, so polyline i spans [values[i], values[i+1]). Empty when there are no edges.</param>
+    /// <param name="valuesCapacity">The capacity of <paramref name="values"/>, or zero to query the required size.</param>
+    /// <param name="valuesRequired">Receives the number of elements <paramref name="values"/> needs.</param>
+    /// <returns>Zero on success; otherwise an <c>OpenMcadStatus</c> code.</returns>
+    [LibraryImport(Library, EntryPoint = "openmcad_mesh_edge_offsets")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int MeshEdgeOffsets(
+        ulong mesh,
+        Span<int> values, int valuesCapacity, out int valuesRequired);
+
+    /// <summary>Returns edge polyline points as XYZ triples in metres.</summary>
+    /// <param name="mesh">The mesh.</param>
+    /// <param name="values">Three doubles per point, concatenated across polylines.</param>
+    /// <param name="valuesCapacity">The capacity of <paramref name="values"/>, or zero to query the required size.</param>
+    /// <param name="valuesRequired">Receives the number of elements <paramref name="values"/> needs.</param>
+    /// <returns>Zero on success; otherwise an <c>OpenMcadStatus</c> code.</returns>
+    [LibraryImport(Library, EntryPoint = "openmcad_mesh_edge_positions")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int MeshEdgePositions(
+        ulong mesh,
+        Span<double> values, int valuesCapacity, out int valuesRequired);
+
+    /// <summary>Returns the edge each polyline represents.</summary>
+    /// <param name="mesh">The mesh.</param>
+    /// <param name="values">One edge tag per polyline, in the same order as the offsets.</param>
+    /// <param name="valuesCapacity">The capacity of <paramref name="values"/>, or zero to query the required size.</param>
+    /// <param name="valuesRequired">Receives the number of elements <paramref name="values"/> needs.</param>
+    /// <returns>Zero on success; otherwise an <c>OpenMcadStatus</c> code.</returns>
+    [LibraryImport(Library, EntryPoint = "openmcad_mesh_edge_tags")]
+    [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]
+    internal static partial int MeshEdgeTags(
+        ulong mesh,
+        Span<ulong> values, int valuesCapacity, out int valuesRequired);
+
     // --- serialisation ---------------------------------------------------------
 
     /// <summary>Writes a shape to the kernel native format.</summary>

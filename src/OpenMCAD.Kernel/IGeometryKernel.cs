@@ -16,11 +16,22 @@ namespace OpenMCAD.Kernel;
 /// actually promised.
 /// </param>
 /// <param name="SupportsRetryLadder">Whether fragile operations escalate through PLAN.md 5.2.4.</param>
+/// <param name="ProducesEdgeTessellation">
+/// Whether <see cref="IGeometryKernel.TriangulateAsync"/> also returns edge polylines.
+/// <para>
+/// Stated rather than left to be discovered from an empty result, so a contract test can demand
+/// edges from a kernel that claims them and report a skip for one that does not. An edge must come
+/// from the kernel's own curve or its triangulation; recovering one from the triangle mesh would
+/// invent edges between coplanar triangles and lose the ones that matter, and a user can select
+/// and dimension to whatever is drawn.
+/// </para>
+/// </param>
 public readonly record struct KernelCapabilities(
     string Name,
     string Version,
     bool ProducesExactMassProperties,
-    bool SupportsRetryLadder);
+    bool SupportsRetryLadder,
+    bool ProducesEdgeTessellation = false);
 
 /// <summary>
 /// The geometry kernel, as the rest of OpenMCAD sees it.

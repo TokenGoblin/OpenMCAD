@@ -27,6 +27,9 @@ public sealed class SnapshotTests
     private static SubEntity Face(ulong tag)
         => new(new KernelShape(1), tag, SubEntityKind.Face);
 
+    private static SubEntity Edge(ulong tag)
+        => new(new KernelShape(1), tag, SubEntityKind.Edge);
+
     // --- Identity and resolution --------------------------------------------------------------
 
     [Fact]
@@ -226,6 +229,79 @@ public sealed class SnapshotTests
     public void AnEmptySceneHasAnOriginAtZero()
     {
         new SnapshotBuilder().Build(1).Origin.Should().Be(Vec3d.Zero);
+    }
+
+    // --- Edges --------------------------------------------------------------------------------
+
+    [Fact]
+    public void EdgePolylinesBecomeStartsAndLengths()
+    {
+        // The kernel closes its offsets with a total; a draw call wants a start and a count. The
+        // conversion happens once here rather than every frame.
+        MeshEdges edges = new(
+            [Vec3d.Zero, Vec3d.UnitX, new Vec3d(2, 0, 0), new Vec3d(0, 1, 0), new Vec3d(0, 2, 0)],
+            [0, 3, 5],
+            [Edge(20), Edge(21)]);
+
+        SnapshotBuilder builder = new();
+        builder.Add(Triangle(Vec3d.Zero, Face(10)) with { Edges = edges });
+
+        DisplayEdges display = builder.Build(1).Bodies[0].Edges;
+
+        display.PolylineCount.Should().Be(2);
+        display.Starts.Should().Equal(0, 3);
+        display.Lengths.Should().Equal(3, 2);
+        display.PointCount.Should().Be(5);
+    }
+
+    [Fact]
+    public void EdgesAndFacesNeverShareAnId()
+    {
+        // The ID buffer holds one number per pixel and does not record what kind of thing it hit.
+        // A collision would make a pick resolve an edge to a face.
+        MeshEdges edges = new(
+            [Vec3d.Zero, Vec3d.UnitX],
+            [0, 2],
+            [Edge(20)]);
+
+        SnapshotBuilder builder = new();
+        builder.Add(Triangle(Vec3d.Zero, Face(10)) with { Edges = edges });
+
+        DisplaySnapshot snapshot = builder.Build(1);
+        DisplayBody body = snapshot.Bodies[0];
+
+        body.Mesh.TriangleIds[0].Should().NotBe(body.Edges.Ids[0]);
+        snapshot.Resolve(body.Edges.Ids[0]).Should().Be(Edge(20));
+        snapshot.Resolve(body.Mesh.TriangleIds[0]).Should().Be(Face(10));
+    }
+
+    [Fact]
+    public void EdgePointsAreMeasuredFromTheSameOriginAsTheMesh()
+    {
+        // Two origins would draw the edges somewhere other than the surface they bound.
+        Vec3d far = new(1000, 0, 0);
+
+        MeshEdges edges = new([far, far + Vec3d.UnitX], [0, 2], [Edge(20)]);
+
+        SnapshotBuilder builder = new();
+        builder.Add(Triangle(far, Face(10)) with { Edges = edges });
+
+        DisplaySnapshot snapshot = builder.Build(1);
+        DisplayBody body = snapshot.Bodies[0];
+
+        double edgeX = snapshot.Origin.X + body.Edges.Positions[0];
+        double meshX = snapshot.Origin.X + body.Mesh.Positions[0];
+
+        edgeX.Should().BeApproximately(meshX, 1e-9);
+    }
+
+    [Fact]
+    public void AKernelWithoutEdgeTessellationProducesNoEdges()
+    {
+        SnapshotBuilder builder = new();
+        builder.Add(Triangle(Vec3d.Zero, Face(10)));
+
+        builder.Build(1).Bodies[0].Edges.Should().BeSameAs(DisplayEdges.Empty);
     }
 
     // --- Publication --------------------------------------------------------------------------

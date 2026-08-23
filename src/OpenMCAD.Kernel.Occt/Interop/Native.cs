@@ -69,7 +69,7 @@ internal sealed class NativeCallException(NativeStatus status, string operation,
 /// </summary>
 /// <remarks>
 /// <para>
-/// Written once here rather than at each of the forty-nine call sites. The two-call protocol in
+/// Written once here rather than at every call site. The two-call protocol in
 /// particular is easy to get subtly wrong -- ignoring the size on the second call, or treating a
 /// legitimately empty collection as a failure -- and a mistake in it reads uninitialised memory
 /// rather than throwing.

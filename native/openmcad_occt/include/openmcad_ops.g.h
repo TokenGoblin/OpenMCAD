@@ -240,6 +240,18 @@ void mesh_faces(
     openmcad::MeshRef mesh,
     openmcad::OutBuffer<uint64_t> values);
 
+void mesh_edge_offsets(
+    openmcad::MeshRef mesh,
+    openmcad::OutBuffer<int32_t> values);
+
+void mesh_edge_positions(
+    openmcad::MeshRef mesh,
+    openmcad::OutBuffer<double> values);
+
+void mesh_edge_tags(
+    openmcad::MeshRef mesh,
+    openmcad::OutBuffer<uint64_t> values);
+
 
 /* --- serialisation ------------------------------------------------------------- */
 

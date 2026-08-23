@@ -285,6 +285,27 @@ void mesh_faces(
     throw openmcad::not_implemented("mesh_faces");
 }
 
+void mesh_edge_offsets(
+    openmcad::MeshRef,
+    openmcad::OutBuffer<int32_t>)
+{
+    throw openmcad::not_implemented("mesh_edge_offsets");
+}
+
+void mesh_edge_positions(
+    openmcad::MeshRef,
+    openmcad::OutBuffer<double>)
+{
+    throw openmcad::not_implemented("mesh_edge_positions");
+}
+
+void mesh_edge_tags(
+    openmcad::MeshRef,
+    openmcad::OutBuffer<uint64_t>)
+{
+    throw openmcad::not_implemented("mesh_edge_tags");
+}
+
 void write_brep(
     openmcad::ShapeRef,
     openmcad::OutBuffer<uint8_t>)

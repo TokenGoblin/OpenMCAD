@@ -14,9 +14,13 @@
 #include <cmath>
 #include <memory>
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
+#include <TopExp.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <IMeshTools_Parameters.hxx>
 #include <Poly_Triangulation.hxx>
@@ -57,6 +61,89 @@ bool surfaceNormalAt(
 
     normal = candidate.Normalized();
     return true;
+}
+
+
+/*
+ * Appends one edge's polyline to the mesh.
+ *
+ * Taken from the triangulation wherever possible, not from the analytic curve. The two agree only
+ * to within the chordal deviation, and an edge drawn from the curve therefore floats above or sinks
+ * below the tessellated surface it is supposed to bound -- which reads as z-fighting on a coarse
+ * mesh and as a visibly detached outline on a curved one. Using the polygon OCCT already fitted to
+ * the triangulation makes the edge lie exactly on the drawn surface by construction.
+ *
+ * The analytic fallback exists for edges no face carries a polygon for: a free edge in a wire body,
+ * or a face the mesher declined. Those cannot z-fight with a surface that is not there.
+ */
+void appendEdge(
+    MeshRecord& mesh, const TopoDS_Edge& edge, const ShapeAncestorMap& edgeToFaces,
+    double angularDeviation)
+{
+    const size_t before = mesh.edgePositions.size();
+
+    if (edgeToFaces.Contains(edge))
+    {
+        for (const TopoDS_Shape& shape : edgeToFaces.FindFromKey(edge))
+        {
+            const TopoDS_Face face = TopoDS::Face(shape);
+
+            TopLoc_Location location;
+            const Handle(Poly_Triangulation) triangulation =
+                BRep_Tool::Triangulation(face, location);
+            if (triangulation.IsNull())
+            {
+                continue;
+            }
+
+            const Handle(Poly_PolygonOnTriangulation) polygon =
+                BRep_Tool::PolygonOnTriangulation(edge, triangulation, location);
+            if (polygon.IsNull())
+            {
+                continue;
+            }
+
+            const gp_Trsf& placement = location.Transformation();
+            for (int i = 1; i <= polygon->NbNodes(); ++i)
+            {
+                const gp_Pnt point =
+                    triangulation->Node(polygon->Node(i)).Transformed(placement);
+
+                mesh.edgePositions.push_back(point.X());
+                mesh.edgePositions.push_back(point.Y());
+                mesh.edgePositions.push_back(point.Z());
+            }
+
+            break;
+        }
+    }
+
+    if (mesh.edgePositions.size() == before)
+    {
+        // Nothing tessellated carries this edge, so discretise the curve itself. Tangential
+        // deflection rather than uniform sampling: it spends points where the curve bends and
+        // none where it does not, so a straight edge costs two points and a tight arc stays smooth.
+        BRepAdaptor_Curve curve(edge);
+        GCPnts_TangentialDeflection points(
+            curve, angularDeviation, curve.LastParameter() - curve.FirstParameter());
+
+        for (int i = 1; i <= points.NbPoints(); ++i)
+        {
+            const gp_Pnt point = points.Value(i);
+            mesh.edgePositions.push_back(point.X());
+            mesh.edgePositions.push_back(point.Y());
+            mesh.edgePositions.push_back(point.Z());
+        }
+    }
+
+    // A polyline of one point draws nothing and would only make every consumer check for it.
+    if (mesh.edgePositions.size() - before < 6)
+    {
+        mesh.edgePositions.resize(before);
+        return;
+    }
+
+    mesh.edgeOffsets.push_back(static_cast<int32_t>(before / 3));
 }
 
 } /* namespace */
@@ -200,6 +287,44 @@ void triangulate(
         }
     }
 
+    /*
+     * Edges, after the faces, because the polygons this reads are attached to the face
+     * triangulations that the loop above just walked.
+     *
+     * Canonical order and the caller's own tags, so an edge picked in the viewport resolves to the
+     * same entity `enumerate` would have named. An edge drawn under a tag the caller cannot
+     * resolve is an edge that highlights and then selects nothing.
+     */
+    ShapeAncestorMap edgeToFaces;
+    TopExp::MapShapesAndAncestors(solid, TopAbs_EDGE, TopAbs_FACE, edgeToFaces);
+
+    for (const TopoDS_Shape& entity : enumerate_canonical(solid, TopAbs_EDGE))
+    {
+        const TopoDS_Edge edge = TopoDS::Edge(entity);
+
+        // Degenerate edges are parameterisation artefacts with no length -- the poles of a sphere.
+        // There is nothing to draw and nothing a user could point at.
+        if (BRep_Tool::Degenerated(edge))
+        {
+            continue;
+        }
+
+        const size_t polylines = record->edgeOffsets.size();
+        appendEdge(*record, edge, edgeToFaces, angular_deviation);
+
+        if (record->edgeOffsets.size() != polylines)
+        {
+            record->edgeTags.push_back(handles().store_entity(shape, edge).tag);
+        }
+    }
+
+    // The closing total, so polyline i spans [offsets[i], offsets[i+1]) with no special case for
+    // the last one. Only when there is something to close.
+    if (!record->edgeOffsets.empty())
+    {
+        record->edgeOffsets.push_back(static_cast<int32_t>(record->edgePositions.size() / 3));
+    }
+
     mesh.set(handles().store(std::move(record)));
 }
 
@@ -244,6 +369,25 @@ void mesh_faces(MeshRef mesh, OutBuffer<uint64_t> values)
 {
     const MeshRecord& record = handles().resolve(mesh);
     values.write(std::span<const uint64_t>(record.faces.data(), record.faces.size()));
+}
+
+void mesh_edge_offsets(MeshRef mesh, OutBuffer<int32_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const int32_t>(record.edgeOffsets.data(), record.edgeOffsets.size()));
+}
+
+void mesh_edge_positions(MeshRef mesh, OutBuffer<double> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(
+        std::span<const double>(record.edgePositions.data(), record.edgePositions.size()));
+}
+
+void mesh_edge_tags(MeshRef mesh, OutBuffer<uint64_t> values)
+{
+    const MeshRecord& record = handles().resolve(mesh);
+    values.write(std::span<const uint64_t>(record.edgeTags.data(), record.edgeTags.size()));
 }
 
 } /* namespace openmcad::ops */

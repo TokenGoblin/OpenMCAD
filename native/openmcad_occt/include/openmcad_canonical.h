@@ -1,8 +1,8 @@
 /*
  * openmcad_canonical.h - canonical entity ordering, and the retained-entity sweep.
  *
- * Two things every operation body needs, factored out so they are written once rather than
- * forty-nine times slightly differently.
+ * Two things every operation body needs, factored out so they are written once rather than once
+ * per operation, slightly differently each time.
  */
 
 #ifndef OPENMCAD_CANONICAL_H

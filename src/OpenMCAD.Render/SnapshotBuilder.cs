@@ -117,10 +117,20 @@ public sealed class SnapshotBuilder
             triangleIds[i] = faceIds[face];
         }
 
+        // Edges share the face numbering. The ID buffer holds one number per pixel and does not
+        // say what kind of thing it found, so an edge and a face must never collide -- the pick
+        // resolves the kind from the entity it lands on.
+        DisplayId[] edgeIds = new DisplayId[mesh.EdgeSet.PolylineCount];
+        for (int i = 0; i < edgeIds.Length; ++i)
+        {
+            edgeIds[i] = new DisplayId(_nextId++);
+            _entities[edgeIds[i]] = mesh.EdgeSet.Edges[i];
+        }
+
         DisplayBodyId id = new(_bodies.Count);
         Bounds3d bodyBounds = mesh.Bounds;
 
-        _bodies.Add(new PendingBody(id, mesh, [.. triangleIds], bodyBounds));
+        _bodies.Add(new PendingBody(id, mesh, [.. triangleIds], [.. edgeIds], bodyBounds));
         _bounds = _bounds.IsEmpty ? bodyBounds : Bounds3d.Union(_bounds, bodyBounds);
 
         return id;
@@ -163,12 +173,7 @@ public sealed class SnapshotBuilder
                     pending.Mesh.Indices,
                     pending.TriangleIds),
 
-                // Edges need a kernel operation that does not exist yet: `triangulate` returns
-                // faces only, and a CAD edge is a modelled entity rather than something to be
-                // recovered from the triangle mesh (see DisplayEdges). Left empty rather than
-                // approximated, because an approximated edge is one a user can select and
-                // dimension to, and it would be wrong.
-                DisplayEdges.Empty,
+                EdgesOf(pending, origin),
                 pending.Bounds));
         }
 
@@ -178,6 +183,39 @@ public sealed class SnapshotBuilder
             bodies.MoveToImmutable(),
             _entities.ToImmutable(),
             _bounds);
+    }
+
+    /// <summary>Converts one body's tessellated edges into upload-shaped polylines.</summary>
+    /// <param name="pending">The body.</param>
+    /// <param name="origin">The point positions are measured from.</param>
+    /// <returns>The edges, or an empty set for a kernel that produces none.</returns>
+    /// <remarks>
+    /// The kernel gives offsets that close with a total; the renderer wants a start and a length
+    /// per polyline, because that is what a draw call takes. Converting here rather than in the
+    /// render loop keeps the per-frame path free of arithmetic that never changes.
+    /// </remarks>
+    private static DisplayEdges EdgesOf(PendingBody pending, Vec3d origin)
+    {
+        MeshEdges edges = pending.Mesh.EdgeSet;
+        if (edges.PolylineCount == 0)
+        {
+            return DisplayEdges.Empty;
+        }
+
+        int[] starts = new int[edges.PolylineCount];
+        int[] lengths = new int[edges.PolylineCount];
+
+        for (int i = 0; i < edges.PolylineCount; ++i)
+        {
+            starts[i] = edges.Offsets[i];
+            lengths[i] = edges.Offsets[i + 1] - edges.Offsets[i];
+        }
+
+        return new DisplayEdges(
+            Relative(edges.Positions, origin),
+            [.. starts],
+            [.. lengths],
+            pending.EdgeIds);
     }
 
     /// <summary>
@@ -266,5 +304,6 @@ public sealed class SnapshotBuilder
         DisplayBodyId Id,
         MeshBuffer Mesh,
         ImmutableArray<DisplayId> TriangleIds,
+        ImmutableArray<DisplayId> EdgeIds,
         Bounds3d Bounds);
 }

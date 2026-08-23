@@ -84,7 +84,11 @@ public sealed class OcctKernel : GeometryKernelBase
 
         // P1-T11. Booleans climb model tolerance, conditioned inputs, then relaxed tolerance;
         // blends climb model tolerance, conditioned inputs, then edge by edge.
-        SupportsRetryLadder: true);
+        SupportsRetryLadder: true,
+
+        // Edge polylines come from the polygons OCCT fits to the face triangulation, so they lie
+        // exactly on the surface that gets drawn.
+        ProducesEdgeTessellation: true);
 
     // --- Primitives ---------------------------------------------------------------------------------
 
@@ -670,12 +674,43 @@ public sealed class OcctKernel : GeometryKernelBase
                 => OcctBindings.MeshFaces(mesh, buffer, capacity, out required),
             nameof(OcctBindings.MeshFaces));
 
+        int[] edgeOffsets = Native.Read<int>(
+            (Span<int> buffer, int capacity, out int required)
+                => OcctBindings.MeshEdgeOffsets(mesh, buffer, capacity, out required),
+            nameof(OcctBindings.MeshEdgeOffsets));
+
+        double[] edgePositions = Native.Read<double>(
+            (Span<double> buffer, int capacity, out int required)
+                => OcctBindings.MeshEdgePositions(mesh, buffer, capacity, out required),
+            nameof(OcctBindings.MeshEdgePositions));
+
+        ulong[] edgeTags = Native.Read<ulong>(
+            (Span<ulong> buffer, int capacity, out int required)
+                => OcctBindings.MeshEdgeTags(mesh, buffer, capacity, out required),
+            nameof(OcctBindings.MeshEdgeTags));
+
+        // The offsets array closes with a total, so it carries one more entry than there are
+        // polylines. A mismatch means the shim and this disagree about the layout, which would
+        // show up as edges drawn from the wrong points rather than as an error.
+        if (edgeTags.Length > 0 && edgeOffsets.Length != edgeTags.Length + 1)
+        {
+            throw new NativeCallException(
+                NativeStatus.Internal,
+                nameof(OcctBindings.MeshEdgeOffsets),
+                $"There are {edgeTags.Length} edge polylines but {edgeOffsets.Length} offsets; "
+                + "expected one more offset than polylines.");
+        }
+
         return new MeshBuffer(
             Triples(positions),
             Triples(normals),
             [.. indices],
             [.. triangleFaces],
-            [.. faceTags.Select(tag => new SubEntity(shape, tag, SubEntityKind.Face))]);
+            [.. faceTags.Select(tag => new SubEntity(shape, tag, SubEntityKind.Face))],
+            new MeshEdges(
+                Triples(edgePositions),
+                [.. edgeOffsets],
+                [.. edgeTags.Select(tag => new SubEntity(shape, tag, SubEntityKind.Edge))]));
     }
 
     /// <summary>Repacks a flat XYZ array into vectors.</summary>

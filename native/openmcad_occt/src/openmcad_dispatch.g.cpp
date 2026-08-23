@@ -924,6 +924,66 @@ OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_faces(
     })
 }
 
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_offsets(
+    uint64_t mesh,
+    int32_t* values, int32_t values_capacity, int32_t* values_required)
+{
+    OPENMCAD_GUARD("openmcad_mesh_edge_offsets",
+    {
+        openmcad::ops::mesh_edge_offsets(
+            openmcad::MeshRef{mesh},
+            openmcad::OutBuffer<int32_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_edge_offsets",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        return OPENMCAD_OK;
+    })
+}
+
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_positions(
+    uint64_t mesh,
+    double* values, int32_t values_capacity, int32_t* values_required)
+{
+    OPENMCAD_GUARD("openmcad_mesh_edge_positions",
+    {
+        openmcad::ops::mesh_edge_positions(
+            openmcad::MeshRef{mesh},
+            openmcad::OutBuffer<double>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_edge_positions",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        return OPENMCAD_OK;
+    })
+}
+
+OPENMCAD_API OpenMcadStatus OPENMCAD_CALL openmcad_mesh_edge_tags(
+    uint64_t mesh,
+    uint64_t* values, int32_t values_capacity, int32_t* values_required)
+{
+    OPENMCAD_GUARD("openmcad_mesh_edge_tags",
+    {
+        openmcad::ops::mesh_edge_tags(
+            openmcad::MeshRef{mesh},
+            openmcad::OutBuffer<uint64_t>{values, values_capacity, values_required});
+        if (!openmcad::buffer_satisfied(values, values_capacity, values_required))
+        {
+            openmcad::record_error("openmcad_mesh_edge_tags",
+                "The buffer is too small. Call again with the reported size.");
+            return OPENMCAD_ERROR_BUFFER_TOO_SMALL;
+        }
+
+        return OPENMCAD_OK;
+    })
+}
+
 
 /* --- serialisation ------------------------------------------------------------- */
 

@@ -542,6 +542,82 @@ public sealed class KernelContractTests
         }
     }
 
+    [Theory]
+    [MemberData(nameof(KernelImplementations.All), MemberType = typeof(KernelImplementations))]
+    public async Task Triangulate_ReturnsAnEdgePolylineForEveryEdge(KernelFactory factory)
+    {
+        await using IGeometryKernel kernel = factory.Create();
+
+        if (!kernel.Capabilities.ProducesEdgeTessellation)
+        {
+            return;
+        }
+
+        using KernelShapeHandle box = await CreateAsync(
+            kernel.CreateBoxAsync(new BoxDefinition(2, 3, 4)));
+
+        ImmutableArray<SubEntity> edges =
+            (await kernel.EnumerateAsync(box.Shape, SubEntityKind.Edge)).Value;
+
+        MeshEdges tessellated = (await kernel.TriangulateAsync(box.Shape)).Value.EdgeSet;
+
+        tessellated.PolylineCount.Should().Be(
+            edges.Length, "every edge a user can select must be an edge they can see");
+
+        // The polylines must name the same entities enumerate does, or an edge highlights and then
+        // selects nothing.
+        tessellated.Edges.Should().BeEquivalentTo(edges);
+
+        // Offsets close with a total, so the last polyline needs no special case.
+        tessellated.Offsets.Should().HaveCount(tessellated.PolylineCount + 1);
+        tessellated.Offsets[^1].Should().Be(tessellated.Positions.Length);
+        tessellated.Offsets.Should().BeInAscendingOrder();
+
+        foreach (int i in Enumerable.Range(0, tessellated.PolylineCount))
+        {
+            tessellated.PointsOf(i).Length.Should().BeGreaterThanOrEqualTo(
+                2, "a polyline of one point draws nothing");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(KernelImplementations.All), MemberType = typeof(KernelImplementations))]
+    public async Task EdgePolylinesLieOnTheTessellatedSurface(KernelFactory factory)
+    {
+        await using IGeometryKernel kernel = factory.Create();
+
+        if (!kernel.Capabilities.ProducesEdgeTessellation)
+        {
+            return;
+        }
+
+        // A cylinder, because a box cannot show the failure: its faces are planar, so an edge taken
+        // from the analytic curve would coincide with the mesh anyway. On a curved surface the
+        // chord and the curve differ by the chordal deviation, and an edge drawn from the curve
+        // stands off the surface it is meant to bound.
+        using KernelShapeHandle cylinder = await CreateAsync(
+            kernel.CreateCylinderAsync(new CylinderDefinition(0.020, 0.075, Transform.Identity)));
+
+        MeshBuffer mesh = (await kernel.TriangulateAsync(cylinder.Shape)).Value;
+
+        // Every edge point must coincide with a mesh vertex. That is what "taken from the
+        // triangulation" means, and it is the only way the two cannot disagree.
+        HashSet<(long X, long Y, long Z)> meshPoints =
+            [.. mesh.Positions.Select(Quantise)];
+
+        foreach (Vec3d point in mesh.EdgeSet.Positions)
+        {
+            meshPoints.Should().Contain(
+                Quantise(point),
+                "an edge point that is not a mesh vertex is an edge that floats off the surface");
+        }
+
+        static (long X, long Y, long Z) Quantise(Vec3d v)
+            => ((long)System.Math.Round(v.X * 1e9),
+                (long)System.Math.Round(v.Y * 1e9),
+                (long)System.Math.Round(v.Z * 1e9));
+    }
+
     // --- The retry ladder (P1-T11, PLAN.md 5.2.4) ----------------------------------------------
 
     [Theory]

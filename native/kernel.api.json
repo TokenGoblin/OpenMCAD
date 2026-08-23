@@ -953,6 +953,63 @@
       ]
     },
     {
+      "name": "mesh_edge_offsets",
+      "csharp": "MeshEdgeOffsets",
+      "group": "tessellation",
+      "summary": "Returns where each edge polyline starts, plus a final total.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "i32_array_out",
+          "summary": "One point index per polyline, then the total point count, so polyline i spans [values[i], values[i+1]). Empty when there are no edges."
+        }
+      ]
+    },
+    {
+      "name": "mesh_edge_positions",
+      "csharp": "MeshEdgePositions",
+      "group": "tessellation",
+      "summary": "Returns edge polyline points as XYZ triples in metres.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "f64_array_out",
+          "summary": "Three doubles per point, concatenated across polylines."
+        }
+      ]
+    },
+    {
+      "name": "mesh_edge_tags",
+      "csharp": "MeshEdgeTags",
+      "group": "tessellation",
+      "summary": "Returns the edge each polyline represents.",
+      "fragile": false,
+      "parameters": [
+        {
+          "name": "mesh",
+          "type": "mesh",
+          "summary": "The mesh."
+        },
+        {
+          "name": "values",
+          "type": "u64_array_out",
+          "summary": "One edge tag per polyline, in the same order as the offsets."
+        }
+      ]
+    },
+    {
       "name": "write_brep",
       "csharp": "WriteBRep",
       "group": "serialisation",
