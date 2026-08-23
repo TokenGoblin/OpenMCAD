@@ -166,9 +166,24 @@ between known inputs. A fillet's blend face is created from nothing but it is no
 the blend between *these two faces*, and recording that is the only thing that makes it survive a
 rebuild.
 
-Ordering is part of the contract. Return entity collections in a canonical, geometry-derived order
-so sorting by tag is reproducible. Determinism starts here (ADR-0011); a face set returned in
-memory-allocation order silently makes every downstream name unstable.
+Ordering is part of the contract, and **sorting by tag is not ordering**. A tag is a handle: 40
+bits of slot index and 24 bits of generation counter. Recycling a slot increments the generation
+and moves the tag by 2^40, so an entity in a reused handle sorts nowhere near an equivalent entity
+in a fresh one. Sorting a set of tags therefore orders by allocation accident. This was believed
+otherwise for a while and it was wrong; see `docs/notes/determinism-audit.md`.
+
+`enumerate` is the single authority for canonical order — measure, then quantised centroid, then
+traversal as a tie-break — and every operation tags its entities through `tag_canonical` so that
+authority is applied uniformly.
+
+The `history_*` entry points are the exception, and deliberately so: they return tags in numeric
+order, which is stable within a call but carries no geometric meaning. Canonicalising them here
+too would put the same ordering rule on both sides of the boundary, where the two copies can
+drift. The consumer re-orders history tags against `enumerate` instead, which keeps one authority.
+A new consumer of the C ABI must do the same; it is not free to assume history order is meaningful.
+
+Determinism starts here (ADR-0011). A face set returned in memory-allocation order silently makes
+every downstream name unstable.
 
 ### Three things the OCCT spike found
 

@@ -166,11 +166,17 @@ public sealed class HistoryMap
         => _sources.TryGetValue(output, out SubEntity source) ? source : SubEntity.None;
 
     /// <summary>
-    /// Returns every output whose role is <paramref name="role"/>, sorted.
+    /// Returns every output whose role is <paramref name="role"/>, in the order the kernel
+    /// reported them.
     /// </summary>
     /// <param name="role">The role to select.</param>
+    /// <remarks>
+    /// Filtered from <see cref="Outputs"/> rather than selected from the role dictionary and
+    /// sorted. See <see cref="Outputs"/> for why sorting is the wrong instrument here: it would
+    /// sort by tag, and a tag is a handle rather than a description of geometry.
+    /// </remarks>
     public IEnumerable<SubEntity> WithRole(OperationRole role)
-        => _roles.Where(pair => pair.Value == role).Select(pair => pair.Key).Order();
+        => _outputOrder.Where(output => RoleOf(output) == role);
 
     /// <summary>
     /// Returns the outputs that carry no deliberate role, which should always be empty.
@@ -180,6 +186,5 @@ public sealed class HistoryMap
     /// fails review. <see cref="HistoryMapBuilder"/> refuses to produce such a map, so a non-empty
     /// result here means something bypassed the builder.
     /// </remarks>
-    public IEnumerable<SubEntity> UnrolledOutputs
-        => _roles.Where(pair => pair.Value == OperationRole.Unknown).Select(pair => pair.Key).Order();
+    public IEnumerable<SubEntity> UnrolledOutputs => WithRole(OperationRole.Unknown);
 }

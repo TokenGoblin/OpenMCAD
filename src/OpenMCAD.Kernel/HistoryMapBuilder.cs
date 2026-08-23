@@ -223,9 +223,15 @@ public sealed class HistoryMapBuilder
                 + "alongside deletion: a consumed edge may still have created a blend face.)");
         }
 
+        Dictionary<SubEntity, int> position = [];
+        for (int i = 0; i < _outputOrder.Count; ++i)
+        {
+            position[_outputOrder[i]] = i;
+        }
+
         return new HistoryMap(
-            Freeze(_generated),
-            Freeze(_modified),
+            Freeze(_generated, position),
+            Freeze(_modified, position),
             [.. _deleted],
             [.. _newOrder],
             _roles.ToImmutableDictionary(),
@@ -276,11 +282,27 @@ public sealed class HistoryMapBuilder
         _roles[output] = role;
     }
 
+    /// <summary>
+    /// Freezes a successor map, putting each entity's successors into reported order.
+    /// </summary>
+    /// <param name="map">The accumulated map.</param>
+    /// <param name="position">Where each output sits in the reported order.</param>
+    /// <returns>The frozen map.</returns>
+    /// <remarks>
+    /// Ordered by report position rather than sorted, for the same reason
+    /// <see cref="HistoryMap.Outputs"/> is: sorting a <see cref="SubEntity"/> sorts by its tag,
+    /// and a tag carries a slot generation, so an entity in a recycled handle sorts nowhere near
+    /// an equivalent one in a fresh handle. It matters here whenever a face splits — the two
+    /// halves of <c>Generated(face)</c> would otherwise swap places between runs.
+    /// </remarks>
     private static ImmutableDictionary<SubEntity, ImmutableArray<SubEntity>> Freeze(
-        Dictionary<SubEntity, HashSet<SubEntity>> map)
+        Dictionary<SubEntity, HashSet<SubEntity>> map,
+        Dictionary<SubEntity, int> position)
         => map.ToImmutableDictionary(
             pair => pair.Key,
-            pair => ImmutableArray.CreateRange(pair.Value.Order()));
+            pair => ImmutableArray.CreateRange(
+                pair.Value.OrderBy(
+                    output => position.TryGetValue(output, out int at) ? at : int.MaxValue)));
 
     private static void Require(SubEntity entity, string parameterName)
     {

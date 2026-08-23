@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Text;
+using System.Security.Cryptography;
 using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Operations;
 using OpenMCAD.Math;
@@ -217,17 +219,31 @@ public sealed class ScenarioRunner(IGeometryKernel kernel)
     /// Builds the fingerprint the determinism gate compares between runs.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Topology and roles, not geometry. Those are what a name is built from, so a difference here
     /// means names would differ — which ADR-0011 makes a P0 regardless of whether any measurement
     /// changed.
+    /// </para>
+    /// <para>
+    /// Two parts, and the second is not redundant. The histogram is what a human reads when the
+    /// gate trips. The ordered digest is what actually catches the failure that matters: a
+    /// histogram is order-blind, so a run that produced the same entities in a different sequence
+    /// would have compared equal — and the sequence is exactly what a positional name resolves
+    /// against. That gap was real; it hid an ordering defect that the contract battery caught
+    /// instead.
+    /// </para>
     /// </remarks>
     private static string BuildSignature(TopologyCounts counts, HistoryMap history)
     {
         Dictionary<string, int> roles = new(StringComparer.Ordinal);
+        StringBuilder sequence = new();
+
         foreach (SubEntity output in history.Outputs)
         {
             string role = history.RoleOf(output).ToString();
             roles[role] = roles.GetValueOrDefault(role) + 1;
+
+            sequence.Append(output.Kind).Append(':').Append(role).Append(';');
         }
 
         string roleText = string.Join(
@@ -235,7 +251,13 @@ public sealed class ScenarioRunner(IGeometryKernel kernel)
             roles.OrderBy(r => r.Key, StringComparer.Ordinal)
                  .Select(r => $"{r.Key}={r.Value.ToString(CultureInfo.InvariantCulture)}"));
 
-        return $"{counts}|{roleText}";
+        // Digested rather than inlined: a body with ten thousand faces would otherwise produce a
+        // signature nobody can read and a diff nobody can act on. Eight bytes is ample for
+        // detecting a reordering, which is not an adversarial condition.
+        byte[] digest = SHA256.HashData(Encoding.UTF8.GetBytes(sequence.ToString()));
+        string order = Convert.ToHexString(digest.AsSpan(0, 8)).ToLowerInvariant();
+
+        return $"{counts}|{roleText}|order={order}";
     }
 
     private static void Check(int? expected, int actual, string what, List<string> failures)

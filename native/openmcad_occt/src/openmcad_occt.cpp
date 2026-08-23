@@ -11,6 +11,7 @@
 
 #include "openmcad_types.h"
 
+#include <clocale>
 #include <string>
 #include <vector>
 
@@ -143,6 +144,20 @@ namespace ops {
 void initialize()
 {
     g_diagnostics.clear();
+
+    /*
+     * Pin the numeric locale to C. OCCT formats and parses reals through the CRT, so under a
+     * locale whose decimal separator is a comma every BREP and STEP file this process writes comes
+     * out unreadable -- by us and by anyone else -- and a file written elsewhere parses to the
+     * wrong numbers rather than failing.
+     *
+     * The CLR does not call setlocale, so the default is already "C" today. It is pinned anyway
+     * because it is one line, because any native library loaded into this process may change it
+     * for everyone, and because the failure it prevents appears only on machines configured
+     * differently from the ones the tests run on. Only LC_NUMERIC: messages and dates should stay
+     * whatever the user has chosen.
+     */
+    std::setlocale(LC_NUMERIC, "C");
 
 #if defined(OPENMCAD_WITH_OCCT)
     /*
