@@ -16,9 +16,15 @@ on:
 permissions:
   contents: read
 
+# Runs queue rather than cancel each other. Cancelling in progress is the right default when a
+# run only produces a pass or a fail, and the wrong one here: the vcpkg job builds OCCT and saves
+# the binary cache every later run depends on, and a cancelled job never reaches its cache-save
+# step. Every push during that three-quarters of an hour therefore threw the work away and started
+# again from cold -- the cache could never warm up. Queuing costs a wait on a busy day; cancelling
+# cost the cache permanently.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   DOTNET_NOLOGO: true
