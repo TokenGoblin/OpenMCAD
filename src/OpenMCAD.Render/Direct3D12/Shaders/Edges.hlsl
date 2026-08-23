@@ -120,5 +120,11 @@ float4 PSMain(VSOutput input) : SV_Target
         discard;
     }
 
-    return float4(EdgeColour.rgb, EdgeColour.a * coverage);
+    // Premultiplied, because the pipeline blends with SourceBlend = One. Returning straight alpha
+    // against that blend adds the whole edge colour to the destination wherever coverage is low,
+    // so the anti-aliasing ramp that exists to soften the line instead paints a band brighter than
+    // the background either side of it -- a halo around every edge.
+    float alpha = EdgeColour.a * coverage;
+
+    return float4(EdgeColour.rgb * alpha, alpha);
 }

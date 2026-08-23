@@ -138,9 +138,16 @@ public sealed class EdgePass : IDisposable
             PrimitiveTopologyType = PrimitiveTopologyType.Triangle,
             RasterizerState = RasterizerDescription.CullNone,
 
-            // Alpha blending, for the coverage ramp that anti-aliases the line. Depth is still
-            // written: a partially covered edge pixel is treated as solid for occlusion, which is
-            // what stops the far side of a body showing through its own silhouette.
+            // Alpha blending, for the coverage ramp that anti-aliases the line.
+            //
+            // This one is PREMULTIPLIED -- SourceBlend is One, not SourceAlpha; the straight-alpha
+            // state is BlendDescription.NonPremultiplied, despite the names. The pixel shader
+            // multiplies through to match. Pairing this state with a straight-alpha shader adds
+            // the whole edge colour to the destination wherever coverage is low, which turns the
+            // softening ramp into a bright halo around every line.
+            //
+            // Depth is still written: a partially covered edge pixel counts as solid for
+            // occlusion, which stops the far side of a body showing through its own silhouette.
             BlendState = BlendDescription.AlphaBlend,
             DepthStencilState = DepthStencilDescription.Default,
             DepthStencilFormat = depthFormat,
@@ -180,8 +187,7 @@ public sealed class EdgePass : IDisposable
         ArgumentNullException.ThrowIfNull(commands);
         ArgumentNullException.ThrowIfNull(scene);
 
-        SegmentsDrawn = 0;
-        BodiesCulled = 0;
+        Reset();
 
         if (scene.Bodies.Count == 0)
         {
@@ -219,6 +225,17 @@ public sealed class EdgePass : IDisposable
 
             SegmentsDrawn += body.SegmentCount;
         }
+    }
+
+    /// <summary>Clears the counters, for a frame that draws no edges at all.</summary>
+    /// <remarks>
+    /// Without this, switching edges off leaves the last frame's totals in place and every
+    /// diagnostic that reads them reports edges still being drawn.
+    /// </remarks>
+    public void Reset()
+    {
+        SegmentsDrawn = 0;
+        BodiesCulled = 0;
     }
 
     /// <inheritdoc />

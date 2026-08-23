@@ -54,6 +54,7 @@ public sealed class ViewportHost : HwndHost
     private nint _handle;
     private bool _reportedSize;
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
+    private EdgeStyle _edgeStyle = EdgeStyle.Default;
 
     /// <summary>
     /// Where a XAML-constructed viewport gets its logger from.
@@ -113,6 +114,24 @@ public sealed class ViewportHost : HwndHost
         }
     }
 
+    /// <summary>Gets or sets how edges are drawn, before display scaling.</summary>
+    /// <remarks>
+    /// Held unscaled. The renderer is given this scaled by the current display, and the scaling is
+    /// reapplied on every resize — so it has to be reapplied to <i>this</i> rather than to what the
+    /// renderer currently holds, or each resize would compound the scale factor, and assigning the
+    /// default instead would silently revert whatever the application had chosen.
+    /// </remarks>
+    public EdgeStyle EdgeStyle
+    {
+        get => _edgeStyle;
+
+        set
+        {
+            _edgeStyle = value;
+            ApplyEdgeStyle();
+        }
+    }
+
     /// <summary>Frames the whole scene.</summary>
     /// <returns>Whether there was anything to frame.</returns>
     public bool ZoomToFit() => _renderer?.ZoomToFit() ?? false;
@@ -151,7 +170,7 @@ public sealed class ViewportHost : HwndHost
             Snapshot = _snapshot,
         };
 
-        _renderer.EdgeStyle = EdgeStyle.Default.AtScale(VisualTreeHelper.GetDpi(this).DpiScaleX);
+        ApplyEdgeStyle();
         _renderer.ZoomToFit();
 
         // Driven by WPF's own frame tick rather than a timer. CompositionTarget.Rendering fires
@@ -244,10 +263,7 @@ public sealed class ViewportHost : HwndHost
         // Edge width is specified in physical pixels, so it has to be scaled or a hairline on a
         // 150% display is two thirds the thickness the design intends. Reapplied on every resize
         // because a window dragged to another monitor changes scale without being recreated.
-        if (_renderer is not null)
-        {
-            _renderer.EdgeStyle = EdgeStyle.Default.AtScale(VisualTreeHelper.GetDpi(this).DpiScaleX);
-        }
+        ApplyEdgeStyle();
 
         // The first real size is worth a line. BuildWindowCore runs before WPF has measured
         // anything, so the swapchain is necessarily created at 1x1 and only reaches its true size
@@ -281,6 +297,15 @@ public sealed class ViewportHost : HwndHost
     }
 
     /// <summary>The viewport's size in physical pixels, at the current DPI.</summary>
+    /// <summary>Hands the renderer the current style, scaled for this display.</summary>
+    private void ApplyEdgeStyle()
+    {
+        if (_renderer is not null)
+        {
+            _renderer.EdgeStyle = _edgeStyle.AtScale(VisualTreeHelper.GetDpi(this).DpiScaleX);
+        }
+    }
+
     private (int Width, int Height) CurrentPixelSize()
     {
         DpiScale dpi = VisualTreeHelper.GetDpi(this);

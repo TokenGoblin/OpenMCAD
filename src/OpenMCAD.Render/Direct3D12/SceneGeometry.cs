@@ -151,22 +151,32 @@ public sealed class SceneGeometry : IDisposable
     /// Flattens polylines into independent segments, two endpoints each.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Segments rather than strips because the edge pass draws each one as its own quad: a strip
     /// would share vertices between segments that need different screen-space orientations, and
     /// the joins would pinch. The duplication is two floats per interior point, which is nothing
     /// against the clarity of one instance per segment.
+    /// </para>
+    /// <para>
+    /// <b>Malformed input yields fewer segments rather than an exception.</b>
+    /// <see cref="DisplayEdges"/> is a public record with no enforced invariants, and it can reach
+    /// here from a plugin as easily as from <see cref="SnapshotBuilder"/>. This runs inside the
+    /// frame loop, where an <see cref="IndexOutOfRangeException"/> does not report a bad snapshot —
+    /// it takes the window down. A polyline that does not lie inside the position array is skipped
+    /// on the same reasoning as a polyline of one point.
+    /// </para>
     /// </remarks>
     internal static float[] SegmentsOf(DisplayEdges edges)
     {
         ArgumentNullException.ThrowIfNull(edges);
 
+        int pointCount = edges.PointCount;
+        int polylines = System.Math.Min(edges.PolylineCount, edges.Lengths.Length);
         int segments = 0;
 
-        for (int i = 0; i < edges.PolylineCount; ++i)
+        for (int i = 0; i < polylines; ++i)
         {
-            // A polyline of one point has no segment. The kernel should not produce one, but a
-            // degenerate edge in a sick model is not worth crashing the viewport over.
-            segments += System.Math.Max(edges.Lengths[i] - 1, 0);
+            segments += SpanOf(edges, i, pointCount);
         }
 
         if (segments == 0)
@@ -177,10 +187,10 @@ public sealed class SceneGeometry : IDisposable
         float[] result = new float[segments * 6];
         int at = 0;
 
-        for (int i = 0; i < edges.PolylineCount; ++i)
+        for (int i = 0; i < polylines; ++i)
         {
             int start = edges.Starts[i];
-            int length = edges.Lengths[i];
+            int length = SpanOf(edges, i, pointCount) + 1;
 
             for (int j = 0; j + 1 < length; ++j)
             {
@@ -199,67 +209,110 @@ public sealed class SceneGeometry : IDisposable
         return result;
     }
 
+    /// <summary>How many segments polyline <paramref name="index"/> contributes, or zero.</summary>
+    /// <remarks>
+    /// Zero for a polyline of one point, a negative length, a negative start, or a span running
+    /// past the end of the positions. Counted and copied through the same function so the two
+    /// passes cannot disagree about how large the buffer should be.
+    /// </remarks>
+    private static int SpanOf(DisplayEdges edges, int index, int pointCount)
+    {
+        int start = edges.Starts[index];
+        int length = edges.Lengths[index];
+
+        if (start < 0 || length < 2 || start + length > pointCount)
+        {
+            return 0;
+        }
+
+        return length - 1;
+    }
+
+    /// <summary>
+    /// Uploads one body's buffers, releasing any of them if a later one cannot be allocated.
+    /// </summary>
+    /// <remarks>
+    /// The tidy-up in <see cref="Upload"/> only reaches bodies already added to the list, so a
+    /// failure part-way through this method would strand whatever it had already created. That is
+    /// most likely to happen exactly when it hurts — out of video memory on a large assembly.
+    /// </remarks>
     private static BodyGeometry UploadBody(D3D12RenderDevice device, DisplayBody body)
     {
         DisplayMesh mesh = body.Mesh;
         string name = $"body {body.Id.Value}";
 
-        float[] segments = SegmentsOf(body.Edges);
+        IGpuBuffer? edgeBuffer = null;
+        IGpuBuffer? positions = null;
+        IGpuBuffer? normals = null;
+        IGpuBuffer? indices = null;
 
-        IGpuBuffer? edgeBuffer = segments.Length == 0
-            ? null
-            : device.CreateStaticBuffer(
-                MemoryMarshal.AsBytes(segments.AsSpan()), GpuBufferKind.Vertex, $"{name} edges");
-
-        if (mesh.TriangleCount == 0)
+        try
         {
-            // Edges only. Nothing to draw in the face pass, so no face buffers are allocated.
-            return new BodyGeometry(body.Id, null, null, null, 0, 0, edgeBuffer, body.Bounds);
-        }
+            float[] segments = SegmentsOf(body.Edges);
 
-        IGpuBuffer positions = device.CreateStaticBuffer(
-            MemoryMarshal.AsBytes(mesh.Positions.AsSpan()),
-            GpuBufferKind.Vertex,
-            $"{name} positions");
+            if (segments.Length > 0)
+            {
+                edgeBuffer = device.CreateStaticBuffer(
+                    MemoryMarshal.AsBytes(segments.AsSpan()), GpuBufferKind.Vertex, $"{name} edges");
+            }
 
-        IGpuBuffer normals;
+            if (mesh.TriangleCount == 0)
+            {
+                // Edges only. Nothing for the face pass, so no face buffers are allocated.
+                return new BodyGeometry(body.Id, null, null, null, 0, 0, edgeBuffer, body.Bounds);
+            }
 
-        if (mesh.HasNormals)
-        {
-            normals = device.CreateStaticBuffer(
-                MemoryMarshal.AsBytes(mesh.Normals.AsSpan()),
+            positions = device.CreateStaticBuffer(
+                MemoryMarshal.AsBytes(mesh.Positions.AsSpan()),
                 GpuBufferKind.Vertex,
-                $"{name} normals");
+                $"{name} positions");
+
+            if (mesh.HasNormals)
+            {
+                normals = device.CreateStaticBuffer(
+                    MemoryMarshal.AsBytes(mesh.Normals.AsSpan()),
+                    GpuBufferKind.Vertex,
+                    $"{name} normals");
+            }
+            else
+            {
+                // A zero normal is the signal the pixel shader watches for; it reconstructs the
+                // facet normal from screen-space derivatives instead. Uploading zeroes rather than
+                // binding nothing keeps one pipeline state and one input layout across both cases.
+                float[] zeroes = new float[mesh.VertexCount * 3];
+
+                normals = device.CreateStaticBuffer(
+                    MemoryMarshal.AsBytes(zeroes.AsSpan()),
+                    GpuBufferKind.Vertex,
+                    $"{name} normals (absent)");
+            }
+
+            indices = device.CreateStaticBuffer(
+                MemoryMarshal.AsBytes(mesh.Indices.AsSpan()),
+                GpuBufferKind.Index,
+                $"{name} indices");
+
+            return new BodyGeometry(
+                body.Id,
+                positions,
+                normals,
+                indices,
+                mesh.Indices.Length,
+                mesh.VertexCount,
+                edgeBuffer,
+                body.Bounds);
         }
-        else
+        catch
         {
-            // A zero normal is the signal the pixel shader watches for; it reconstructs the facet
-            // normal from screen-space derivatives instead. Uploading zeroes rather than binding
-            // nothing keeps one pipeline state and one input layout across both cases.
-            float[] zeroes = new float[mesh.VertexCount * 3];
-
-            normals = device.CreateStaticBuffer(
-                MemoryMarshal.AsBytes(zeroes.AsSpan()),
-                GpuBufferKind.Vertex,
-                $"{name} normals (absent)");
+            indices?.Dispose();
+            normals?.Dispose();
+            positions?.Dispose();
+            edgeBuffer?.Dispose();
+            throw;
         }
-
-        IGpuBuffer indices = device.CreateStaticBuffer(
-            MemoryMarshal.AsBytes(mesh.Indices.AsSpan()),
-            GpuBufferKind.Index,
-            $"{name} indices");
-
-        return new BodyGeometry(
-            body.Id,
-            positions,
-            normals,
-            indices,
-            mesh.Indices.Length,
-            mesh.VertexCount,
-            edgeBuffer,
-            body.Bounds);
     }
 }
+
 
 /// <summary>One body's buffers.</summary>
 /// <remarks>

@@ -216,6 +216,83 @@ public sealed class EdgePassTests
     }
 
     [Fact]
+    public void TheAntiAliasingRampDoesNotHaloTheLine()
+    {
+        using Fixture fixture = Fixture.Create(Size);
+
+        if (fixture.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        // The coverage ramp exists to soften an edge, and it is blended with SourceBlend = One --
+        // a premultiplied state, despite BlendDescription.AlphaBlend's name. A shader returning
+        // straight alpha against it computes edge + dst*(1-a) rather than a*edge + (1-a)*dst, so
+        // wherever coverage is low the whole edge colour is *added* to the background and the
+        // softening band comes out brighter than either: a halo down both sides of every line.
+        //
+        // Correctly premultiplied, every result is a blend between the background and the edge
+        // colour, so nothing can exceed the edge colour on any channel. That ceiling is the test.
+        // Counting coverage or measuring the darkest pixel both miss this entirely, which is how
+        // it survived the first round.
+        EdgeStyle style = EdgeStyle.Default with { WidthPixels = 3.0f };
+
+        fixture.Draw(WireBox(1.0, facesToo: false), withFaces: false, withEdges: true, width: 3.0f);
+
+        Pixel ceiling = new(
+            (byte)System.Math.Round(style.Colour.R * 255),
+            (byte)System.Math.Round(style.Colour.G * 255),
+            (byte)System.Math.Round(style.Colour.B * 255),
+            255);
+
+        Pixel brightest = new(0, 0, 0, 255);
+
+        for (int y = 0; y < Size; ++y)
+        {
+            for (int x = 0; x < Size; ++x)
+            {
+                Pixel pixel = fixture.Surface.At(x, y);
+
+                brightest = new Pixel(
+                    System.Math.Max(brightest.R, pixel.R),
+                    System.Math.Max(brightest.G, pixel.G),
+                    System.Math.Max(brightest.B, pixel.B),
+                    255);
+            }
+        }
+
+        // Two counts of slack for rounding through an 8-bit target.
+        brightest.R.Should().BeLessThanOrEqualTo(
+            (byte)(ceiling.R + 2), $"brightest was {brightest}, edge colour is {ceiling}");
+
+        brightest.G.Should().BeLessThanOrEqualTo((byte)(ceiling.G + 2));
+        brightest.B.Should().BeLessThanOrEqualTo((byte)(ceiling.B + 2));
+    }
+
+    [Fact]
+    public void AMalformedEdgeSetIsSkippedRatherThanThrowing()
+    {
+        // DisplayEdges is a public record with no enforced invariants and can arrive from a plugin.
+        // This runs inside the frame loop, where an IndexOutOfRangeException does not report a bad
+        // snapshot -- it takes the window down.
+        DisplayEdges pastTheEnd = new(
+            [0, 0, 0, 1, 0, 0],
+            [0],
+            [9],
+            [new DisplayId(1)]);
+
+        SceneGeometry.SegmentsOf(pastTheEnd).Should().BeEmpty("the span runs past the positions");
+
+        DisplayEdges negativeStart = new([0, 0, 0, 1, 0, 0], [-1], [2], [new DisplayId(1)]);
+        SceneGeometry.SegmentsOf(negativeStart).Should().BeEmpty();
+
+        // Fewer lengths than starts: only the polylines that have both are considered.
+        DisplayEdges ragged = new([0, 0, 0, 1, 0, 0], [0, 1], [2], [new DisplayId(1)]);
+        SceneGeometry.SegmentsOf(ragged).Should().HaveCount(6, "one well-formed segment survives");
+    }
+
+    [Fact]
     public void TheStyleScalesWithTheDisplay()
     {
         EdgeStyle.Default.AtScale(1.5).WidthPixels.Should()

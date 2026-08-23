@@ -380,6 +380,10 @@ public sealed class ViewportRenderer : IDisposable
         {
             _edges.Draw(_commands, _scene, address, EdgeStyle, frustum);
         }
+        else
+        {
+            _edges.Reset();
+        }
     }
 
     /// <summary>Waits for a fence value, returning at once if it has already passed.</summary>
