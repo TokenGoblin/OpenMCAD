@@ -201,12 +201,17 @@ public sealed class TypeDependencyTests
         // namespace is the fence; this test is the fence post.
         const string OcctNamespace = "OpenMCAD.Kernel.Occt";
 
+        // OpenMCAD.Cli and OpenMCAD.Shell are absent, and deliberately so: a composition root
+        // has to name the implementation it composes, or nothing ever constructs one. They are
+        // the only two entry points, they sit at the top layer, and nothing depends on them --
+        // so the fence still holds everywhere it protects anything. What ADR-0002 forbids is an
+        // OCCT type reaching a caller that reasons about geometry, and neither of those two does.
         string[] mustNotSee =
         [
             "OpenMCAD.Math", "OpenMCAD.Kernel", "OpenMCAD.Solver", "OpenMCAD.Solver.Planegcs",
             "OpenMCAD.Kernel.Fake", "OpenMCAD.Core", "OpenMCAD.Modeling", "OpenMCAD.Exchange",
             "OpenMCAD.Render", "OpenMCAD.Interaction", "OpenMCAD.Api", "OpenMCAD.App",
-            "OpenMCAD.ViewModels", "OpenMCAD.Shell",
+            "OpenMCAD.ViewModels",
         ];
 
         foreach (string assemblyName in mustNotSee)

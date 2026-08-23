@@ -82,6 +82,7 @@ Notes that the table cannot carry:
 | SharpGen.Runtime | 2.4.2-beta | MIT |
 | SharpGen.Runtime.COM | 2.4.2-beta | MIT |
 | System.CommandLine | 2.0.11 | MIT |
+| Vortice.D3DCompiler | 3.8.3 | MIT |
 | Vortice.Direct3D12 | 3.8.3 | MIT |
 | Vortice.DirectX | 3.8.3 | MIT |
 | Vortice.DXGI | 3.8.3 | MIT |

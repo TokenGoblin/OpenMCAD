@@ -107,7 +107,7 @@
                                     nothing in WPF can be drawn over it: overlays belong in the
                                     viewport's own rendering, not layered here in XAML.
                                 -->
-                                <local:ViewportHost />
+                                <local:ViewportHost x:Name="Viewport" />
                             </avalondock:LayoutDocument>
                         </avalondock:LayoutDocumentPane>
                     </avalondock:LayoutDocumentPaneGroup>

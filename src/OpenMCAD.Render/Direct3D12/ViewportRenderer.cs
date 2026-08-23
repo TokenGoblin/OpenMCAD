@@ -105,7 +105,13 @@ public sealed class ViewportRenderer : IDisposable
     public Color4 Background { get; set; } = new(0.22f, 0.24f, 0.27f, 1.0f);
 
     /// <summary>Gets the camera the scene is drawn through.</summary>
-    public Camera Camera { get; } = new();
+    /// <remarks>
+    /// Starts isometric. A camera left at the identity orientation looks straight down an axis,
+    /// which renders a box as a plain rectangle and a cylinder as a circle -- correct, and useless
+    /// as a first impression of a solid. Three-quarter view is what every CAD package opens on,
+    /// for the same reason.
+    /// </remarks>
+    public Camera Camera { get; } = CreateCamera();
 
     /// <summary>Gets how many frames have been presented.</summary>
     public long FrameCount { get; private set; }
@@ -212,6 +218,14 @@ public sealed class ViewportRenderer : IDisposable
             return false;
         }
 
+        // The aspect ratio first. Fitting decides a distance from the narrower of the two field
+        // of view axes, so doing this against a stale ratio frames the scene for a viewport shape
+        // that is not the one it is about to be drawn in.
+        if (_target.Width > 0 && _target.Height > 0)
+        {
+            Camera.AspectRatio = (double)_target.Width / _target.Height;
+        }
+
         Camera.ZoomToFit(_snapshot.Bounds);
         return true;
     }
@@ -256,6 +270,15 @@ public sealed class ViewportRenderer : IDisposable
         {
             allocator.Dispose();
         }
+    }
+
+    /// <summary>Creates the camera a new viewport starts with.</summary>
+    private static Camera CreateCamera()
+    {
+        Camera camera = new();
+        camera.LookFrom(StandardView.Isometric);
+
+        return camera;
     }
 
     /// <summary>Converts a matrix for upload, preserving element order.</summary>

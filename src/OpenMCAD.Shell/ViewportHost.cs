@@ -53,6 +53,7 @@ public sealed class ViewportHost : HwndHost
     private ViewportRenderer? _renderer;
     private nint _handle;
     private bool _reportedSize;
+    private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
 
     /// <summary>
     /// Where a XAML-constructed viewport gets its logger from.
@@ -91,6 +92,31 @@ public sealed class ViewportHost : HwndHost
     /// <summary>Gets the swapchain, once the window exists.</summary>
     public SwapChainTarget? Target => _target;
 
+    /// <summary>Gets or sets what the viewport draws.</summary>
+    /// <remarks>
+    /// Held here as well as on the renderer because the window may not exist yet: a snapshot can
+    /// be produced before WPF has built the HWND, and dropping it would leave a viewport that is
+    /// permanently empty for reasons nothing reports.
+    /// </remarks>
+    public DisplaySnapshot Snapshot
+    {
+        get => _snapshot;
+
+        set
+        {
+            _snapshot = value ?? throw new ArgumentNullException(nameof(value));
+
+            if (_renderer is not null)
+            {
+                _renderer.Snapshot = _snapshot;
+            }
+        }
+    }
+
+    /// <summary>Frames the whole scene.</summary>
+    /// <returns>Whether there was anything to frame.</returns>
+    public bool ZoomToFit() => _renderer?.ZoomToFit() ?? false;
+
     /// <inheritdoc />
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
@@ -119,7 +145,13 @@ public sealed class ViewportHost : HwndHost
 
         (int width, int height) = CurrentPixelSize();
         _target = new SwapChainTarget(_device, _handle, width, height, _logger);
-        _renderer = new ViewportRenderer(_device, _target, _logger);
+        _renderer = new ViewportRenderer(_device, _target, _logger)
+        {
+            // Whatever arrived while there was no window to draw it in.
+            Snapshot = _snapshot,
+        };
+
+        _renderer.ZoomToFit();
 
         // Driven by WPF's own frame tick rather than a timer. CompositionTarget.Rendering fires
         // once per composition pass on the UI thread, so the viewport redraws in step with the
