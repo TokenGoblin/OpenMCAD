@@ -36,6 +36,7 @@
   <ItemGroup Label="WPF shell (P0-T10, ADR-0015)">
     <PackageVersion Include="Vortice.Direct3D12" Version="3.8.3" />
     <PackageVersion Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageVersion Include="Vortice.D3DCompiler" Version="3.8.3" />
     <PackageVersion Include="Fluent.Ribbon" Version="11.0.2" />
     <PackageVersion Include="Dirkster.AvalonDock" Version="5.0.0" />
   </ItemGroup>

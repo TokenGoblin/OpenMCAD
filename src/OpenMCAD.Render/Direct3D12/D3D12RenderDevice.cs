@@ -144,6 +144,29 @@ public sealed class D3D12RenderDevice : IRenderDevice
         return new D3D12Buffer(resource, kind, data.Length, name);
     }
 
+    /// <summary>
+    /// Gets the resource behind a buffer this device created.
+    /// </summary>
+    /// <param name="buffer">A buffer from <see cref="CreateStaticBuffer"/>.</param>
+    /// <returns>The underlying resource.</returns>
+    /// <exception cref="ArgumentException">The buffer came from another implementation.</exception>
+    /// <remarks>
+    /// <see cref="IGpuBuffer"/> is deliberately opaque, because ADR-0008 keeps D3D12 types out of
+    /// the render abstraction. The passes in this namespace are the D3D12 implementation, so they
+    /// are entitled to look inside — but only through here, so that the cast exists once and is
+    /// checked, rather than being repeated at every call site.
+    /// </remarks>
+    internal static ID3D12Resource ResourceOf(IGpuBuffer buffer)
+    {
+        ArgumentNullException.ThrowIfNull(buffer);
+
+        return buffer is D3D12Buffer d3d12
+            ? d3d12.Resource
+            : throw new ArgumentException(
+                $"'{buffer.Name}' is a {buffer.GetType().Name}, which this device did not create.",
+                nameof(buffer));
+    }
+
     /// <inheritdoc />
     public void WaitForIdle()
     {

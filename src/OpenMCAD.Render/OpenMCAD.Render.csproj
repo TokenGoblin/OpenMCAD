@@ -18,7 +18,18 @@
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D12" />
     <PackageReference Include="Vortice.DXGI" />
+    <PackageReference Include="Vortice.D3DCompiler" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <!--
+    Shaders ship as source and are compiled at run time (see ShaderLibrary). The resource name
+    this produces is OpenMCAD.Render.Direct3D12.Shaders.Surface.hlsl, which is what the loader
+    asks for; renaming the folder without renaming the lookup is the one way to break it, so the
+    loader lists what is actually embedded when it cannot find a file.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Direct3D12/Shaders/*.hlsl" />
   </ItemGroup>
 
   <ItemGroup>
