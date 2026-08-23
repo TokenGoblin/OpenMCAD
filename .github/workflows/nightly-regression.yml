@@ -25,7 +25,12 @@ jobs:
   corpus:
     name: Corpus and determinism (${{ matrix.kernel }})
     runs-on: windows-latest
-    timeout-minutes: 180
+    # OCCT from source is the long pole: a two-core runner did not finish debug and release in
+    # two hours, and the per-push workflow gave up trying. Nightly is where that cost belongs --
+    # it runs unattended, and running every night keeps the binary cache warm, which is what stops
+    # it being paid again. GitHub evicts a cache after seven days unused, so a workflow that only
+    # ran occasionally would rebuild from cold nearly every time.
+    timeout-minutes: 330
 
     strategy:
       fail-fast: false
@@ -83,6 +88,19 @@ jobs:
       - name: Build
         shell: pwsh
         run: ./build.ps1 -Configuration Release -WithOcct -SkipTests -SkipRegression
+
+      - name: Record what the kernel build cost
+        if: always()
+        shell: pwsh
+        run: |
+          # Printed so the cost is visible in the log rather than inferred from the job duration.
+          # If this is minutes the cache held; if it is an hour the cache was evicted or the pinned
+          # OCCT version changed, and the next nightly should be back to minutes.
+          $installed = 'native/vcpkg_installed/x64-windows/lib'
+          if (Test-Path $installed) {
+            $count = (Get-ChildItem $installed -Filter '*.lib').Count
+            Write-Host "vcpkg produced $count static libraries under $installed"
+          }
 
       - name: Run the corpus with the determinism gate
         shell: pwsh

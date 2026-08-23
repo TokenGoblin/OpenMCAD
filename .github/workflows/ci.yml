@@ -16,15 +16,13 @@ on:
 permissions:
   contents: read
 
-# Runs queue rather than cancel each other. Cancelling in progress is the right default when a
-# run only produces a pass or a fail, and the wrong one here: the vcpkg job builds OCCT and saves
-# the binary cache every later run depends on, and a cancelled job never reaches its cache-save
-# step. Every push during that three-quarters of an hour therefore threw the work away and started
-# again from cold -- the cache could never warm up. Queuing costs a wait on a busy day; cancelling
-# cost the cache permanently.
+# Superseded runs are cancelled, which is free again now that nothing here produces anything
+# durable. It was briefly wrong: while this workflow built OCCT, cancelling threw away the binary
+# cache that every later run depended on, and a cancelled job never reaches its cache-save step.
+# That build now lives in the nightly workflow, which has its own concurrency and is unaffected.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   DOTNET_NOLOGO: true
@@ -32,52 +30,10 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
-  # OCCT from source is roughly three quarters of an hour on a runner, and both build
-  # configurations need the same binaries -- vcpkg builds a port's debug and release variants
-  # together. Doing it here, once, is the difference between one slow job and two.
-  #
-  # It also breaks a deadlock. The build jobs used to build OCCT themselves and hit the
-  # thirty-minute timeout; a timed-out job never reaches its cache-save step, so the cache stayed
-  # cold and the next run timed out in exactly the same place. Nothing would ever have gone green.
-  vcpkg:
-    name: Prime the vcpkg binary cache
-    runs-on: windows-latest
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/AppData/Local/vcpkg/archives
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-
-
-      - name: Make the pinned vcpkg baseline available
-        shell: pwsh
-        run: |
-          $baseline = (Get-Content native/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          git -C $root fetch --depth 1 origin $baseline
-          if ($LASTEXITCODE -ne 0) {
-            git -C $root fetch --unshallow
-            if ($LASTEXITCODE -ne 0) { throw 'Could not make the pinned vcpkg baseline available.' }
-          }
-
-      - name: Build the dependencies
-        shell: pwsh
-        working-directory: native
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install --triplet x64-windows
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed (exit $LASTEXITCODE)" }
-
   build:
     name: Build and test (${{ matrix.configuration }})
-    needs: vcpkg
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -104,38 +60,6 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      # OCCT takes a long time to build from source, so the binary cache is not a nicety: a cold
-      # cache is most of an hour, a warm one is seconds. The key is the manifest, so the cost is
-      # paid again only when the pinned OCCT version changes.
-      - name: Cache vcpkg binaries
-        uses: actions/cache@v4
-        with:
-          path: ~/AppData/Local/vcpkg/archives
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('native/vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-
-
-      # The runner's preinstalled vcpkg is a shallow clone pinned to whatever commit the image
-      # happened to ship with, so the builtin-baseline in native/vcpkg.json is almost never in its
-      # history and `vcpkg install` fails before it does any work: "failed to git show
-      # versions/baseline.json". Fetching the single pinned commit is far cheaper than unshallowing
-      # the whole of microsoft/vcpkg, and keeps the pin doing its job -- loosening the baseline to
-      # whatever the image has would make the dependency set vary by runner image, which ADR-0011
-      # exists to prevent.
-      - name: Make the pinned vcpkg baseline available
-        shell: pwsh
-        run: |
-          $baseline = (Get-Content native/vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-          $root = $env:VCPKG_INSTALLATION_ROOT
-          Write-Host "Fetching vcpkg baseline $baseline into $root"
-
-          git -C $root fetch --depth 1 origin $baseline
-          if ($LASTEXITCODE -ne 0) {
-            # Older servers refuse a fetch by bare SHA. Unshallowing is slower but always works.
-            Write-Host 'Fetch by commit failed; unshallowing instead.'
-            git -C $root fetch --unshallow
-            if ($LASTEXITCODE -ne 0) { throw 'Could not make the pinned vcpkg baseline available.' }
-          }
-
       - name: Compute build metadata
         id: meta
         shell: pwsh
@@ -150,7 +74,7 @@ jobs:
         env:
           BuildMetadata: ${{ steps.meta.outputs.value }}
           ContinuousIntegrationBuild: true
-        run: ./build.ps1 -Configuration ${{ matrix.configuration }} -WithOcct
+        run: ./build.ps1 -Configuration ${{ matrix.configuration }}
 
       - name: Upload test results
         if: always()

@@ -71,6 +71,27 @@ public sealed class OcctKernel : GeometryKernelBase
     }
 
     /// <summary>
+    /// What the shim reports when it was built without a geometry kernel.
+    /// </summary>
+    /// <remarks>
+    /// The stub build exists so the whole C ABI can be compiled and exercised on a machine with no
+    /// kernel, and it answers every geometric operation with <c>NOT_IMPLEMENTED</c>. Callers need
+    /// to be able to tell the two builds apart before they start asking for geometry.
+    /// </remarks>
+    private const string NoKernelMarker = "no kernel linked";
+
+    /// <summary>
+    /// Gets whether this build of the shim actually has a geometry kernel behind it.
+    /// </summary>
+    /// <remarks>
+    /// False in a stub build. Every operation still exists and still returns a status, so nothing
+    /// crashes — it simply cannot do any geometry, and a test battery should say it was skipped
+    /// rather than report a wall of failures that all mean "OCCT was not built here".
+    /// </remarks>
+    public static bool IsKernelLinked
+        => !ShimVersion.Contains(NoKernelMarker, StringComparison.Ordinal);
+
+    /// <summary>
     /// Gets the native shim's version string, or a note that it could not be read.
     /// </summary>
     /// <remarks>

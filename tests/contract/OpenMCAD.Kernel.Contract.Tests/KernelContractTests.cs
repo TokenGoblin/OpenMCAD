@@ -27,11 +27,28 @@ namespace OpenMCAD.KernelContractTests;
 public static class KernelImplementations
 {
     /// <summary>Gets a factory per implementation under test.</summary>
-    public static TheoryData<KernelFactory> All =>
-    [
-        new KernelFactory("fake", () => new FakeKernel()),
-        new KernelFactory("occt", () => new OcctKernel()),
-    ];
+    /// <remarks>
+    /// OCCT appears only when it was actually linked into this build. A stub shim answers every
+    /// geometric operation with <c>NOT_IMPLEMENTED</c>, so including it would turn one fact —
+    /// "this build has no kernel" — into a wall of failures that says nothing else.
+    /// <see cref="KernelContractTests.TheOcctKernelIsCovered"/> reports the gap rather than
+    /// letting it pass unnoticed, which is what PLAN.md 8.2 asks for: skipped and reported, never
+    /// quietly relaxed.
+    /// </remarks>
+    public static TheoryData<KernelFactory> All
+    {
+        get
+        {
+            TheoryData<KernelFactory> data = [new KernelFactory("fake", () => new FakeKernel())];
+
+            if (OcctKernel.IsKernelLinked)
+            {
+                data.Add(new KernelFactory("occt", () => new OcctKernel()));
+            }
+
+            return data;
+        }
+    }
 }
 
 /// <summary>Creates a kernel under test.</summary>
@@ -52,6 +69,20 @@ public sealed class KernelContractTests
     [
         new(0, 0), new(1, 0), new(1, 1), new(0, 1),
     ];
+
+    [Fact]
+    public void TheOcctKernelIsCovered()
+    {
+        // The point of this battery is that the same tests pass against both kernels (P1-T10). If
+        // OCCT is absent the battery still runs, but it is proving half of what it claims, and
+        // that has to be visible in the results rather than inferred from a shorter list.
+        Assert.SkipUnless(
+            OcctKernel.IsKernelLinked,
+            "This build has no geometry kernel linked, so the contract battery ran against "
+            + "FakeKernel only. Build with -WithOcct to cover both.");
+
+        OcctKernel.ShimVersion.Should().Contain("OCCT");
+    }
 
     // --- Primitives ---------------------------------------------------------------------------------
 
