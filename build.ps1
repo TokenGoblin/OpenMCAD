@@ -327,6 +327,24 @@ else {
     Write-Host '    all tests passed' -ForegroundColor Green
 }
 
+# --- Licence notices ----------------------------------------------------------------------------
+# PLAN.md 8.6 requires THIRD-PARTY-NOTICES.md to be generated so it cannot drift. Checked here as
+# well as in CI, because the failure mode is adding a dependency and not noticing -- which is
+# exactly what happens locally, not in CI.
+Write-Step 'Licence notices'
+
+if (-not (Test-Path -LiteralPath (Join-Path $NativeInstallDir 'bin'))) {
+    # The generated file lists the native closure, so without one the comparison would fail on a
+    # section that simply was not built rather than on anything having drifted.
+    Write-Skip 'no native closure to enumerate (build with -WithOcct to check the notices)'
+}
+else {
+    & (Join-Path $RepoRoot 'tools/generate-notices.ps1') -Check -Configuration $Configuration
+    if ($LASTEXITCODE -ne 0) {
+        throw 'THIRD-PARTY-NOTICES.md is out of date. Run tools/generate-notices.ps1 and commit it.'
+    }
+}
+
 # --- Regression corpus -------------------------------------------------------------------------
 # PLAN.md 8.2. Fast enough against FakeKernel to run on every build; the nightly workflow replays
 # the same fixtures against OCCT and adds the determinism gate.
