@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <!-- The swapchain tests create a real Win32 window through LibraryImport, which the source
+         generator emits unsafe code for. There is nothing to mock: DXGI validates the HWND. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="../../../src/OpenMCAD.Render/OpenMCAD.Render.csproj" />
   </ItemGroup>
