@@ -273,6 +273,37 @@ else {
         }
     }
 
+    # A CMake cache remembers the toolchain file and ignores a later attempt to change it, so
+    # switching between a stub build and an OCCT one in the same directory leaves vcpkg unused and
+    # fails with "Could not find OpenCASCADE" -- which points at the dependency rather than at the
+    # stale cache that actually caused it. Reconfiguring from scratch is the only reliable fix, and
+    # it costs a configure rather than a rebuild: the compiled objects are not in the cache.
+    $cachePath = Join-Path $NativeBuildDir 'CMakeCache.txt'
+    if (Test-Path -LiteralPath $cachePath) {
+        $cache = Get-Content -LiteralPath $cachePath -Raw
+        $cachedOcct = [bool]($cache -match 'OPENMCAD_WITH_OCCT:BOOL=ON')
+
+        # A toolchain that actually took effect is recorded as FILEPATH. One passed to an
+        # already-configured tree is recorded as UNINITIALIZED and ignored -- CMake honours
+        # CMAKE_TOOLCHAIN_FILE only on a build tree's first configure. That is the case worth
+        # detecting: the cache then claims OCCT is on while vcpkg never ran, and the build fails
+        # with "Could not find OpenCASCADE", pointing at the dependency instead of the stale tree.
+        $toolchainApplied = [bool]($cache -match 'CMAKE_TOOLCHAIN_FILE:FILEPATH=')
+
+        $reason = $null
+        if ($cachedOcct -ne [bool]$WithOcct) {
+            $reason = "it was configured $(if ($cachedOcct) { 'with' } else { 'without' }) OCCT"
+        }
+        elseif ($WithOcct -and -not $toolchainApplied) {
+            $reason = 'the vcpkg toolchain was never applied to it'
+        }
+
+        if ($reason) {
+            Write-Host "    discarding the native build tree: $reason"
+            Remove-Item -LiteralPath $NativeBuildDir -Recurse -Force
+        }
+    }
+
     Write-Host "    cmake $($cmakeArgs -join ' ')"
     & cmake @cmakeArgs
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE." }
@@ -281,6 +312,15 @@ else {
 
     & cmake --build $NativeBuildDir --config $Configuration --parallel
     if ($LASTEXITCODE -ne 0) { throw "Native build failed with exit code $LASTEXITCODE." }
+
+    # Cleared first, because CMake installs additively and never removes. Switching between an
+    # OCCT build and a stub one otherwise leaves the stub shim sitting beside the previous build's
+    # OCCT libraries -- and the managed build then copies that stub into the test output, where
+    # every kernel call fails as NOT_IMPLEMENTED and looks like a kernel bug rather than a stale
+    # file. The directory must describe exactly one build.
+    if (Test-Path -LiteralPath $NativeInstallDir) {
+        Remove-Item -LiteralPath $NativeInstallDir -Recurse -Force
+    }
 
     & cmake --install $NativeBuildDir --config $Configuration --prefix $NativeInstallDir
     if ($LASTEXITCODE -ne 0) { throw "Native install failed with exit code $LASTEXITCODE." }
@@ -352,10 +392,12 @@ else {
 # exactly what happens locally, not in CI.
 Write-Step 'Licence notices'
 
-if (-not (Test-Path -LiteralPath (Join-Path $NativeInstallDir 'bin'))) {
-    # The generated file lists the native closure, so without one the comparison would fail on a
-    # section that simply was not built rather than on anything having drifted.
-    Write-Skip 'no native closure to enumerate (build with -WithOcct to check the notices)'
+if (-not $WithOcct -or -not (Test-Path -LiteralPath (Join-Path $NativeInstallDir 'bin'))) {
+    # The committed file describes the shipping configuration, which links OCCT. A build without it
+    # installs the stub shim and nothing else, so the comparison would fail on a native section
+    # that was never built rather than on anything having drifted. Testing only for the directory
+    # was not enough -- the stub build creates one too, which is how CI's shim-only job failed.
+    Write-Skip 'not an OCCT build, so the shipping dependency closure is not present'
 }
 else {
     & (Join-Path $RepoRoot 'tools/generate-notices.ps1') -Check -Configuration $Configuration

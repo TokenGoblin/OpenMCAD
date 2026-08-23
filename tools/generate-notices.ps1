@@ -227,9 +227,19 @@ function Get-NativePackages {
     $packages = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
 
-    foreach ($dll in Get-ChildItem -Path $binDir -Filter '*.dll') {
-        # openmcad_occt.dll is ours; it is covered by the project's own licence.
-        if ($dll.Name -eq 'openmcad_occt.dll') { continue }
+    # A shim built without OCCT installs itself and nothing else. Generating from that would
+    # produce a notices file with every native component missing, and it would look complete --
+    # which is worse than failing, because someone would commit it.
+    $foreign = @(Get-ChildItem -Path $binDir -Filter '*.dll' |
+        Where-Object { $_.Name -ne 'openmcad_occt.dll' })
+
+    if ($foreign.Count -eq 0) {
+        throw ("The native closure at $binDir contains only the shim itself, so this build did " +
+            'not link OCCT. Generating now would drop every native component from the notices. ' +
+            'Build with -WithOcct first.')
+    }
+
+    foreach ($dll in $foreign) {
 
         $owner = $owners[$dll.Name.ToLowerInvariant()]
         if (-not $owner) {
