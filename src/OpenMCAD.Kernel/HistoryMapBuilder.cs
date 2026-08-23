@@ -18,7 +18,8 @@ namespace OpenMCAD.Kernel;
 /// the naming layer, where the symptom would be a model that breaks on edit weeks later.
 /// </description></item>
 /// <item><description>
-/// An entity cannot be both deleted and a source of successors.
+/// An entity cannot be both deleted and modified. It may be both deleted and generating, which is
+/// the ordinary fillet case and not an error.
 /// </description></item>
 /// <item><description>
 /// Collections come out sorted, so the same operation run twice produces identical output
@@ -98,6 +99,12 @@ public sealed class HistoryMapBuilder
     /// <param name="input">The consumed entity.</param>
     /// <returns>This builder, for chaining.</returns>
     /// <exception cref="ArgumentException">The entity is invalid.</exception>
+    /// <remarks>
+    /// Deletion is about <i>succession</i>, not about influence. A deleted entity may still have
+    /// generated something — a filleted edge is consumed and yet is the reason the blend face
+    /// exists — so <see cref="AddGenerated"/> is legal alongside this. What is not legal is
+    /// <see cref="AddModified"/>, which asserts the entity survived in altered form.
+    /// </remarks>
     public HistoryMapBuilder AddDeleted(SubEntity input)
     {
         Require(input, nameof(input));
@@ -159,7 +166,7 @@ public sealed class HistoryMapBuilder
 
     /// <summary>Builds the map.</summary>
     /// <exception cref="InvalidOperationException">
-    /// An output carries no deliberate role, or an entity is both deleted and a source of successors.
+    /// An output carries no deliberate role, or an entity is both deleted and modified.
     /// </exception>
     public HistoryMap Build()
     {
@@ -172,16 +179,21 @@ public sealed class HistoryMapBuilder
                 + $"implementation. First: {unrolled[0]}.");
         }
 
-        List<SubEntity> contradictory =
-        [
-            .. _deleted.Where(entity => _generated.ContainsKey(entity) || _modified.ContainsKey(entity)),
-        ];
+        // Deleted conflicts with Modified, but NOT with Generated. The distinction is the whole
+        // fillet case: a filleted edge is consumed -- it has no successor -- and it is also the
+        // cause of the blend face that replaced it. Forbidding that combination made the single
+        // most common blend impossible to record faithfully, and the OCCT spike confirmed the
+        // kernel reports exactly it: Generated(edge) yields the blend face, and IsDeleted(edge)
+        // is true.
+        List<SubEntity> contradictory = [.. _deleted.Where(_modified.ContainsKey)];
 
         if (contradictory.Count > 0)
         {
             throw new InvalidOperationException(
-                $"Entity {contradictory[0]} is recorded as deleted but also has successors. An "
-                + "entity that survives in any form is modified, not deleted.");
+                $"Entity {contradictory[0]} is recorded as deleted but also has a modified "
+                + "successor. Modified means the same entity, altered, so it survives; an entity "
+                + "cannot both survive and be gone. (Generated is different and is allowed "
+                + "alongside deletion: a consumed edge may still have created a blend face.)");
         }
 
         return new HistoryMap(

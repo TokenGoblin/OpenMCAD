@@ -245,3 +245,89 @@ public sealed class DefinitionDescriptorTests
             ? DefinitionDescriptor.ForManifest(definition)
             : DefinitionDescriptor.ForFingerprint(definition);
 }
+
+/// <summary>
+/// The deletion invariant, which code review found was too strict.
+/// </summary>
+public sealed class HistoryMapDeletionTests
+{
+    private static readonly KernelShape Body = new(1);
+
+    private static SubEntity Entity(ulong tag, SubEntityKind kind)
+        => new(Body, tag, kind);
+
+    [Fact]
+    public void AnEntityMayBeBothDeletedAndGenerating()
+    {
+        // The ordinary fillet, and what the OCCT spike measured: Generated(edge) yields the blend
+        // face and IsDeleted(edge) is true. The builder used to reject this, which made the single
+        // most common blend impossible to record faithfully.
+        SubEntity edge = Entity(10, SubEntityKind.Edge);
+        SubEntity blend = Entity(20, SubEntityKind.Face);
+
+        HistoryMapBuilder builder = new();
+        builder.AddGenerated(edge, blend, OperationRole.BlendFace);
+        builder.AddDeleted(edge);
+
+        HistoryMap map = builder.Build();
+
+        map.IsDeleted(edge).Should().BeTrue();
+        map.Generated(edge).Should().ContainSingle().Which.Should().Be(blend);
+        map.RoleOf(blend).Should().Be(OperationRole.BlendFace);
+        map.SourceOf(blend).Should().Be(edge);
+    }
+
+    [Fact]
+    public void AnEntityMayNotBeBothDeletedAndModified()
+    {
+        // Modified asserts the entity survived in altered form. It cannot also be gone.
+        SubEntity face = Entity(10, SubEntityKind.Face);
+        SubEntity successor = Entity(20, SubEntityKind.Face);
+
+        HistoryMapBuilder builder = new();
+        builder.AddModified(face, successor, OperationRole.Trimmed);
+        builder.AddDeleted(face);
+
+        Action act = () => builder.Build();
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*deleted but also has a modified successor*");
+    }
+
+    [Fact]
+    public void RetainedCountsAsModifiedForTheInvariant()
+    {
+        SubEntity face = Entity(10, SubEntityKind.Face);
+
+        HistoryMapBuilder builder = new();
+        builder.AddRetained(face, Entity(20, SubEntityKind.Face));
+        builder.AddDeleted(face);
+
+        Action act = () => builder.Build();
+        act.Should().Throw<InvalidOperationException>();
+    }
+
+    [Fact]
+    public void BothBlendRelationshipsCanBeRecordedTogether()
+    {
+        // What P1-T06 will actually write: the blend lies between two faces (which is what
+        // survives a rebuild) and descends from the consumed edge (which is what SourceOf answers).
+        SubEntity edge = Entity(10, SubEntityKind.Edge);
+        SubEntity faceA = Entity(11, SubEntityKind.Face);
+        SubEntity faceB = Entity(12, SubEntityKind.Face);
+        SubEntity blend = Entity(20, SubEntityKind.Face);
+
+        HistoryMapBuilder builder = new();
+        builder.AddNewBetween(blend, OperationRole.BlendFace, faceA, faceB);
+        builder.AddGenerated(edge, blend, OperationRole.BlendFace);
+        builder.AddDeleted(edge);
+
+        HistoryMap map = builder.Build();
+
+        map.Generated(faceA).Should().Contain(blend);
+        map.Generated(faceB).Should().Contain(blend);
+        map.Generated(edge).Should().Contain(blend);
+        map.IsDeleted(edge).Should().BeTrue();
+        map.NewEntities.Should().Contain(blend);
+    }
+}

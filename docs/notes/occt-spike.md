@@ -16,22 +16,44 @@ this note is the deliverable. What follows is what the spike **measured**, not w
 
 | | |
 |---|---|
-| OCCT | **8.0.1** (`OCC_VERSION_COMPLETE`), from vcpkg port `opencascade[core,freetype]` |
+| OCCT | **8.0.1** (`OCC_VERSION_COMPLETE`), from vcpkg port `opencascade[core,freetype]` — `core` is vcpkg's pseudo-feature for "no default features", matching `"default-features": false` in the manifest |
 | Triplet | `x64-windows`, shared libraries |
 | Compiler | MSVC 14.51.36231 (Build Tools 2026, 18.9.12112.369) |
 | Eigen | 5.0.1 |
 | vcpkg baseline | `127402f1c75bb3d5ff6bce04b285faa4930a5aca` |
 | Build time | 42 minutes, ~12 GB of build trees, 1.88 GB installed |
 
-`OpenCASCADE_WITH_TBB = OFF` and `HAVE_TBB` is undefined. **PLAN.md §5.2.3's requirement that
-OCCT's internal parallelism be off is satisfied by the manifest as written**, not by accident —
-`tbb` is a non-default feature and `native/vcpkg.json` selects features explicitly.
+`OpenCASCADE_WITH_TBB = OFF` and `HAVE_TBB` is undefined, because `tbb` is a non-default feature
+and `native/vcpkg.json` selects features explicitly rather than by accident.
 
-`OpenCASCADE_BUILD_SHARED_LIBS = ON`. OCCT is 57 DLLs totalling 52 MB, of which the Phase 1
-operation set pulls in ten (`TKernel`, `TKMath`, `TKGeomBase`, `TKBRep`, `TKTopAlgo`, `TKPrim`,
-`TKBO`, `TKFillet`, `TKMesh`, `TKDESTEP`). Shared linkage matters beyond convenience: ADR-0003 and
-§8.6 want OCCT separately replaceable so the LGPL relinking condition is trivially satisfied, and
-this build is exactly that.
+**That is only half of §5.2.3, and the half that is easy to mistake for all of it.** Absent TBB,
+OCCT falls back to its own `OSD_ThreadPool`; it does not become single-threaded. The parallelism
+§5.2.3 actually names is switched at *run time*: `IMeshTools_Parameters::InParallel` (and the
+`isInParallel` argument to `BRepMesh_IncrementalMesh`) for tessellation, and
+`BOPAlgo_Options::SetRunParallel` for booleans. Those default off in OCCT today, but defaults are
+not a contract.
+
+**Action for P1-T06:** set them explicitly to false at every call site rather than relying on the
+absence of TBB or on a default. The determinism measured below was obtained with those paths
+serial; it says nothing about what happens when they are not.
+
+`OpenCASCADE_BUILD_SHARED_LIBS = ON`. The install is **50 OCCT DLLs at 49.9 MB**, plus **7
+third-party ones at 1.9 MB** (freetype, libpng, zlib, brotli ×3, bz2) — worth separating, because
+the third-party set is a distinct licence-audit population from OCCT itself (§8.6).
+
+Shared linkage matters beyond convenience: ADR-0003 and §8.6 want OCCT separately replaceable so
+the LGPL relinking condition is trivially satisfied, and this build is exactly that.
+
+**Deployment footprint, measured rather than assumed.** The Phase 1 operation set *links* ten
+libraries (`TKernel`, `TKMath`, `TKGeomBase`, `TKBRep`, `TKTopAlgo`, `TKPrim`, `TKBO`, `TKFillet`,
+`TKMesh`, `TKDESTEP`), but walking the import tables transitively gives a runtime closure of
+**31 DLLs / 40.9 MB**. The twenty-one beyond the link list are:
+
+`TKBool`, `TKCAF`, `TKCDF`, `TKDE`, `TKG2d`, `TKG3d`, `TKGeomAlgo`, `TKHLR`, `TKLCAF`, `TKService`,
+`TKShHealing`, `TKV3d`, `TKVCAF`, `TKXCAF`, `TKXSBase`, and the seven third-party DLLs.
+
+Shipping only the ten would load fine until the first STEP write or fillet, then fail. P17-T01
+must compute this closure rather than curate a list by hand.
 
 ---
 
@@ -41,9 +63,13 @@ this build is exactly that.
 
 The central assumption behind ADR-0011, the geometry cache, undo, and the whole naming layer.
 
-Two identical `BRepAlgoAPI_Cut` operations produced identical topology counts, identical face
-ordering, and a volume equal **to the last bit** (`3497.34517543…`). Running the whole spike as two
-separate processes produced byte-identical output.
+Two identical `BRepAlgoAPI_Cut` operations on a 20×20×10 box produced identical topology counts,
+identical face ordering, and a volume equal **to the last bit** (`3497.34517543…`; the different
+figure in the results table below is a different, larger box). Running the whole spike as two
+separate processes produced a byte-identical **console report** — every measurement agreed.
+
+The one artefact that does *not* reproduce byte-for-byte is the STEP file, and only because OCCT
+stamps the wall-clock time into its header. See the STEP section below; no geometry differed.
 
 This is the single most important result here. It was not guaranteed — PLAN.md §5.2.3 explicitly
 warns that "OCCT results can vary with iteration order and memory layout" — and the nightly
@@ -69,10 +95,18 @@ Cutting a cylinder out of a box: of the box's 6 faces, OCCT reported **2 modifie
 touch, and `IsDeleted()` is false for it.
 
 So `OperationRole.Retained` — which `HistoryMapBuilder.AddRetained` exists for, and which is the
-majority of any boolean — **cannot be populated from OCCT's history map**. The shim must, for each
-input entity with no history entry and not deleted, locate the survivor in the output itself.
-OCCT preserves the same `TShape` for untouched entities, so `TopoDS_Shape::IsSame` against a map of
-the output is the mechanism.
+majority of any boolean — **cannot be populated from OCCT's history map**. The shim must find the
+survivors itself. OCCT preserves the same `TShape` for untouched entities, so `TopoDS_Shape::IsSame`
+against a map of the output finds them.
+
+**The lookup is the authority, not `IsDeleted()`.** It is tempting to write "no history entry and
+not deleted ⇒ retained", but this very section shows `IsDeleted()` returns false for entities OCCT
+says nothing about — so an entity that was genuinely dropped satisfies that predicate too. It would
+then be recorded as `Retained`, which requires a real output entity to point at: either the shim
+fabricates one, producing a history map that lies, or it crashes. The correct rule is:
+
+> for each input entity with no history entry — look it up in the output.
+> **Found ⇒ `AddRetained`. Not found ⇒ `AddDeleted`.**
 
 Getting this wrong would not throw. It would produce history maps missing two thirds of their
 entries, and names that fail to resolve through operations that did not affect them — which is
@@ -95,10 +129,21 @@ blend of edge #7" does not. The spike says OCCT will not hand us that relationsh
 **Action for P1-T06:** the fillet body must compute edge→adjacent-face adjacency from the **input**
 shape, before the operation runs, via `TopExp::MapShapesAndAncestors`. Afterwards the input edge is
 gone and the relationship is unrecoverable. `FakeKernel` already does this — `FakeEntity.AdjacentFaces`
-is populated at construction — so the two kernels will agree, which is what the contract battery
-checks.
+is populated at construction — so the two kernels agree, which is what the contract battery checks.
 
-The filleted edge *was* correctly reported as deleted, so that half of the design needs nothing.
+The filleted edge *was* correctly reported as deleted. Record **both** relationships:
+
+```
+history.AddNewBetween(blend, BlendFace, faceA, faceB);   // survives a rebuild
+history.AddGenerated(edge, blend, BlendFace);            // what SourceOf answers with
+history.AddDeleted(edge);
+```
+
+`HistoryMapBuilder` originally rejected that third line, on the grounds that an entity with
+successors cannot be deleted. Writing this note exposed the error: deletion is about *succession*,
+and `Generated` is not succession. A filleted edge is consumed **and** is the reason the blend face
+exists — the single most common blend in CAD. The invariant now rejects only deleted-and-*modified*,
+and `FakeKernel` records both relationships so the contract battery checks the pair.
 
 ### ⚠️ A3 — Failures do not always throw
 
@@ -146,9 +191,11 @@ the corpus runner.
 
 ---
 
-## The five operations
+## The operations, end to end
 
-All succeeded on a 30×20×10 box with a Ø8 hole and four 1 mm fillets:
+§14 asks for five; six are listed here because the validity check earns its place. All succeeded
+on a 30×20×10 box with a Ø8 hole and four 1 mm fillets — note this is a *different, larger* box
+than the determinism test above used, hence the different volume:
 
 | | Result |
 |---|---|

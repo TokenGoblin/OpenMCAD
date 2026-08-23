@@ -5,7 +5,8 @@ far better than a percentage, because a percentage of an asymptote is meaningles
 
 **Legend:** ⬜ not started · 🟨 partial · ✅ target met for the stated scope
 
-_Last updated: 2026-08-22, Phase 1 in progress (abstraction complete, native shim blocked)._
+_Last updated: 2026-08-22, Phase 1 in progress: abstraction and C ABI complete, OCCT built and
+verified, operation bodies next._
 
 | Capability area | Target | Lands in | Status |
 |---|---|---|---|

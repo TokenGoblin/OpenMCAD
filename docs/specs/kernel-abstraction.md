@@ -153,19 +153,21 @@ mock instead of against OCCT.
 
 ## 5. Not yet done in Phase 1
 
-Everything remaining is native, and blocked on the same thing.
+Everything remaining is the shim itself. The toolchain that used to block it is installed and OCCT
+is built — see section 6.
 
 | Task | State |
 |---|---|
-| P1-T04 shim handle table | Blocked on the C++ toolchain — see section 6. |
-| P1-T05 exception firewall, `OSD::SetSignal` | The pattern is written (`openmcad_types.h`, `openmcad_occt.cpp`) and generated into all 49 entry points; it has never been compiled. |
-| P1-T06 OCCT operations | Blocked, and also wants the OCCT spike PLAN.md §14 asks for. |
-| P1-T11 retry ladder | Blocked on P1-T06. The observable contract — `RetryRung` on every result, `Degraded` for partial success, `rung` threaded through every fragile IDL operation — is done and tested. |
-| P1-T12 determinism audit | Blocked on P1-T06. The gate itself exists and runs on every build against `FakeKernel`. |
-| P1-T15 benchmarks | Blocked on P1-T06; benchmarking `FakeKernel` would measure the dispatcher, not the kernel. |
+| P1-T04 shim handle table | Unblocked; next. |
+| P1-T05 exception firewall, `OSD::SetSignal` | The pattern is written and generated into all 49 entry points, and verified against a real DLL: a stubbed call returns a status through the firewall without unwinding. Wiring it to OCCT's `Standard_Failure` remains. |
+| P1-T06 OCCT operations | Unblocked. Three spike findings change how these must be written — see `docs/specs/kernel-shim.md`. |
+| P1-T11 retry ladder | Needs P1-T06. The observable contract is done and tested; the spike did **not** validate that the ladder earns its complexity. |
+| P1-T12 determinism audit | Needs P1-T06. The gate runs today against `FakeKernel`, and the spike confirms OCCT is deterministic on a small model. |
+| P1-T15 benchmarks | Needs P1-T06; benchmarking `FakeKernel` would measure the dispatcher. |
 
 Done since this document was first written: P1-T03 (IDL and generator), P1-T13 (repro bundles),
-P1-T14 (corpus runner, three fixtures, determinism gate), P1-T16 (`docs/specs/kernel-shim.md`).
+P1-T14 (corpus runner, three fixtures, determinism gate), P1-T16 (`docs/specs/kernel-shim.md`), and
+the §14 OCCT spike.
 
 ## 6. The toolchain
 

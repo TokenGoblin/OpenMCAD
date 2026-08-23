@@ -177,21 +177,49 @@ which is why they are called out here rather than left to be rediscovered.
 
 **Untouched entities are absent from the history map.** Cutting a cylinder from a box, OCCT
 reported 2 of 6 target faces as modified, none as deleted, and said *nothing at all* about the
-other 4. `OperationRole.Retained` therefore cannot be read from OCCT. After the kernel call, sweep
-the input entities: any with no history entry and not deleted survived, and OCCT keeps the same
-`TShape` for them, so `TopoDS_Shape::IsSame` against a map of the output finds them. Write this
-once as a helper. Omitting it produces history maps missing most of their entries and names that
-fail to resolve through operations that did not touch them.
+other 4. `OperationRole.Retained` therefore cannot be read from OCCT.
+
+After the kernel call, sweep the input entities. For each one with no history entry, **look it up
+in the output** — OCCT keeps the same `TShape` for untouched entities, so `TopoDS_Shape::IsSame`
+against a map of the result finds them. The lookup decides:
+
+| Outcome | Record |
+|---|---|
+| Found in the output | `AddRetained(input, survivor)` |
+| Not found | `AddDeleted(input)` |
+
+Do **not** shortcut this to "no entry and `IsDeleted()` is false ⇒ retained". `IsDeleted()` returns
+false for entities OCCT says nothing about, so a genuinely dropped entity passes that test — and
+`AddRetained` needs a real output entity to point at, leaving you to fabricate one (a history map
+that lies) or crash. Write the sweep once as a helper; omitting it produces maps missing most of
+their entries and names that fail through operations that never touched them.
 
 **A blend face is not reachable from the faces it joins.** `Generated(filleted edge)` gives the
 blend face; `Generated(adjacent face)` gives nothing. Since `AddNewBetween` wants the two faces,
 capture edge-to-face adjacency from the **input** shape with `TopExp::MapShapesAndAncestors`
 *before* building — afterwards the input edge is gone and the relationship cannot be recovered.
 
+Record both relationships, which the builder permits:
+
+```cpp
+history.AddNewBetween(blend, BlendFace, faceA, faceB);  // what survives a rebuild
+history.AddGenerated(edge, blend, BlendFace);           // what SourceOf answers with
+history.AddDeleted(edge);
+```
+
+Deleted-and-generating is legal and is the ordinary fillet: the edge is consumed *and* is why the
+blend exists. Only deleted-and-**modified** is rejected, because `Modified` asserts the entity
+survived.
+
 **`Build()` failing does not always throw.** A 50 mm fillet on a 10 mm box returned
 `IsDone() == false` and left the shape unmodified. Reading `Shape()` without checking would hand
 back the input as a Success. Check `IsDone()` after every `Build()`; the firewall only catches the
 failures that throw.
+
+**Parallelism is a run-time setting, not just a build flag.** OCCT is built without TBB, but it
+falls back to its own `OSD_ThreadPool` — it is not single-threaded by construction. Set
+`BOPAlgo_Options::SetRunParallel(false)` on booleans and `InParallel = false` on tessellation
+explicitly at every call site. They default off today; §5.2.3 wants them off by contract.
 
 ### The retry ladder
 

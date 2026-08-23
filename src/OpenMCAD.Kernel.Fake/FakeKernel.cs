@@ -565,7 +565,13 @@ public sealed class FakeKernel : GeometryKernelBase
                     OperationRole.BlendFace);
             }
 
-            history.AddDeleted(new SubEntity(from, source.Tag, SubEntityKind.Edge));
+            // Both relationships, matching what OCCT reports: the edge is consumed, and it is
+            // also the reason the blend face exists. AddNewBetween above records the pair of
+            // faces the blend lies between, which is what survives a rebuild; this records the
+            // direct descent, which is what SourceOf answers with.
+            SubEntity consumed = new(from, source.Tag, SubEntityKind.Edge);
+            history.AddGenerated(consumed, blendFace, OperationRole.BlendFace);
+            history.AddDeleted(consumed);
         }
 
         HistoryMap map = history.Build();
