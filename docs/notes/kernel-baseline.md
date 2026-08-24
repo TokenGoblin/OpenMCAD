@@ -14,11 +14,15 @@ dotnet run -c Release --project tests/perf/OpenMCAD.Kernel.Benchmarks -- --filte
 ## Machine
 
 ```
-BenchmarkDotNet v0.15.8, Windows 11 (10.0.26200.9168/25H2)
-AMD Ryzen 7 PRO 6850U with Radeon Graphics 2.70GHz, 1 CPU, 16 logical and 8 physical cores
-.NET SDK 10.0.302, .NET 10.0.10, X64 RyuJIT x86-64-v3
+BenchmarkDotNet v0.15.8, Windows 11
+AMD Ryzen 7 PRO 6850U, 8 physical cores
+.NET 10, X64 RyuJIT x86-64-v3
 OCCT 8.0.1 via vcpkg, TBB off, shared, Release
 ```
+
+Recorded to the CPU family rather than to the exact OS build and patch level: the processor is
+what the numbers depend on, and a precise build number identifies the machine far more than it
+explains the timings.
 
 A laptop on battery-capable silicon, so treat these as an order of magnitude rather than a
 precision figure. What matters is the shape of the distribution and how it moves.

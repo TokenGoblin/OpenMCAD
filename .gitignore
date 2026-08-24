@@ -31,3 +31,11 @@ logs/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Machine-specific agent instructions. CLAUDE.md describes how *this* checkout reaches its git
+# remote -- hostnames, ports, which network it lives on -- which is configuration for one machine
+# rather than part of the project, and is nobody else's business.
+CLAUDE.md
+
+# Logs can carry absolute paths, machine names and adapter details.
+*.log
