@@ -2,9 +2,10 @@
 
 A parametric, feature-based mechanical CAD system for Windows, built on .NET 10.
 
-> **Status: Phase 0 of 17.** The repository builds, the shell launches, and the architecture is
-> enforced by tests. There is no geometry yet. See [`docs/PLAN.md`](docs/PLAN.md) for the full
-> roadmap and an honest assessment of the scale of the work.
+> **Status: Phase 2 of 17 — the viewport.** The kernel is real (OCCT 8.0.1 behind a C ABI
+> shim), the application opens on shaded geometry with edges, and picking works. There is no
+> document model, no sketcher and no file format yet. See [`docs/plan.md`](docs/plan.md) for
+> the full plan and what each phase still owes.
 
 ## What this is meant to become
 
