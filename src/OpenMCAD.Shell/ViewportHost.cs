@@ -4,6 +4,8 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 
+using OpenMCAD.Interaction.Navigation;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -55,6 +57,7 @@ public sealed class ViewportHost : HwndHost
     private bool _reportedSize;
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
     private EdgeStyle _edgeStyle = EdgeStyle.Default;
+    private NavigationController? _navigation;
 
     /// <summary>
     /// Where a XAML-constructed viewport gets its logger from.
@@ -136,6 +139,25 @@ public sealed class ViewportHost : HwndHost
     /// <returns>Whether there was anything to frame.</returns>
     public bool ZoomToFit() => _renderer?.ZoomToFit() ?? false;
 
+    /// <summary>Gets the navigation controller, once the window exists.</summary>
+    public NavigationController? Navigation => _navigation;
+
+    /// <summary>Gets or sets which mouse gestures navigate the view.</summary>
+    public MouseProfile MouseProfile
+    {
+        get => _navigation?.Profile ?? MouseProfile.Default;
+
+        set
+        {
+            ArgumentNullException.ThrowIfNull(value);
+
+            if (_navigation is not null)
+            {
+                _navigation.Profile = value;
+            }
+        }
+    }
+
     /// <inheritdoc />
     protected override HandleRef BuildWindowCore(HandleRef hwndParent)
     {
@@ -170,6 +192,8 @@ public sealed class ViewportHost : HwndHost
             Snapshot = _snapshot,
         };
 
+        _navigation = new NavigationController(_renderer.Camera);
+
         ApplyEdgeStyle();
         _renderer.ZoomToFit();
 
@@ -188,6 +212,7 @@ public sealed class ViewportHost : HwndHost
     protected override void DestroyWindowCore(HandleRef hwnd)
     {
         CompositionTarget.Rendering -= OnFrame;
+        _navigation = null;
 
         // Order matters. The renderer holds command lists recorded against the swapchain's
         // buffers, the swapchain references the queue, and the device waits for the GPU before
@@ -316,6 +341,199 @@ public sealed class ViewportHost : HwndHost
         return ViewportScaling.ToPhysicalPixels(
             RenderSize.Width, RenderSize.Height, dpi.DpiScaleX, dpi.DpiScaleY);
     }
+
+    /// <summary>
+    /// Routes mouse input from the hosted window to the navigation controller (P2-T08).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The messages have to be intercepted here because the hosted child window receives them and
+    /// never forwards them to WPF — a plain <c>MouseMove</c> handler on this element sees nothing
+    /// at all. <see cref="HwndHost"/> subclasses the child window, so overriding this is the one
+    /// place the events are reachable.
+    /// </para>
+    /// <para>
+    /// Coordinates in <c>lParam</c> are already client-relative physical pixels, which is exactly
+    /// the space the swapchain, the ID buffer and the navigation rates all work in. Wheel messages
+    /// are the exception: they carry <i>screen</i> coordinates, so they are converted, and
+    /// forgetting that puts zoom-towards-cursor progressively further out the further the window
+    /// is from the top-left of the display.
+    /// </para>
+    /// </remarks>
+    protected override nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (_navigation is null)
+        {
+            return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+        }
+
+        switch (msg)
+        {
+            case WmLButtonDown:
+            case WmMButtonDown:
+            case WmRButtonDown:
+                OnButtonDown(ButtonOf(msg), lParam, ref handled);
+                break;
+
+            case WmLButtonUp:
+            case WmMButtonUp:
+            case WmRButtonUp:
+                OnButtonUp(ButtonOf(msg), ref handled);
+                break;
+
+            case WmMouseMove:
+                if (_navigation.IsNavigating)
+                {
+                    (int width, int height) = CurrentPixelSize();
+                    _navigation.PointerMove(LowWord(lParam), HighWord(lParam), width, height);
+                    handled = true;
+                }
+
+                break;
+
+            case WmMouseWheel:
+                OnWheel(wParam, lParam, ref handled);
+                break;
+
+            case WmCaptureChanged:
+                // Capture can be taken away -- a modal dialog, another window, Alt+Tab. The drag
+                // is abandoned rather than left running, which would otherwise leave the view
+                // spinning under a mouse the user thinks they have let go of.
+                _navigation.Cancel();
+                break;
+
+            default:
+                break;
+        }
+
+        return base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+    }
+
+    private static PointerButton ButtonOf(int message) => message switch
+    {
+        WmLButtonDown or WmLButtonUp => PointerButton.Left,
+        WmMButtonDown or WmMButtonUp => PointerButton.Middle,
+        WmRButtonDown or WmRButtonUp => PointerButton.Right,
+        _ => PointerButton.None,
+    };
+
+    private static int LowWord(nint value) => (short)(value & 0xFFFF);
+
+    private static int HighWord(nint value) => (short)((value >> 16) & 0xFFFF);
+
+    /// <summary>Reads the modifier keys as the navigation layer wants them.</summary>
+    /// <remarks>
+    /// Shift and Control arrive in the message; Alt never does, because Windows routes it through
+    /// the system-key path instead. It has to be asked for separately.
+    /// </remarks>
+    private static NavigationModifiers CurrentModifiers()
+    {
+        NavigationModifiers modifiers = NavigationModifiers.None;
+
+        if ((GetKeyState(VkShift) & 0x8000) != 0)
+        {
+            modifiers |= NavigationModifiers.Shift;
+        }
+
+        if ((GetKeyState(VkControl) & 0x8000) != 0)
+        {
+            modifiers |= NavigationModifiers.Control;
+        }
+
+        if ((GetKeyState(VkMenu) & 0x8000) != 0)
+        {
+            modifiers |= NavigationModifiers.Alt;
+        }
+
+        return modifiers;
+    }
+
+    private void OnButtonDown(PointerButton button, nint lParam, ref bool handled)
+    {
+        if (_navigation is null
+            || !_navigation.PointerDown(button, CurrentModifiers(), LowWord(lParam), HighWord(lParam)))
+        {
+            // Unbound: left for selection or a sketch tool, so it must not be marked handled.
+            return;
+        }
+
+        // Without capture the drag stops the moment the pointer leaves the viewport, which for an
+        // orbit is most of the time.
+        SetCapture(_handle);
+        handled = true;
+    }
+
+    private void OnButtonUp(PointerButton button, ref bool handled)
+    {
+        if (_navigation is null || !_navigation.PointerUp(button))
+        {
+            return;
+        }
+
+        ReleaseCapture();
+        handled = true;
+    }
+
+    private void OnWheel(nint wParam, nint lParam, ref bool handled)
+    {
+        if (_navigation is null)
+        {
+            return;
+        }
+
+        // Screen coordinates, unlike every other mouse message.
+        Point point = new(LowWord(lParam), HighWord(lParam));
+
+        if (ScreenToClient(_handle, ref point))
+        {
+            (int width, int height) = CurrentPixelSize();
+            double notches = HighWord(wParam) / 120.0;
+
+            _navigation.Wheel(notches, point.X, point.Y, width, height);
+            handled = true;
+        }
+    }
+
+    private const int WmMouseMove = 0x0200;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
+    private const int WmRButtonDown = 0x0204;
+    private const int WmRButtonUp = 0x0205;
+    private const int WmMButtonDown = 0x0207;
+    private const int WmMButtonUp = 0x0208;
+    private const int WmMouseWheel = 0x020A;
+    private const int WmCaptureChanged = 0x0215;
+
+    private const int VkShift = 0x10;
+    private const int VkControl = 0x11;
+    private const int VkMenu = 0x12;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public Point(int x, int y)
+        {
+            X = x;
+            Y = y;
+        }
+
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(int virtualKey);
+
+    [DllImport("user32.dll")]
+    private static extern nint SetCapture(nint window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(nint window, ref Point point);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "CreateWindowExW")]
     private static extern nint CreateWindowExW(

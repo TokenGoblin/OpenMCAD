@@ -43,6 +43,7 @@
   <Folder Name="/tests/unit/">
     <Project Path="tests/unit/OpenMCAD.IdlGen.Tests/OpenMCAD.IdlGen.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Kernel.Tests/OpenMCAD.Kernel.Tests.csproj" />
+    <Project Path="tests/unit/OpenMCAD.Interaction.Tests/OpenMCAD.Interaction.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Math.Tests/OpenMCAD.Math.Tests.csproj" />
   </Folder>
 </Solution>
