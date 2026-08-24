@@ -7,6 +7,23 @@ using Vortice.DXGI;
 
 namespace OpenMCAD.Render.Direct3D12;
 
+/// <summary>Edge polylines flattened into independent segments, with the id of each.</summary>
+/// <param name="Points">Six floats per segment: two endpoints.</param>
+/// <param name="Ids">One display id per segment, all segments of an edge sharing the edge's id.</param>
+/// <remarks>
+/// Produced together rather than by two functions, so the skipping of malformed polylines cannot
+/// differ between them and leave the ids off by one against the geometry — which would make picks
+/// resolve to the wrong edge, silently and only for models with a degenerate polyline in them.
+/// </remarks>
+internal readonly record struct EdgeSegments(float[] Points, uint[] Ids)
+{
+    /// <summary>Gets the empty set.</summary>
+    public static EdgeSegments Empty { get; } = new([], []);
+
+    /// <summary>Gets how many segments there are.</summary>
+    public int Count => Ids.Length;
+}
+
 /// <summary>
 /// The GPU-side buffers for one <see cref="DisplaySnapshot"/> (P2-T05).
 /// </summary>
@@ -31,6 +48,9 @@ public sealed class SceneGeometry : IDisposable
 
     /// <summary>Bytes per edge segment: two endpoints, three floats each.</summary>
     public const uint SegmentStride = 24;
+
+    /// <summary>Bytes per display id, matching the R32_UINT the ID pass writes.</summary>
+    public const int IdStride = 4;
 
     private readonly List<BodyGeometry> _bodies = [];
     private bool _disposed;
@@ -166,12 +186,14 @@ public sealed class SceneGeometry : IDisposable
     /// on the same reasoning as a polyline of one point.
     /// </para>
     /// </remarks>
-    internal static float[] SegmentsOf(DisplayEdges edges)
+    internal static EdgeSegments SegmentsOf(DisplayEdges edges)
     {
         ArgumentNullException.ThrowIfNull(edges);
 
         int pointCount = edges.PointCount;
         int polylines = System.Math.Min(edges.PolylineCount, edges.Lengths.Length);
+        polylines = System.Math.Min(polylines, edges.Ids.Length);
+
         int segments = 0;
 
         for (int i = 0; i < polylines; ++i)
@@ -181,32 +203,39 @@ public sealed class SceneGeometry : IDisposable
 
         if (segments == 0)
         {
-            return [];
+            return EdgeSegments.Empty;
         }
 
-        float[] result = new float[segments * 6];
+        float[] points = new float[segments * 6];
+        uint[] ids = new uint[segments];
         int at = 0;
+        int segment = 0;
 
         for (int i = 0; i < polylines; ++i)
         {
             int start = edges.Starts[i];
             int length = SpanOf(edges, i, pointCount) + 1;
+            uint id = edges.Ids[i].Value;
 
             for (int j = 0; j + 1 < length; ++j)
             {
                 int a = (start + j) * 3;
                 int b = (start + j + 1) * 3;
 
-                result[at++] = edges.Positions[a];
-                result[at++] = edges.Positions[a + 1];
-                result[at++] = edges.Positions[a + 2];
-                result[at++] = edges.Positions[b];
-                result[at++] = edges.Positions[b + 1];
-                result[at++] = edges.Positions[b + 2];
+                points[at++] = edges.Positions[a];
+                points[at++] = edges.Positions[a + 1];
+                points[at++] = edges.Positions[a + 2];
+                points[at++] = edges.Positions[b];
+                points[at++] = edges.Positions[b + 1];
+                points[at++] = edges.Positions[b + 2];
+
+                // Every segment of a polyline carries the id of the whole edge, so a pick anywhere
+                // along it resolves to the same entity.
+                ids[segment++] = id;
             }
         }
 
-        return result;
+        return new EdgeSegments(points, ids);
     }
 
     /// <summary>How many segments polyline <paramref name="index"/> contributes, or zero.</summary>
@@ -242,24 +271,34 @@ public sealed class SceneGeometry : IDisposable
         string name = $"body {body.Id.Value}";
 
         IGpuBuffer? edgeBuffer = null;
+        IGpuBuffer? segmentIds = null;
         IGpuBuffer? positions = null;
         IGpuBuffer? normals = null;
         IGpuBuffer? indices = null;
+        IGpuBuffer? triangleIds = null;
 
         try
         {
-            float[] segments = SegmentsOf(body.Edges);
+            EdgeSegments segments = SegmentsOf(body.Edges);
 
-            if (segments.Length > 0)
+            if (segments.Count > 0)
             {
                 edgeBuffer = device.CreateStaticBuffer(
-                    MemoryMarshal.AsBytes(segments.AsSpan()), GpuBufferKind.Vertex, $"{name} edges");
+                    MemoryMarshal.AsBytes(segments.Points.AsSpan()),
+                    GpuBufferKind.Vertex,
+                    $"{name} edges");
+
+                segmentIds = device.CreateStaticBuffer(
+                    MemoryMarshal.AsBytes(segments.Ids.AsSpan()),
+                    GpuBufferKind.Vertex,
+                    $"{name} edge ids");
             }
 
             if (mesh.TriangleCount == 0)
             {
                 // Edges only. Nothing for the face pass, so no face buffers are allocated.
-                return new BodyGeometry(body.Id, null, null, null, 0, 0, edgeBuffer, body.Bounds);
+                return new BodyGeometry(
+                    body.Id, null, null, null, 0, 0, edgeBuffer, segmentIds, null, body.Bounds);
             }
 
             positions = device.CreateStaticBuffer(
@@ -292,6 +331,13 @@ public sealed class SceneGeometry : IDisposable
                 GpuBufferKind.Index,
                 $"{name} indices");
 
+            // One id per triangle, indexed by SV_PrimitiveID in the ID pass. DisplayId is a single
+            // uint, so the snapshot's array uploads without repacking.
+            triangleIds = device.CreateStaticBuffer(
+                MemoryMarshal.AsBytes(mesh.TriangleIds.AsSpan()),
+                GpuBufferKind.Vertex,
+                $"{name} triangle ids");
+
             return new BodyGeometry(
                 body.Id,
                 positions,
@@ -300,13 +346,17 @@ public sealed class SceneGeometry : IDisposable
                 mesh.Indices.Length,
                 mesh.VertexCount,
                 edgeBuffer,
+                segmentIds,
+                triangleIds,
                 body.Bounds);
         }
         catch
         {
+            triangleIds?.Dispose();
             indices?.Dispose();
             normals?.Dispose();
             positions?.Dispose();
+            segmentIds?.Dispose();
             edgeBuffer?.Dispose();
             throw;
         }
@@ -326,6 +376,8 @@ public sealed class BodyGeometry : IDisposable
     private readonly IGpuBuffer? _normals;
     private readonly IGpuBuffer? _indices;
     private readonly IGpuBuffer? _edges;
+    private readonly IGpuBuffer? _segmentIds;
+    private readonly IGpuBuffer? _triangleIds;
 
     private bool _disposed;
 
@@ -337,12 +389,24 @@ public sealed class BodyGeometry : IDisposable
         int indexCount,
         int vertexCount,
         IGpuBuffer? edges,
+        IGpuBuffer? segmentIds,
+        IGpuBuffer? triangleIds,
         Bounds3d bounds)
     {
         _positions = positions;
         _normals = normals;
         _indices = indices;
         _edges = edges;
+        _segmentIds = segmentIds;
+        _triangleIds = triangleIds;
+
+        TriangleIdAddress = triangleIds is null
+            ? 0
+            : D3D12RenderDevice.ResourceOf(triangleIds).GPUVirtualAddress;
+
+        SegmentIdAddress = segmentIds is null
+            ? 0
+            : D3D12RenderDevice.ResourceOf(segmentIds).GPUVirtualAddress;
 
         Id = id;
         IndexCount = indexCount;
@@ -408,6 +472,18 @@ public sealed class BodyGeometry : IDisposable
     /// <summary>Gets the view binding edge segments as per-instance data.</summary>
     public VertexBufferView EdgeSegmentView { get; }
 
+    /// <summary>Gets where the per-triangle display ids live, or zero if there are none.</summary>
+    /// <remarks>
+    /// Bound as a root shader resource view rather than through a descriptor heap. A structured
+    /// buffer is one of the few things D3D12 lets a root descriptor address directly, and taking
+    /// it keeps the whole renderer free of per-frame descriptor management for the sake of one
+    /// buffer per body.
+    /// </remarks>
+    public ulong TriangleIdAddress { get; }
+
+    /// <summary>Gets where the per-segment display ids live, or zero if there are none.</summary>
+    public ulong SegmentIdAddress { get; }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -422,5 +498,7 @@ public sealed class BodyGeometry : IDisposable
         _normals?.Dispose();
         _indices?.Dispose();
         _edges?.Dispose();
+        _segmentIds?.Dispose();
+        _triangleIds?.Dispose();
     }
 }

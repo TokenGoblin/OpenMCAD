@@ -24,6 +24,10 @@ cbuffer BodyConstants : register(b1)
     float4 BaseColour;
 };
 
+// One display id per triangle, indexed by SV_PrimitiveID. Read only by the ID pass; the shaded
+// pass leaves it unbound, which is legal because nothing it runs references it.
+StructuredBuffer<uint> EntityIds : register(t0);
+
 struct VSInput
 {
     float3 Position : POSITION;
@@ -90,4 +94,12 @@ float4 PSMain(VSOutput input) : SV_Target
     float3 lit = (BaseColour.rgb * (ambient + (diffuse * 0.85))) + specular;
 
     return float4(lit, BaseColour.a);
+}
+
+// The ID pass (P2-T07). Deliberately paired with the same VSMain above rather than given a vertex
+// shader of its own: picking is only correct if the ID buffer is rasterised from identical
+// geometry, and two vertex shaders that are supposed to agree eventually will not.
+uint PSMainId(VSOutput input, uint primitive : SV_PrimitiveID) : SV_Target
+{
+    return EntityIds[primitive];
 }

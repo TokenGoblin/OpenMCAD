@@ -35,6 +35,9 @@ cbuffer EdgeConstants : register(b1)
     float2 _pad3;
 };
 
+// One display id per segment, indexed by the instance. Read only by the ID pass.
+StructuredBuffer<uint> EntityIds : register(t0);
+
 struct VSOutput
 {
     float4 Clip   : SV_Position;
@@ -42,14 +45,20 @@ struct VSOutput
     // Signed distance from the centre line, in pixels. Interpolating this and comparing against
     // the half width in the pixel shader is what anti-aliases the edge without multisampling.
     float  Offset : EDGEOFFSET;
+
+    // Which segment this came from. SV_InstanceID is not available in a pixel shader, so the ID
+    // pass needs it carried across; nointerpolation because an index must not be averaged.
+    nointerpolation uint Instance : EDGEINSTANCE;
 };
 
 VSOutput VSMain(
     float3 segmentStart : EDGESTART,
     float3 segmentEnd   : EDGEEND,
-    uint   vertexId     : SV_VertexID)
+    uint   vertexId     : SV_VertexID,
+    uint   instanceId   : SV_InstanceID)
 {
     VSOutput output;
+    output.Instance = instanceId;
 
     float4 clipA = mul(ViewProjection, float4(segmentStart, 1.0));
     float4 clipB = mul(ViewProjection, float4(segmentEnd, 1.0));
@@ -127,4 +136,23 @@ float4 PSMain(VSOutput input) : SV_Target
     float alpha = EdgeColour.a * coverage;
 
     return float4(EdgeColour.rgb * alpha, alpha);
+}
+
+// The ID pass (P2-T07), sharing VSMain with the visible pass so that what is picked is exactly
+// what is drawn.
+//
+// The coverage test is kept identical rather than widened. Making the hit area larger here would
+// be the wrong place for it: it would claim pixels for an edge in the ID buffer that the eye
+// cannot see it occupying, and the same widening is done properly at resolve time, where it can
+// prefer the *nearest* edge rather than whichever happens to have been rasterised last.
+uint PSMainId(VSOutput input) : SV_Target
+{
+    float coverage = saturate(HalfWidthPixels + 0.5 - abs(input.Offset));
+
+    if (coverage <= 0.0)
+    {
+        discard;
+    }
+
+    return EntityIds[input.Instance];
 }

@@ -52,9 +52,15 @@ public sealed class ViewportRenderer : IDisposable
     private readonly DepthBuffer _depth;
     private readonly FacePass _faces;
     private readonly EdgePass _edges;
+    private readonly IdPass _ids;
+    private readonly IdTarget _idTarget;
+    private readonly PickReadback _picks;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
+    private PickRequest? _pending;
+    private ulong _frameConstantAddress;
+    private Frustum? _frameFrustum;
     private SceneGeometry? _scene;
     private ulong _lastSignalled;
     private bool _disposed;
@@ -95,6 +101,9 @@ public sealed class ViewportRenderer : IDisposable
         _depth = new DepthBuffer(device.Device);
         _faces = new FacePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
         _edges = new EdgePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+        _ids = new IdPass(device.Device);
+        _idTarget = new IdTarget(device.Device);
+        _picks = new PickReadback(device.Device);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -135,6 +144,12 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets or sets whether to draw edges at all.</summary>
     public bool ShowEdges { get; set; } = true;
+
+    /// <summary>Gets how many picks are waiting on the GPU.</summary>
+    public int PicksInFlight => _picks.InFlight;
+
+    /// <summary>Gets how many pick requests were dropped because the pipeline was full.</summary>
+    public int PicksDropped => _picks.Dropped;
 
     /// <summary>Gets or sets what to draw.</summary>
     /// <remarks>
@@ -197,6 +212,7 @@ public sealed class ViewportRenderer : IDisposable
         _commands.RSSetScissorRect(_target.Width, _target.Height);
 
         DrawScene();
+        DrawIdsIfPicking();
 
         _commands.ResourceBarrierTransition(
             backBuffer, ResourceStates.RenderTarget, ResourceStates.Present);
@@ -213,6 +229,57 @@ public sealed class ViewportRenderer : IDisposable
         _device.Queue.Signal(_fence, _lastSignalled);
 
         FrameCount++;
+        return true;
+    }
+
+    /// <summary>
+    /// Asks what is under a point, to be answered by a later <see cref="TryTakePick"/>.
+    /// </summary>
+    /// <param name="x">Column in physical pixels.</param>
+    /// <param name="y">Row in physical pixels.</param>
+    /// <returns>
+    /// <see langword="false"/> if the request was dropped — the point is off the viewport, there is
+    /// nothing to pick, or too many picks are already in flight.
+    /// </returns>
+    /// <remarks>
+    /// The ID buffer is rendered as part of the next frame rather than immediately, so a pick costs
+    /// one extra pass on a frame that was going to be drawn anyway rather than a separate submit
+    /// and a stall. Requesting a pick every time the mouse moves is therefore reasonable.
+    /// </remarks>
+    public bool RequestPick(int x, int y)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_scene is null || _scene.Bodies.Count == 0)
+        {
+            return false;
+        }
+
+        if (x < 0 || y < 0 || x >= _target.Width || y >= _target.Height)
+        {
+            return false;
+        }
+
+        _pending = new PickRequest(x, y, _snapshot.Version);
+        return true;
+    }
+
+    /// <summary>
+    /// Takes the answer to an earlier <see cref="RequestPick"/>, if one is ready.
+    /// </summary>
+    /// <param name="hit">What was under the cursor.</param>
+    /// <returns>Whether an answer was ready. Never blocks.</returns>
+    public bool TryTakePick(out PickHit hit)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!_picks.TryCollect(_fence.CompletedValue, out PickSample sample))
+        {
+            hit = default;
+            return false;
+        }
+
+        hit = PickResolver.Resolve(sample, _snapshot);
         return true;
     }
 
@@ -268,6 +335,9 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _picks.Dispose();
+        _idTarget.Dispose();
+        _ids.Dispose();
         _uploads.Dispose();
         _edges.Dispose();
         _faces.Dispose();
@@ -366,10 +436,12 @@ public sealed class ViewportRenderer : IDisposable
         MemoryMarshal.Write(destination, in constants);
 
         ulong address = _uploads.Resource.GPUVirtualAddress + (ulong)offset;
+        _frameConstantAddress = address;
 
         // Culled in world space, against a frustum built from the unshifted matrices, because a
         // body's bounds are in world space too.
         Frustum frustum = Frustum.FromViewProjection(projection * Camera.ViewMatrix());
+        _frameFrustum = frustum;
 
         _faces.Draw(_commands, _scene, address, frustum);
 
@@ -384,6 +456,64 @@ public sealed class ViewportRenderer : IDisposable
         {
             _edges.Reset();
         }
+    }
+
+    /// <summary>
+    /// Renders the ID buffer and stages a readback, when a pick has been asked for.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Folded into a frame that was going to be drawn anyway, rather than submitted separately. A
+    /// pick then costs one extra pass and no extra submit, which is what makes it reasonable to
+    /// ask on every mouse move.
+    /// </para>
+    /// <para>
+    /// It reuses the frame constants the visible passes were drawn with, so the ID buffer is
+    /// rasterised from exactly the camera the user is looking through. Recomputing them here would
+    /// agree today and drift the moment anything about the camera became time-dependent.
+    /// </para>
+    /// </remarks>
+    private void DrawIdsIfPicking()
+    {
+        PickRequest? requested = _pending;
+        _pending = null;
+
+        if (requested is not { } request
+            || _scene is null
+            || _scene.Bodies.Count == 0
+            || _frameConstantAddress == 0
+            || _target.Width <= 0
+            || _target.Height <= 0)
+        {
+            return;
+        }
+
+        if (_idTarget.Width != _target.Width || _idTarget.Height != _target.Height)
+        {
+            // The resize releases the texture, and a pick still in flight is copying out of it.
+            // Those picks describe a viewport that no longer exists, so they are abandoned rather
+            // than waited for -- but the GPU still has to be finished before the memory goes.
+            WaitForFence(_lastSignalled);
+            _picks.Abandon();
+            _idTarget.Resize(_target.Width, _target.Height);
+        }
+
+        CpuDescriptorHandle view = _idTarget.View;
+        CpuDescriptorHandle depthView = _idTarget.Depth.View;
+
+        _commands.OMSetRenderTargets(view, depthView);
+
+        // Cleared to zero, which is DisplayId.None: empty space reads back as nothing rather than
+        // as whatever the last pick left behind.
+        _commands.ClearRenderTargetView(view, new Color4(0, 0, 0, 0));
+        _commands.ClearDepthStencilView(depthView, ClearFlags.Depth, DepthBuffer.ClearDepth, 0);
+        _commands.RSSetViewport(0, 0, _target.Width, _target.Height);
+        _commands.RSSetScissorRect(_target.Width, _target.Height);
+
+        _ids.Draw(_commands, _scene, _frameConstantAddress, EdgeStyle, _frameFrustum);
+
+        // The fence value this frame will signal once the copy has run.
+        _picks.TrySubmit(_commands, _idTarget, request, _lastSignalled + 1);
     }
 
     /// <summary>Waits for a fence value, returning at once if it has already passed.</summary>

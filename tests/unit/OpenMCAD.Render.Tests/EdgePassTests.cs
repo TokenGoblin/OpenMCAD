@@ -58,17 +58,18 @@ public sealed class EdgePassTests
             [4, 2],
             [new DisplayId(1), new DisplayId(2)]);
 
-        float[] segments = SceneGeometry.SegmentsOf(edges);
+        EdgeSegments segments = SceneGeometry.SegmentsOf(edges);
 
-        segments.Length.Should().Be(4 * 6, "three spans in the first polyline and one in the second");
+        segments.Points.Length.Should().Be(
+            4 * 6, "three spans in the first polyline and one in the second");
 
         // The first segment runs from the first point to the second.
-        segments[0].Should().Be(0);
-        segments[3].Should().Be(1);
+        segments.Points[0].Should().Be(0);
+        segments.Points[3].Should().Be(1);
 
         // The last comes from the second polyline, which starts at point index four.
-        segments[18].Should().Be(10);
-        segments[21].Should().Be(11);
+        segments.Points[18].Should().Be(10);
+        segments.Points[21].Should().Be(11);
     }
 
     [Fact]
@@ -77,7 +78,7 @@ public sealed class EdgePassTests
         // The kernel should not emit one, but a sick model must not take the viewport down.
         DisplayEdges edges = new([0, 0, 0], [0], [1], [new DisplayId(1)]);
 
-        SceneGeometry.SegmentsOf(edges).Should().BeEmpty();
+        SceneGeometry.SegmentsOf(edges).Count.Should().Be(0);
     }
 
     // --- Rendering ----------------------------------------------------------------------------
@@ -282,14 +283,14 @@ public sealed class EdgePassTests
             [9],
             [new DisplayId(1)]);
 
-        SceneGeometry.SegmentsOf(pastTheEnd).Should().BeEmpty("the span runs past the positions");
+        SceneGeometry.SegmentsOf(pastTheEnd).Count.Should().Be(0, "the span runs past the positions");
 
         DisplayEdges negativeStart = new([0, 0, 0, 1, 0, 0], [-1], [2], [new DisplayId(1)]);
-        SceneGeometry.SegmentsOf(negativeStart).Should().BeEmpty();
+        SceneGeometry.SegmentsOf(negativeStart).Count.Should().Be(0);
 
         // Fewer lengths than starts: only the polylines that have both are considered.
         DisplayEdges ragged = new([0, 0, 0, 1, 0, 0], [0, 1], [2], [new DisplayId(1)]);
-        SceneGeometry.SegmentsOf(ragged).Should().HaveCount(6, "one well-formed segment survives");
+        SceneGeometry.SegmentsOf(ragged).Count.Should().Be(1, "one well-formed segment survives");
     }
 
     [Fact]
