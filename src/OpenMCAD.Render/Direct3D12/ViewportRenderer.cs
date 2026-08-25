@@ -56,6 +56,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly IdTarget _idTarget;
     private readonly PickReadback _picks;
     private readonly HighlightBuffer _highlights;
+    private readonly EnvironmentPass _environment;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -107,6 +108,9 @@ public sealed class ViewportRenderer : IDisposable
         _idTarget = new IdTarget(device.Device);
         _picks = new PickReadback(device.Device);
         _highlights = new HighlightBuffer(device.Device);
+
+        _environment = new EnvironmentPass(
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -147,6 +151,16 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets or sets the colours highlighted entities are drawn in.</summary>
     public HighlightStyle HighlightStyle { get; set; } = HighlightStyle.Default;
+
+    /// <summary>Gets or sets the background and grid appearance.</summary>
+    /// <remarks>
+    /// The spacing and fade are re-derived from the scene each time a snapshot is uploaded, so a
+    /// style set here supplies the colours and the rest follows the model's size.
+    /// </remarks>
+    public EnvironmentStyle EnvironmentStyle { get; set; } = EnvironmentStyle.Default;
+
+    /// <summary>Gets or sets whether to draw the ground grid.</summary>
+    public bool ShowGrid { get; set; } = true;
 
     /// <summary>Gets or sets which entities are highlighted.</summary>
     /// <remarks>
@@ -229,6 +243,9 @@ public sealed class ViewportRenderer : IDisposable
         _commands.RSSetViewport(0, 0, _target.Width, _target.Height);
         _commands.RSSetScissorRect(_target.Width, _target.Height);
 
+        // First, and over the whole target. It writes no depth and sits at the far plane, so the
+        // scene draws over it without the two ever being sorted against one another.
+        DrawEnvironment();
         DrawScene();
         DrawIdsIfPicking();
 
@@ -353,6 +370,7 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _environment.Dispose();
         _highlights.Dispose();
         _picks.Dispose();
         _idTarget.Dispose();
@@ -419,6 +437,33 @@ public sealed class ViewportRenderer : IDisposable
             snapshot.Version,
             _scene.Bodies.Count,
             _scene.TriangleCount);
+    }
+
+    /// <summary>Records the background gradient and ground grid.</summary>
+    /// <remarks>
+    /// Drawn even when there is no scene. An empty viewport showing a gradient and a grid reads as
+    /// an application waiting for work; an empty viewport showing a flat colour reads as one that
+    /// has failed to start.
+    /// </remarks>
+    private void DrawEnvironment()
+    {
+        if (_target.Width <= 0 || _target.Height <= 0)
+        {
+            return;
+        }
+
+        Camera.AspectRatio = (double)_target.Width / _target.Height;
+
+        Bounds3d bounds = _scene?.Bounds ?? _snapshot.Bounds;
+        Vec3d origin = _scene?.Origin ?? _snapshot.Origin;
+
+        EnvironmentConstants constants = EnvironmentPass.ConstantsFor(
+            Camera, bounds, origin, EnvironmentStyle.ForScene(bounds), ShowGrid);
+
+        Span<byte> destination = _uploads.Allocate(EnvironmentConstants.SizeInBytes, out int offset);
+        MemoryMarshal.Write(destination, in constants);
+
+        _environment.Draw(_commands, _uploads.Resource.GPUVirtualAddress + (ulong)offset);
     }
 
     /// <summary>Records the face pass for the current scene.</summary>
