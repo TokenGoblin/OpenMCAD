@@ -1,3 +1,14 @@
+<!--
+    Window geometry is sized to the *working* area, not the screen bounds.
+
+    Height and Width were 1280x800, which is exactly this machine's screen. Centred inside a
+    working area 48 units shorter once the taskbar is accounted for, the top edge lands at -24 and
+    the title bar goes off the top of the display, taking the close button with it, so the
+    application could not be shut without Alt+F4 or Task Manager.
+
+    MaximizedPrimaryScreen* is the working area, so the clamp holds on any display: the window can
+    be asked for larger than the screen and will still open with its caption reachable.
+-->
 <fluent:RibbonWindow x:Class="OpenMCAD.Shell.MainWindow"
                      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -10,8 +21,12 @@
                      mc:Ignorable="d"
                      d:DataContext="{d:DesignInstance Type=vm:MainWindowViewModel}"
                      Title="{Binding Title}"
-                     Height="800"
-                     Width="1280"
+                     Height="720"
+                     Width="1160"
+                     MinHeight="480"
+                     MinWidth="720"
+                     MaxHeight="{x:Static SystemParameters.MaximizedPrimaryScreenHeight}"
+                     MaxWidth="{x:Static SystemParameters.MaximizedPrimaryScreenWidth}"
                      WindowStartupLocation="CenterScreen">
 
     <fluent:RibbonWindow.Resources>
