@@ -57,6 +57,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly PickReadback _picks;
     private readonly HighlightBuffer _highlights;
     private readonly EnvironmentPass _environment;
+    private readonly AxisOverlayPass _axes;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -111,6 +112,9 @@ public sealed class ViewportRenderer : IDisposable
 
         _environment = new EnvironmentPass(
             device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+
+        _axes = new AxisOverlayPass(
+            device.Device, AxisStyle.Default, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -161,6 +165,15 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets or sets whether to draw the ground grid.</summary>
     public bool ShowGrid { get; set; } = true;
+
+    /// <summary>Gets or sets how the origin triad and corner gizmo look.</summary>
+    public AxisStyle AxisStyle { get; set; } = AxisStyle.Default;
+
+    /// <summary>Gets or sets whether to draw the triad at the world origin.</summary>
+    public bool ShowOriginTriad { get; set; } = true;
+
+    /// <summary>Gets or sets whether to draw the orientation gizmo in the corner.</summary>
+    public bool ShowGizmo { get; set; } = true;
 
     /// <summary>Gets or sets which entities are highlighted.</summary>
     /// <remarks>
@@ -247,6 +260,9 @@ public sealed class ViewportRenderer : IDisposable
         // scene draws over it without the two ever being sorted against one another.
         DrawEnvironment();
         DrawScene();
+
+        // After the scene, so the triad can be occluded by it and the gizmo can sit over it.
+        DrawAxes();
         DrawIdsIfPicking();
 
         _commands.ResourceBarrierTransition(
@@ -370,6 +386,7 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _axes.Dispose();
         _environment.Dispose();
         _highlights.Dispose();
         _picks.Dispose();
@@ -464,6 +481,59 @@ public sealed class ViewportRenderer : IDisposable
         MemoryMarshal.Write(destination, in constants);
 
         _environment.Draw(_commands, _uploads.Resource.GPUVirtualAddress + (ulong)offset);
+    }
+
+    /// <summary>Records the origin triad and the corner orientation gizmo.</summary>
+    /// <remarks>
+    /// The triad is scaled to the scene, so it reads as a landmark of about the right size rather
+    /// than a speck beside a large model or a set of lines running off past a small one. With no
+    /// scene there is nothing to scale to and only the gizmo is drawn — a triad at an arbitrary
+    /// size in an empty viewport says nothing about anything.
+    /// </remarks>
+    private void DrawAxes()
+    {
+        if (_target.Width <= 0 || _target.Height <= 0)
+        {
+            return;
+        }
+
+        AxisStyle style = AxisStyle;
+        Bounds3d bounds = _scene?.Bounds ?? _snapshot.Bounds;
+
+        if (ShowOriginTriad && !bounds.IsEmpty)
+        {
+            double length = bounds.DiagonalLength * 0.35;
+
+            WriteAxisConstants(
+                AxisOverlayPass.TriadTransform(
+                    Camera, bounds, _scene?.Origin ?? _snapshot.Origin, length),
+                style,
+                onTop: false);
+        }
+
+        if (ShowGizmo)
+        {
+            WriteAxisConstants(
+                AxisOverlayPass.GizmoTransform(Camera, style, _target.Width, _target.Height),
+                style,
+                onTop: true);
+        }
+    }
+
+    /// <summary>Uploads one set of axis constants and records the draw.</summary>
+    private void WriteAxisConstants(Matrix4x4 transform, AxisStyle style, bool onTop)
+    {
+        AxisConstants constants = new()
+        {
+            Transform = transform,
+            ViewportSize = new Vector2(_target.Width, _target.Height),
+            HalfWidthPixels = System.Math.Max(style.WidthPixels, 0.1f) * 0.5f,
+        };
+
+        Span<byte> destination = _uploads.Allocate(AxisConstants.SizeInBytes, out int offset);
+        MemoryMarshal.Write(destination, in constants);
+
+        _axes.Draw(_commands, _uploads.Resource.GPUVirtualAddress + (ulong)offset, onTop);
     }
 
     /// <summary>Records the face pass for the current scene.</summary>

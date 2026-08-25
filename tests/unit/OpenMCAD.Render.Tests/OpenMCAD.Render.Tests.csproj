@@ -10,4 +10,24 @@
     <ProjectReference Include="../../../src/OpenMCAD.Render/OpenMCAD.Render.csproj" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <!--
+      Test collections run one at a time in this assembly.
+
+      Four classes here each create a D3D12 device, and xunit runs collections in parallel by
+      default, so four WARP devices with the debug layer attached were being created and destroyed
+      concurrently. That crashed the test host with an access violation in roughly a third of runs
+      and never when a single class was run on its own. Creating several devices at once is legal
+      and this is a limit of WARP and the debug layer rather than a defect in the renderer, but a
+      test suite that fails one run in three is worthless either way.
+
+      There is nothing to gain from the parallelism: the whole assembly takes under two seconds,
+      and the GPU serialises the work regardless of how many threads ask it to.
+
+      Same arrangement, for the same kind of reason, as OpenMCAD.Kernel.Contract.Tests.
+    -->
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
