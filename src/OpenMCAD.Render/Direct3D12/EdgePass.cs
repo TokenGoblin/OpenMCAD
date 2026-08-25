@@ -176,12 +176,16 @@ public sealed class EdgePass : IDisposable
     /// <param name="frustum">
     /// The frustum to cull against, in world space. Pass <see langword="null"/> to draw everything.
     /// </param>
+    /// <param name="highlightStates">
+    /// Where the per-entity highlight states live, or zero when nothing is highlighted.
+    /// </param>
     public void Draw(
         ID3D12GraphicsCommandList commands,
         SceneGeometry scene,
         ulong constantBufferAddress,
         EdgeStyle style,
-        Frustum? frustum = null)
+        Frustum? frustum = null,
+        ulong highlightStates = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(commands);
@@ -206,10 +210,11 @@ public sealed class EdgePass : IDisposable
         commands.IASetPrimitiveTopology(PrimitiveTopology.TriangleStrip);
         commands.SetGraphicsRootConstantBufferView(0, constantBufferAddress);
         commands.SetGraphicsRoot32BitConstants(1, constants, 0);
+        commands.SetGraphicsRootShaderResourceView(3, highlightStates);
 
         foreach (BodyGeometry body in scene.Bodies)
         {
-            if (body.SegmentCount == 0)
+            if (body.SegmentCount == 0 || body.SegmentIdAddress == 0)
             {
                 continue;
             }
@@ -220,6 +225,7 @@ public sealed class EdgePass : IDisposable
                 continue;
             }
 
+            commands.SetGraphicsRootShaderResourceView(2, body.SegmentIdAddress);
             commands.IASetVertexBuffers(0, body.EdgeSegmentView);
             commands.DrawInstanced(VerticesPerSegment, (uint)body.SegmentCount, 0, 0);
 
@@ -272,6 +278,17 @@ public sealed class EdgePass : IDisposable
                 new RootParameter1(
                     new RootConstants(1, 0, (uint)EdgeConstants.RootConstantCount),
                     ShaderVisibility.All),
+
+                // t0: this body's per-segment display ids. t1: the highlight state of every
+                // entity in the scene.
+                new RootParameter1(
+                    RootParameterType.ShaderResourceView,
+                    new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic),
+                    ShaderVisibility.Pixel),
+                new RootParameter1(
+                    RootParameterType.ShaderResourceView,
+                    new RootDescriptor1(1, 0, RootDescriptorFlags.DataVolatile),
+                    ShaderVisibility.Pixel),
             ],
             []);
 

@@ -236,6 +236,120 @@ public sealed class IdPassTests
             0, "edges carry the same depth bias in the ID pass, so they must survive it");
     }
 
+    [Fact]
+    public void AHighlightedFaceIsTintedButKeepsItsShading()
+    {
+        using Fixture fixture = Fixture.Create(Size);
+
+        if (fixture.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        fixture.Render();
+
+        int x = Size / 2;
+        int y = (Size / 2) - (Size / 8);
+
+        DisplayId id = fixture.IdAt(x, y);
+        id.IsSomething.Should().BeTrue();
+
+        Pixel plain = fixture.Colour.At(x, y);
+
+        // Highlight exactly the face under that pixel and draw again.
+        fixture.Highlights = HighlightTable.Build(
+            [new(id, HighlightState.Selected)], 1);
+
+        fixture.Render();
+        Pixel highlighted = fixture.Colour.At(x, y);
+
+        highlighted.IsCloseTo(plain).Should().BeFalse(
+            $"the selected face should change colour, but stayed {plain}");
+
+        highlighted.B.Should().BeGreaterThan(
+            plain.B, "the selection colour is blue, so blue should rise");
+
+        // A tint, not a replacement. Painting a selected face flat destroys the shading that
+        // tells the user what shape they have selected -- a curved surface stops reading as
+        // curved, and two faces at different angles become one silhouette.
+        //
+        // A flat cube face is uniformly lit, so there is no gradient across one to preserve. What
+        // does prove it is two faces that differ in shading staying different once both are
+        // selected: under a replacement they would come out identical.
+        DisplayId second = DisplayId.None;
+
+        for (int probe = 0; probe < Size && !second.IsSomething; ++probe)
+        {
+            DisplayId here = fixture.IdAt(probe, Size / 2);
+
+            if (here.IsSomething
+                && here != id
+                && fixture.Snapshot.Resolve(here).Kind == SubEntityKind.Face)
+            {
+                second = here;
+            }
+        }
+
+        second.IsSomething.Should().BeTrue("an isometric cube shows more than one face");
+
+        fixture.Highlights = HighlightTable.Build(
+            [
+                new(id, HighlightState.Selected),
+                new(second, HighlightState.Selected),
+            ],
+            2);
+
+        fixture.Render();
+
+        Pixel first = fixture.Colour.At(x, y);
+        Pixel other = PixelOfFirst(fixture, second, Size / 2);
+
+        first.IsCloseTo(other).Should().BeFalse(
+            $"two differently lit faces must stay distinguishable when selected, "
+            + $"but both came out {first}");
+    }
+
+    /// <summary>The colour of the first pixel on a row belonging to a given entity.</summary>
+    private static Pixel PixelOfFirst(Fixture fixture, DisplayId id, int row)
+    {
+        for (int x = 0; x < Size; ++x)
+        {
+            if (fixture.IdAt(x, row) == id)
+            {
+                return fixture.Colour.At(x, row);
+            }
+        }
+
+        return default;
+    }
+
+    [Fact]
+    public void AnUnhighlightedSceneRendersIdenticallyToOneWithAnEmptyTable()
+    {
+        using Fixture fixture = Fixture.Create(Size);
+
+        if (fixture.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        // The shader takes a cheap path when no state buffer is bound. It must produce exactly the
+        // same image as one bound to a table in which nothing is highlighted -- otherwise merely
+        // selecting and deselecting would leave the viewport subtly different.
+        fixture.Render();
+        Pixel unbound = fixture.Colour.At(Size / 2, (Size / 2) - (Size / 8));
+
+        fixture.Highlights = HighlightTable.Build(
+            [new(new DisplayId(1), HighlightState.None)], 7);
+
+        fixture.Render();
+        Pixel bound = fixture.Colour.At(Size / 2, (Size / 2) - (Size / 8));
+
+        bound.IsCloseTo(unbound, 1).Should().BeTrue($"got {bound} against {unbound}");
+    }
+
     // --- Fixture ------------------------------------------------------------------------------
 
     private sealed class Fixture : IDisposable
@@ -254,6 +368,7 @@ public sealed class IdPassTests
             SceneGeometry scene,
             DisplaySnapshot snapshot)
         {
+            _highlightStates = new HighlightBuffer(device.Device);
             Device = device;
             Colour = colour;
             Ids = ids;
@@ -283,6 +398,11 @@ public sealed class IdPassTests
         public DisplaySnapshot Snapshot { get; } = DisplaySnapshot.Empty;
 
         public Camera Camera { get; } = new();
+
+        /// <summary>Which entities are highlighted on the next render.</summary>
+        public HighlightTable Highlights { get; set; } = HighlightTable.Empty;
+
+        private readonly HighlightBuffer? _highlightStates;
 
         public Color4 Clear { get; } = new(0.05f, 0.05f, 0.08f, 1.0f);
 
@@ -349,6 +469,11 @@ public sealed class IdPassTests
         /// <summary>Renders the shaded frame and the ID buffer through the same camera.</summary>
         public void Render()
         {
+            // Before the constants are built, because the count of live states goes into them.
+            // The renderer does this in the same order for the same reason.
+            _highlightStates!.Update(Highlights);
+            ulong states = _highlightStates.Address;
+
             Mat4d projection = Camera.ProjectionMatrix(Scene.Bounds);
             Vec3d origin = Scene.Origin;
 
@@ -360,6 +485,10 @@ public sealed class IdPassTests
                 CameraPosition = ToVector3(Camera.Position - origin),
                 LightDirection = ToVector3(FacePass.KeyLightDirection(Camera)),
                 ViewportSize = new Vector2(Colour.Width, Colour.Height),
+                HighlightCount = (uint)_highlightStates.Length,
+                PreSelectedColour = HighlightStyle.Default.PreSelected,
+                SelectedColour = HighlightStyle.Default.Selected,
+                ErrorColour = HighlightStyle.Default.Error,
             };
 
             Colour.SetConstants(constants);
@@ -369,8 +498,11 @@ public sealed class IdPassTests
 
             Colour.Render(Clear, commands =>
             {
-                Faces.Draw(commands, Scene, Colour.ConstantBufferAddress, frustum);
-                Edges.Draw(commands, Scene, Colour.ConstantBufferAddress, EdgeStyle.Default, frustum);
+                Faces.Draw(
+                    commands, Scene, Colour.ConstantBufferAddress, frustum, colour: null, states);
+
+                Edges.Draw(
+                    commands, Scene, Colour.ConstantBufferAddress, EdgeStyle.Default, frustum, states);
             });
 
             _ids = Ids.Render(commands =>
@@ -381,6 +513,7 @@ public sealed class IdPassTests
 
         public void Dispose()
         {
+            _highlightStates?.Dispose();
             Scene?.Dispose();
             IdPass?.Dispose();
             Edges?.Dispose();

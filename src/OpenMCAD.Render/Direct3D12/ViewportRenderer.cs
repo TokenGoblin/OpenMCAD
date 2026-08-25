@@ -55,10 +55,12 @@ public sealed class ViewportRenderer : IDisposable
     private readonly IdPass _ids;
     private readonly IdTarget _idTarget;
     private readonly PickReadback _picks;
+    private readonly HighlightBuffer _highlights;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
     private PickRequest? _pending;
+    private HighlightTable _highlightTable = HighlightTable.Empty;
     private ulong _frameConstantAddress;
     private Frustum? _frameFrustum;
     private SceneGeometry? _scene;
@@ -104,6 +106,7 @@ public sealed class ViewportRenderer : IDisposable
         _ids = new IdPass(device.Device);
         _idTarget = new IdTarget(device.Device);
         _picks = new PickReadback(device.Device);
+        _highlights = new HighlightBuffer(device.Device);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -141,6 +144,20 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets or sets how edges are drawn.</summary>
     public EdgeStyle EdgeStyle { get; set; } = EdgeStyle.Default;
+
+    /// <summary>Gets or sets the colours highlighted entities are drawn in.</summary>
+    public HighlightStyle HighlightStyle { get; set; } = HighlightStyle.Default;
+
+    /// <summary>Gets or sets which entities are highlighted.</summary>
+    /// <remarks>
+    /// Uploaded at the start of the next frame, and only when the table's version has changed —
+    /// so setting this on every mouse move costs nothing when the cursor stays on one face.
+    /// </remarks>
+    public HighlightTable Highlights
+    {
+        get => _highlightTable;
+        set => _highlightTable = value ?? throw new ArgumentNullException(nameof(value));
+    }
 
     /// <summary>Gets or sets whether to draw edges at all.</summary>
     public bool ShowEdges { get; set; } = true;
@@ -189,6 +206,7 @@ public sealed class ViewportRenderer : IDisposable
         _uploads.BeginFrame((long)_lastSignalled + 1);
 
         SyncScene();
+        _highlights.Update(_highlightTable);
         _depth.Resize(_target.Width, _target.Height);
 
         _allocators[index].Reset();
@@ -335,6 +353,7 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _highlights.Dispose();
         _picks.Dispose();
         _idTarget.Dispose();
         _ids.Dispose();
@@ -430,6 +449,10 @@ public sealed class ViewportRenderer : IDisposable
             CameraPosition = ToVector3(Camera.Position - origin),
             LightDirection = ToVector3(FacePass.KeyLightDirection(Camera)),
             ViewportSize = new Vector2(_target.Width, _target.Height),
+            HighlightCount = (uint)_highlights.Length,
+            PreSelectedColour = HighlightStyle.PreSelected,
+            SelectedColour = HighlightStyle.Selected,
+            ErrorColour = HighlightStyle.Error,
         };
 
         Span<byte> destination = _uploads.Allocate(FrameConstants.SizeInBytes, out int offset);
@@ -443,14 +466,14 @@ public sealed class ViewportRenderer : IDisposable
         Frustum frustum = Frustum.FromViewProjection(projection * Camera.ViewMatrix());
         _frameFrustum = frustum;
 
-        _faces.Draw(_commands, _scene, address, frustum);
+        _faces.Draw(_commands, _scene, address, frustum, colour: null, _highlights.Address);
 
         // Edges last, over the faces they bound. They carry their own depth bias rather than
         // relying on draw order: order alone would put an edge in front of the face behind it as
         // well, so the back of a solid would show its own far edges through the front.
         if (ShowEdges)
         {
-            _edges.Draw(_commands, _scene, address, EdgeStyle, frustum);
+            _edges.Draw(_commands, _scene, address, EdgeStyle, frustum, _highlights.Address);
         }
         else
         {

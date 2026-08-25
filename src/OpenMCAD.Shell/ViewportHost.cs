@@ -5,6 +5,8 @@ using System.Windows.Interop;
 using System.Windows.Media;
 
 using OpenMCAD.Interaction.Navigation;
+using OpenMCAD.Interaction.Selection;
+using OpenMCAD.Kernel;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -58,6 +60,7 @@ public sealed class ViewportHost : HwndHost
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
     private EdgeStyle _edgeStyle = EdgeStyle.Default;
     private NavigationController? _navigation;
+    private long _publishedSelection = -1;
 
     /// <summary>
     /// Where a XAML-constructed viewport gets its logger from.
@@ -141,6 +144,9 @@ public sealed class ViewportHost : HwndHost
 
     /// <summary>Gets the navigation controller, once the window exists.</summary>
     public NavigationController? Navigation => _navigation;
+
+    /// <summary>Gets what the user has selected.</summary>
+    public SelectionSet Selection { get; } = new();
 
     /// <summary>Gets or sets which mouse gestures navigate the view.</summary>
     public MouseProfile MouseProfile
@@ -309,6 +315,9 @@ public sealed class ViewportHost : HwndHost
             return;
         }
 
+        // Picks answered since the last frame become hover highlighting on this one.
+        UpdateSelection();
+
         // Vsync off. WPF has already paced this call to the composition rate, so waiting for the
         // vertical blank again would halve the frame rate rather than smooth it.
         if (!_renderer.RenderFrame(verticalSync: false))
@@ -388,6 +397,14 @@ public sealed class ViewportHost : HwndHost
                     _navigation.PointerMove(LowWord(lParam), HighWord(lParam), width, height);
                     handled = true;
                 }
+                else
+                {
+                    // Hover. Asked on every move rather than throttled: a pick costs one extra
+                    // pass on a frame that was going to be drawn anyway, and the readback drops
+                    // requests when the pipeline is full rather than queueing them, so asking too
+                    // often is self-limiting.
+                    _renderer?.RequestPick(LowWord(lParam), HighWord(lParam));
+                }
 
                 break;
 
@@ -450,10 +467,18 @@ public sealed class ViewportHost : HwndHost
 
     private void OnButtonDown(PointerButton button, nint lParam, ref bool handled)
     {
+        NavigationModifiers modifiers = CurrentModifiers();
+
         if (_navigation is null
-            || !_navigation.PointerDown(button, CurrentModifiers(), LowWord(lParam), HighWord(lParam)))
+            || !_navigation.PointerDown(button, modifiers, LowWord(lParam), HighWord(lParam)))
         {
-            // Unbound: left for selection or a sketch tool, so it must not be marked handled.
+            // Unbound by navigation, so it belongs to selection -- or later, to a sketch tool.
+            if (button == PointerButton.Left)
+            {
+                SelectAtCursor(modifiers);
+                handled = true;
+            }
+
             return;
         }
 
@@ -491,6 +516,52 @@ public sealed class ViewportHost : HwndHost
 
             _navigation.Wheel(notches, point.X, point.Y, width, height);
             handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Commits whatever the last hover resolved to.
+    /// </summary>
+    /// <remarks>
+    /// It selects what is <i>already known</i> to be under the cursor rather than issuing a fresh
+    /// pick and waiting. The readback is deliberately a few frames behind, so waiting would mean a
+    /// click that does nothing and then selects a moment later; and because hover has been running
+    /// on every mouse move, the answer is already there. It is also the more defensible rule: this
+    /// way a click can only ever select the thing the user could see highlighted when they pressed
+    /// the button.
+    /// </remarks>
+    private void SelectAtCursor(NavigationModifiers modifiers)
+    {
+        SelectionAction action = modifiers switch
+        {
+            NavigationModifiers.Control => SelectionAction.Toggle,
+            NavigationModifiers.Shift => SelectionAction.Add,
+            _ => SelectionAction.Replace,
+        };
+
+        Selection.Apply(Selection.PreSelected, action);
+    }
+
+    /// <summary>Feeds completed picks into the selection, and the selection to the renderer.</summary>
+    private void UpdateSelection()
+    {
+        if (_renderer is null)
+        {
+            return;
+        }
+
+        // Drained rather than taken one at a time. Several picks can retire in one frame during a
+        // fast drag, and stopping at the first would let hover lag further behind with every
+        // frame instead of catching up.
+        while (_renderer.TryTakePick(out PickHit hit))
+        {
+            Selection.SetPreSelected(hit.Entity);
+        }
+
+        if (Selection.Version != _publishedSelection)
+        {
+            _publishedSelection = Selection.Version;
+            _renderer.Highlights = Selection.ToHighlights(_renderer.Snapshot);
         }
     }
 

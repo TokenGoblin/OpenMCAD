@@ -17,7 +17,38 @@ cbuffer FrameConstants : register(b0)
     float  _pad0;
     float3 LightDirection;   // unit, pointing from the surface towards the light
     float  _pad1;
+    float2 ViewportSize;     // physical pixels
+
+    // How many entries EntityStates holds. It has to be passed in: EntityStates is bound as a
+    // root descriptor, which is a bare GPU address with no size attached, so GetDimensions on it
+    // returns nothing meaningful and reading past the end is an access violation rather than a
+    // clamp. This is the bound.
+    uint   HighlightCount;
+    uint   _pad2;
+
+    // Highlight colours, indexed by HighlightState: 1 pre-selected, 2 selected, 3 error. The
+    // alpha is how strongly to tint rather than an opacity. Held in the frame block because they
+    // are a property of the session, and one buffer both passes read cannot disagree with itself
+    // about what "selected" looks like.
+    float4 PreSelectedColour;
+    float4 SelectedColour;
+    float4 ErrorColour;
 };
+
+// THIS BLOCK MUST MATCH BYTE FOR BYTE IN EVERY SHADER THAT DECLARES IT, and must match
+// FrameConstants in FacePass.cs. HLSL lets a shader declare a prefix of a constant buffer, which
+// is why a mismatch does not fail to compile -- it silently reads the wrong offsets, and the
+// symptom is geometry or colour going somewhere unexpected rather than an error. These two files
+// had already drifted once.
+
+// One highlight state per display id, indexed by the same id the ID pass writes.
+StructuredBuffer<uint> EntityStates : register(t1);
+
+// Reads a state, tolerating a buffer shorter than the id or nothing highlighted at all.
+uint StateOf(uint id)
+{
+    return id < HighlightCount ? EntityStates[id] : 0;
+}
 
 cbuffer BodyConstants : register(b1)
 {
@@ -50,7 +81,33 @@ VSOutput VSMain(VSInput input)
     return output;
 }
 
-float4 PSMain(VSOutput input) : SV_Target
+// Blends a surface towards its highlight colour.
+//
+// A tint rather than a replacement. Painting a selected face flat blue destroys the shading that
+// tells the user what shape they have selected: the face becomes a silhouette, and a curved one
+// stops reading as curved at all. Keeping the lighting and pushing the hue is what every CAD
+// package does, and why selection there still looks like geometry.
+float3 ApplyHighlight(float3 lit, uint state)
+{
+    if (state == 1)
+    {
+        return lerp(lit, PreSelectedColour.rgb, PreSelectedColour.a);
+    }
+
+    if (state == 2)
+    {
+        return lerp(lit, SelectedColour.rgb, SelectedColour.a);
+    }
+
+    if (state == 3)
+    {
+        return lerp(lit, ErrorColour.rgb, ErrorColour.a);
+    }
+
+    return lit;
+}
+
+float4 PSMain(VSOutput input, uint primitive : SV_PrimitiveID) : SV_Target
 {
     float3 n = input.Normal;
 
@@ -93,7 +150,7 @@ float4 PSMain(VSOutput input) : SV_Target
 
     float3 lit = (BaseColour.rgb * (ambient + (diffuse * 0.85))) + specular;
 
-    return float4(lit, BaseColour.a);
+    return float4(ApplyHighlight(lit, StateOf(EntityIds[primitive])), BaseColour.a);
 }
 
 // The ID pass (P2-T07). Deliberately paired with the same VSMain above rather than given a vertex

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 using FluentAssertions;
 
@@ -78,11 +79,38 @@ public sealed class FacePassTests
     [Fact]
     public void TheFrameConstantsMatchTheShaderPacking()
     {
-        // Two float4x4-worth of rows plus two padded float3s and a float2: 112 bytes, and both
-        // Surface.hlsl and Edges.hlsl declare exactly that. If this drifts, every field after the
-        // change reads from the wrong offset and the geometry silently draws somewhere else --
-        // there is no error, which is precisely why the number is asserted.
-        FrameConstants.SizeInBytes.Should().Be(112);
+        // HLSL lets a shader declare a *prefix* of a constant buffer, so a mismatch does not fail
+        // to compile: it silently reads the wrong offsets, and the symptom is colour or geometry
+        // appearing somewhere unexpected. Surface.hlsl and Edges.hlsl had already drifted apart
+        // once before they were made to share one declaration.
+        //
+        // The offsets are pinned rather than just the total, because two fields swapping places
+        // leaves the size unchanged.
+        FrameConstants.SizeInBytes.Should().Be(160);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.ViewProjection)).ToInt32()
+            .Should().Be(0);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.CameraPosition)).ToInt32()
+            .Should().Be(64);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.LightDirection)).ToInt32()
+            .Should().Be(80);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.ViewportSize)).ToInt32()
+            .Should().Be(96);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.HighlightCount)).ToInt32()
+            .Should().Be(104);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.PreSelectedColour)).ToInt32()
+            .Should().Be(112);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.SelectedColour)).ToInt32()
+            .Should().Be(128);
+
+        Marshal.OffsetOf<FrameConstants>(nameof(FrameConstants.ErrorColour)).ToInt32()
+            .Should().Be(144);
     }
 
     // --- Rendering ----------------------------------------------------------------------------

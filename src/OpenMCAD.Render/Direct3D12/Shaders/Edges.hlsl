@@ -12,14 +12,47 @@
 
 cbuffer FrameConstants : register(b0)
 {
+    // Declared row_major so that the sixteen floats can be memcpy'd straight out of Mat4d, which
+    // is row-major with translation in the fourth column. With that declaration mul(M, v) is the
+    // ordinary M*v of a column vector, which is what the camera matrices are built for.
     row_major float4x4 ViewProjection;
-    float3 CameraPosition;
+
+    float3 CameraPosition;   // relative to the snapshot origin
     float  _pad0;
-    float3 LightDirection;
+    float3 LightDirection;   // unit, pointing from the surface towards the light
     float  _pad1;
     float2 ViewportSize;     // physical pixels
-    float2 _pad2;
+
+    // How many entries EntityStates holds. It has to be passed in: EntityStates is bound as a
+    // root descriptor, which is a bare GPU address with no size attached, so GetDimensions on it
+    // returns nothing meaningful and reading past the end is an access violation rather than a
+    // clamp. This is the bound.
+    uint   HighlightCount;
+    uint   _pad2;
+
+    // Highlight colours, indexed by HighlightState: 1 pre-selected, 2 selected, 3 error. The
+    // alpha is how strongly to tint rather than an opacity. Held in the frame block because they
+    // are a property of the session, and one buffer both passes read cannot disagree with itself
+    // about what "selected" looks like.
+    float4 PreSelectedColour;
+    float4 SelectedColour;
+    float4 ErrorColour;
 };
+
+// THIS BLOCK MUST MATCH BYTE FOR BYTE IN EVERY SHADER THAT DECLARES IT, and must match
+// FrameConstants in FacePass.cs. HLSL lets a shader declare a prefix of a constant buffer, which
+// is why a mismatch does not fail to compile -- it silently reads the wrong offsets, and the
+// symptom is geometry or colour going somewhere unexpected rather than an error. These two files
+// had already drifted once.
+
+// One highlight state per display id, indexed by the same id the ID pass writes.
+StructuredBuffer<uint> EntityStates : register(t1);
+
+// Reads a state, tolerating a buffer shorter than the id or nothing highlighted at all.
+uint StateOf(uint id)
+{
+    return id < HighlightCount ? EntityStates[id] : 0;
+}
 
 cbuffer EdgeConstants : register(b1)
 {
@@ -135,7 +168,26 @@ float4 PSMain(VSOutput input) : SV_Target
     // the background either side of it -- a halo around every edge.
     float alpha = EdgeColour.a * coverage;
 
-    return float4(EdgeColour.rgb * alpha, alpha);
+    // A highlighted edge takes the highlight colour outright rather than being tinted towards it.
+    // An edge is a pixel or two wide with no shading to preserve, so the thing a tint protects on
+    // a face does not exist here -- a subtle tint on a hairline is simply invisible.
+    uint state = StateOf(EntityIds[input.Instance]);
+    float3 colour = EdgeColour.rgb;
+
+    if (state == 1)
+    {
+        colour = PreSelectedColour.rgb;
+    }
+    else if (state == 2)
+    {
+        colour = SelectedColour.rgb;
+    }
+    else if (state == 3)
+    {
+        colour = ErrorColour.rgb;
+    }
+
+    return float4(colour * alpha, alpha);
 }
 
 // The ID pass (P2-T07), sharing VSMain with the visible pass so that what is picked is exactly

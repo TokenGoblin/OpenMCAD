@@ -19,7 +19,7 @@ namespace OpenMCAD.Render.Direct3D12;
 /// this way they are readable next to it: get one wrong and the geometry appears somewhere
 /// unexpected rather than failing.
 /// </remarks>
-[StructLayout(LayoutKind.Explicit, Size = 112)]
+[StructLayout(LayoutKind.Explicit, Size = 160)]
 public struct FrameConstants
 {
     /// <summary>Sixteen floats, row-major, matching the <c>row_major</c> declaration in HLSL.</summary>
@@ -42,6 +42,27 @@ public struct FrameConstants
     /// </remarks>
     [FieldOffset(96)]
     public Vector2 ViewportSize;
+
+    /// <summary>How many entries the highlight state buffer holds.</summary>
+    /// <remarks>
+    /// The shader cannot work this out for itself. The states are bound as a root descriptor,
+    /// which carries a GPU address and nothing else — no length, no stride — so an out-of-range
+    /// index reads unmapped memory rather than returning zero. This is the only bound there is.
+    /// </remarks>
+    [FieldOffset(104)]
+    public uint HighlightCount;
+
+    /// <summary>The colour an entity under the cursor is tinted towards. Alpha is tint strength.</summary>
+    [FieldOffset(112)]
+    public Color4 PreSelectedColour;
+
+    /// <summary>The colour a selected entity is tinted towards. Alpha is tint strength.</summary>
+    [FieldOffset(128)]
+    public Color4 SelectedColour;
+
+    /// <summary>The colour an entity in error is tinted towards. Alpha is tint strength.</summary>
+    [FieldOffset(144)]
+    public Color4 ErrorColour;
 
     /// <summary>Gets how many bytes to upload.</summary>
     public static int SizeInBytes => Marshal.SizeOf<FrameConstants>();
@@ -145,12 +166,16 @@ public sealed class FacePass : IDisposable
     /// Pass <see langword="null"/> to draw everything.
     /// </param>
     /// <param name="colour">The body colour.</param>
+    /// <param name="highlightStates">
+    /// Where the per-entity highlight states live, or zero when nothing is highlighted.
+    /// </param>
     public void Draw(
         ID3D12GraphicsCommandList commands,
         SceneGeometry scene,
         ulong constantBufferAddress,
         Frustum? frustum = null,
-        Color4? colour = null)
+        Color4? colour = null,
+        ulong highlightStates = 0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(commands);
@@ -173,6 +198,10 @@ public sealed class FacePass : IDisposable
         commands.SetGraphicsRootConstantBufferView(0, constantBufferAddress);
         commands.SetGraphicsRoot32BitConstants(1, bodyColour, 0);
 
+        // Bound once for the whole scene. A root descriptor of zero is legal and the shader
+        // handles it: GetDimensions reports nothing, so every entity reads as unhighlighted.
+        commands.SetGraphicsRootShaderResourceView(3, highlightStates);
+
         foreach (BodyGeometry body in scene.Bodies)
         {
             if (!body.HasFaces)
@@ -191,6 +220,7 @@ public sealed class FacePass : IDisposable
                 continue;
             }
 
+            commands.SetGraphicsRootShaderResourceView(2, body.TriangleIdAddress);
             commands.IASetVertexBuffers(0, body.PositionView);
             commands.IASetVertexBuffers(1, body.NormalView);
             commands.IASetIndexBuffer(body.IndexView);
@@ -270,6 +300,18 @@ public sealed class FacePass : IDisposable
                     ShaderVisibility.All),
                 new RootParameter1(
                     new RootConstants(1, 0, 4),
+                    ShaderVisibility.Pixel),
+
+                // t0: this body's per-triangle display ids. t1: the highlight state of every
+                // entity in the scene. Both are structured buffers, which a root descriptor can
+                // address directly -- so the shaded pass still needs no descriptor heap.
+                new RootParameter1(
+                    RootParameterType.ShaderResourceView,
+                    new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic),
+                    ShaderVisibility.Pixel),
+                new RootParameter1(
+                    RootParameterType.ShaderResourceView,
+                    new RootDescriptor1(1, 0, RootDescriptorFlags.DataVolatile),
                     ShaderVisibility.Pixel),
             ],
             []);
