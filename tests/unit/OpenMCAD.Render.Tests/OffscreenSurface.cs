@@ -213,6 +213,67 @@ public sealed class OffscreenSurface : IDisposable
         WaitForGpu();
     }
 
+    /// <summary>
+    /// Clears and records into a multisampled target, resolves into this surface, and reads back.
+    /// </summary>
+    /// <param name="msaa">The multisampled target to draw into.</param>
+    /// <param name="clear">The background colour.</param>
+    /// <param name="record">What to draw.</param>
+    /// <remarks>
+    /// The same shape as <see cref="Render"/>, but through the resolve the viewport actually uses.
+    /// Testing the passes against a single-sampled target and the resolve separately would leave
+    /// the combination — pipeline states whose sample count must match the target they are used
+    /// with — covered by nothing.
+    /// </remarks>
+    public void RenderInto(MsaaTarget msaa, Color4 clear, Action<ID3D12GraphicsCommandList> record)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(msaa);
+        ArgumentNullException.ThrowIfNull(record);
+
+        _allocator.Reset();
+        _commands.Reset(_allocator);
+
+        _commands.OMSetRenderTargets(msaa.RenderTargetView, msaa.DepthStencilView);
+        _commands.ClearRenderTargetView(msaa.RenderTargetView, clear);
+
+        _commands.ClearDepthStencilView(
+            msaa.DepthStencilView, ClearFlags.Depth, DepthBuffer.ClearDepth, 0);
+
+        _commands.RSSetViewport(0, 0, Width, Height);
+        _commands.RSSetScissorRect(Width, Height);
+
+        record(_commands);
+
+        msaa.ResolveTo(_commands, _colour, ResourceStates.RenderTarget);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.RenderTarget, ResourceStates.CopySource);
+
+        PlacedSubresourceFootPrint footprint = new()
+        {
+            Offset = 0,
+            Footprint = new SubresourceFootPrint(
+                ColourFormat, (uint)Width, (uint)Height, 1, (uint)_footprint.Footprint.RowPitch),
+        };
+
+        _commands.CopyTextureRegion(
+            new TextureCopyLocation(_readback, footprint),
+            0,
+            0,
+            0,
+            new TextureCopyLocation(_colour, 0),
+            null);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.CopySource, ResourceStates.RenderTarget);
+
+        _commands.Close();
+        Device.Queue.ExecuteCommandList(_commands);
+
+        WaitForGpu();
+    }
+
     /// <summary>Reads one pixel out of the last rendered frame.</summary>
     /// <param name="x">Column, from the left.</param>
     /// <param name="y">Row, from the top.</param>

@@ -178,12 +178,17 @@ public sealed class EnvironmentPass : IDisposable
     /// <param name="renderTargetFormat">The format of the target being drawn into.</param>
     /// <param name="depthFormat">The depth format, matching the depth buffer.</param>
     /// <param name="optimiseShaders">Whether to compile optimised. Tests turn this off.</param>
+    /// <param name="sampleCount">
+    /// How many samples per pixel the target has. Must match the target this pass draws into: a
+    /// pipeline state carries its sample count and the device refuses a mismatch outright.
+    /// </param>
     /// <exception cref="ShaderCompilationException">The shader will not compile.</exception>
     public EnvironmentPass(
         ID3D12Device device,
         Format renderTargetFormat = SwapChainTarget.BackBufferFormat,
         Format depthFormat = DepthBuffer.DepthFormat,
-        bool optimiseShaders = true)
+        bool optimiseShaders = true,
+        int sampleCount = 1)
     {
         ArgumentNullException.ThrowIfNull(device);
 
@@ -211,7 +216,7 @@ public sealed class EnvironmentPass : IDisposable
             DepthStencilState = noDepth,
             DepthStencilFormat = depthFormat,
             RenderTargetFormats = [renderTargetFormat],
-            SampleDescription = SampleDescription.Default,
+            SampleDescription = new SampleDescription((uint)sampleCount, 0),
             SampleMask = uint.MaxValue,
         });
 

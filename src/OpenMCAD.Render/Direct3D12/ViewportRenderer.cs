@@ -49,7 +49,6 @@ public sealed class ViewportRenderer : IDisposable
     private readonly ID3D12GraphicsCommandList _commands;
     private readonly ID3D12Fence _fence;
     private readonly AutoResetEvent _fenceReached = new(false);
-    private readonly DepthBuffer _depth;
     private readonly FacePass _faces;
     private readonly EdgePass _edges;
     private readonly IdPass _ids;
@@ -58,6 +57,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly HighlightBuffer _highlights;
     private readonly EnvironmentPass _environment;
     private readonly AxisOverlayPass _axes;
+    private readonly MsaaTarget _msaa;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -102,19 +102,29 @@ public sealed class ViewportRenderer : IDisposable
         _fence = device.Device.CreateFence(0);
         _fence.Name = "viewport frame fence";
 
-        _depth = new DepthBuffer(device.Device);
-        _faces = new FacePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
-        _edges = new EdgePass(device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+
+        // Before the passes: each bakes the sample count into its pipeline state, and the device
+        // refuses a state whose sample count does not match the target it is used with.
+        _msaa = new MsaaTarget(device.Device, Background);
+
+        _faces = new FacePass(
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
+        _edges = new EdgePass(
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
         _ids = new IdPass(device.Device);
         _idTarget = new IdTarget(device.Device);
         _picks = new PickReadback(device.Device);
         _highlights = new HighlightBuffer(device.Device);
 
         _environment = new EnvironmentPass(
-            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
 
         _axes = new AxisOverlayPass(
-            device.Device, AxisStyle.Default, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat);
+            device.Device, AxisStyle.Default, SwapChainTarget.BackBufferFormat,
+            DepthBuffer.DepthFormat, optimiseShaders: true, _msaa.SampleCount);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -137,6 +147,10 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets how many frames have been presented.</summary>
     public long FrameCount { get; private set; }
+
+    /// <summary>Gets how many samples per pixel the scene is drawn with.</summary>
+    /// <remarks>One means the device offered no multisampling and edges are unsmoothed.</remarks>
+    public int SampleCount => _msaa.SampleCount;
 
     /// <summary>Gets how many bodies the last frame drew.</summary>
     public int BodiesDrawn => _faces.BodiesDrawn;
@@ -234,20 +248,18 @@ public sealed class ViewportRenderer : IDisposable
 
         SyncScene();
         _highlights.Update(_highlightTable);
-        _depth.Resize(_target.Width, _target.Height);
+        _msaa.Resize(_target.Width, _target.Height);
 
         _allocators[index].Reset();
         _commands.Reset(_allocators[index]);
 
         ID3D12Resource backBuffer = _target.BackBuffer(index);
 
-        // Present -> RenderTarget, and back again before presenting. Omitting either barrier is
-        // undefined behaviour that happens to work on some drivers, which is the worst kind.
-        _commands.ResourceBarrierTransition(
-            backBuffer, ResourceStates.Present, ResourceStates.RenderTarget);
-
-        CpuDescriptorHandle view = _target.RenderTargetView(index);
-        CpuDescriptorHandle depthView = _depth.View;
+        // Everything is drawn into the multisampled target and resolved into the back buffer at
+        // the end, so the back buffer is never rendered to directly -- the resolve does its own
+        // barriers around it and returns it to Present.
+        CpuDescriptorHandle view = _msaa.RenderTargetView;
+        CpuDescriptorHandle depthView = _msaa.DepthStencilView;
 
         _commands.OMSetRenderTargets(view, depthView);
         _commands.ClearRenderTargetView(view, Background);
@@ -265,8 +277,7 @@ public sealed class ViewportRenderer : IDisposable
         DrawAxes();
         DrawIdsIfPicking();
 
-        _commands.ResourceBarrierTransition(
-            backBuffer, ResourceStates.RenderTarget, ResourceStates.Present);
+        _msaa.ResolveTo(_commands, backBuffer, ResourceStates.Present);
 
         _commands.Close();
         _device.Queue.ExecuteCommandList(_commands);
@@ -386,6 +397,7 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _msaa.Dispose();
         _axes.Dispose();
         _environment.Dispose();
         _highlights.Dispose();
@@ -395,7 +407,6 @@ public sealed class ViewportRenderer : IDisposable
         _uploads.Dispose();
         _edges.Dispose();
         _faces.Dispose();
-        _depth.Dispose();
         _fence.Dispose();
         _fenceReached.Dispose();
         _commands.Dispose();
