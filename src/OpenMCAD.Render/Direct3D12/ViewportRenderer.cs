@@ -60,6 +60,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly MsaaTarget _msaa;
     private readonly TransparencyTarget _transparency;
     private readonly TransparencyPass _transparent;
+    private readonly AmbientOcclusionPass _occlusion;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -144,6 +145,10 @@ public sealed class ViewportRenderer : IDisposable
 
         _transparent = new TransparencyPass(
             device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
+
+        _occlusion = new AmbientOcclusionPass(
+            device.Device, SwapChainTarget.BackBufferFormat,
             optimiseShaders: true, _msaa.SampleCount);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
@@ -233,6 +238,19 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets whether the scene is currently drawn as transparent.</summary>
     public bool IsTransparent => Opacity < 0.999;
+
+    /// <summary>Gets or sets how ambient occlusion looks.</summary>
+    /// <remarks>The radius and cutoff are re-derived from the scene each frame.</remarks>
+    public OcclusionStyle OcclusionStyle { get; set; } = OcclusionStyle.Default;
+
+    /// <summary>Gets or sets whether to darken enclosed geometry.</summary>
+    /// <remarks>
+    /// Off while the scene is transparent. Occlusion is computed from the depth buffer, and
+    /// transparent geometry deliberately does not write depth — so there would be nothing of the
+    /// model in the buffer to occlude, and what did darken would be whatever opaque geometry
+    /// happened to be behind it.
+    /// </remarks>
+    public bool ShowAmbientOcclusion { get; set; } = true;
 
     /// <summary>Gets or sets how the origin triad and corner gizmo look.</summary>
     public AxisStyle AxisStyle { get; set; } = AxisStyle.Default;
@@ -456,6 +474,7 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _occlusion.Dispose();
         _transparent.Dispose();
         _transparency.Dispose();
         _msaa.Dispose();
@@ -665,6 +684,10 @@ public sealed class ViewportRenderer : IDisposable
             _faces.Draw(_commands, _scene, address, frustum, colour: null, _highlights.Address);
         }
 
+        // Occlusion before the edges: it darkens surfaces, and running it afterwards would
+        // darken the edge lines too, which are already the darkest thing on screen.
+        DrawOcclusion();
+
         // Edges last, over the faces they bound. They carry their own depth bias rather than
         // relying on draw order: order alone would put an edge in front of the face behind it as
         // well, so the back of a solid would show its own far edges through the front.
@@ -681,6 +704,51 @@ public sealed class ViewportRenderer : IDisposable
         {
             CompositeTransparent();
         }
+    }
+
+    /// <summary>
+    /// Darkens enclosed geometry, between the opaque pass and the edges.
+    /// </summary>
+    /// <remarks>
+    /// Before the edges deliberately. Occlusion darkens surfaces, and running it afterwards would
+    /// darken the edge lines as well — which are already the darkest thing on screen and would
+    /// simply muddy.
+    /// </remarks>
+    private void DrawOcclusion()
+    {
+        if (!ShowAmbientOcclusion || IsTransparent || _scene is null || _scene.Bodies.Count == 0)
+        {
+            return;
+        }
+
+        Bounds3d bounds = _scene.Bounds;
+
+        _occlusion.Resize(_target.Width, _target.Height, _msaa.Depth, _msaa.SampleCount);
+
+        OcclusionConstants constants = AmbientOcclusionPass.ConstantsFor(
+            Camera, bounds, _target.Width, _target.Height, OcclusionStyle.ForScene(bounds));
+
+        Span<byte> destination = _uploads.Allocate(OcclusionConstants.SizeInBytes, out int offset);
+        MemoryMarshal.Write(destination, in constants);
+
+        ulong address = _uploads.Resource.GPUVirtualAddress + (ulong)offset;
+
+        // The depth buffer has to be readable while this runs, and writable again afterwards for
+        // the edges and the triad that still depth-test against it.
+        _commands.ResourceBarrierTransition(
+            _msaa.Depth, ResourceStates.DepthWrite, ResourceStates.PixelShaderResource);
+
+        _occlusion.Compute(_commands, address);
+
+        _commands.ResourceBarrierTransition(
+            _msaa.Depth, ResourceStates.PixelShaderResource, ResourceStates.DepthWrite);
+
+        // Back to the colour target, and multiply the result over it.
+        _commands.OMSetRenderTargets(_msaa.RenderTargetView, _msaa.DepthStencilView);
+        _commands.RSSetViewport(0, 0, _target.Width, _target.Height);
+        _commands.RSSetScissorRect(_target.Width, _target.Height);
+
+        _occlusion.Apply(_commands, address);
     }
 
     /// <summary>Draws the scene into the transparency buffers instead of the colour target.</summary>

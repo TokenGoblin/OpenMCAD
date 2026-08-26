@@ -74,6 +74,7 @@ public sealed class FrameTimer : IDisposable
     private readonly EnvironmentPass _environment;
     private readonly FacePass _faces;
     private readonly EdgePass _edges;
+    private readonly AmbientOcclusionPass _occlusion;
     private readonly ID3D12CommandAllocator _allocator;
     private readonly ID3D12GraphicsCommandList _commands;
     private readonly ID3D12Fence _fence;
@@ -113,6 +114,16 @@ public sealed class FrameTimer : IDisposable
             device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
             optimiseShaders: true, _msaa.SampleCount);
 
+        // Included because the frame this harness reports on is supposed to be the frame the
+        // viewport draws. Occlusion costs the same whatever the geometry -- it is two full-screen
+        // passes over the depth buffer -- so leaving it out would understate every figure here by
+        // a constant, and understate the light scenes proportionally most.
+        _occlusion = new AmbientOcclusionPass(
+            device.Device, SwapChainTarget.BackBufferFormat,
+            optimiseShaders: true, _msaa.SampleCount);
+
+        _occlusion.Resize(width, height, _msaa.Depth, _msaa.SampleCount);
+
         _allocator = device.Device.CreateCommandAllocator(CommandListType.Direct);
 
         _commands = device.Device.CreateCommandList<ID3D12GraphicsCommandList>(
@@ -122,7 +133,7 @@ public sealed class FrameTimer : IDisposable
         _fence = device.Device.CreateFence(0);
 
         _constants = device.Device.CreateCommittedResource(
-            HeapType.Upload, HeapFlags.None, ResourceDescription.Buffer(512),
+            HeapType.Upload, HeapFlags.None, ResourceDescription.Buffer(768),
             ResourceStates.GenericRead);
 
         _timestamps = device.Device.CreateQueryHeap<ID3D12QueryHeap>(
@@ -217,6 +228,7 @@ public sealed class FrameTimer : IDisposable
         _edges.Dispose();
         _faces.Dispose();
         _environment.Dispose();
+        _occlusion.Dispose();
         _msaa.Dispose();
     }
 
@@ -264,10 +276,15 @@ public sealed class FrameTimer : IDisposable
         EnvironmentConstants environment = EnvironmentPass.ConstantsFor(
             camera, snapshot.Bounds, origin, EnvironmentStyle.Default.ForScene(snapshot.Bounds));
 
-        WriteConstants(frame, environment);
+        OcclusionConstants occlusion = AmbientOcclusionPass.ConstantsFor(
+            camera, snapshot.Bounds, _width, _height,
+            OcclusionStyle.Default.ForScene(snapshot.Bounds));
+
+        WriteConstants(frame, environment, occlusion);
 
         ulong frameAddress = _constants.GPUVirtualAddress;
         ulong environmentAddress = frameAddress + 256;
+        ulong occlusionAddress = frameAddress + 512;
 
         Frustum frustum = Frustum.FromViewProjection(projection * camera.ViewMatrix());
 
@@ -275,6 +292,21 @@ public sealed class FrameTimer : IDisposable
         // Deliberately without highlight states, so the harness exercises the passes' fallback
         // binding -- which is the path that removed the device before they had one.
         _faces.Draw(_commands, scene, frameAddress, frustum);
+
+        _commands.ResourceBarrierTransition(
+            _msaa.Depth, ResourceStates.DepthWrite, ResourceStates.PixelShaderResource);
+
+        _occlusion.Compute(_commands, occlusionAddress);
+
+        _commands.ResourceBarrierTransition(
+            _msaa.Depth, ResourceStates.PixelShaderResource, ResourceStates.DepthWrite);
+
+        _commands.OMSetRenderTargets(_msaa.RenderTargetView, _msaa.DepthStencilView);
+        _commands.RSSetViewport(0, 0, _width, _height);
+        _commands.RSSetScissorRect(_width, _height);
+
+        _occlusion.Apply(_commands, occlusionAddress);
+
         _edges.Draw(_commands, scene, frameAddress, EdgeStyle.Default, frustum);
 
         _commands.EndQuery(_timestamps, QueryType.Timestamp, 1);
@@ -288,14 +320,16 @@ public sealed class FrameTimer : IDisposable
         WaitForGpu();
     }
 
-    private void WriteConstants(FrameConstants frame, EnvironmentConstants environment)
+    private void WriteConstants(
+        FrameConstants frame, EnvironmentConstants environment, OcclusionConstants occlusion)
     {
-        // Both blocks in one buffer, each on a 256-byte boundary because that is the alignment a
-        // constant buffer view requires.
-        Span<byte> bytes = stackalloc byte[512];
+        // All three blocks in one buffer, each on a 256-byte boundary because that is the
+        // alignment a constant buffer view requires.
+        Span<byte> bytes = stackalloc byte[768];
 
         MemoryMarshal.Write(bytes, in frame);
         MemoryMarshal.Write(bytes[256..], in environment);
+        MemoryMarshal.Write(bytes[512..], in occlusion);
 
         _constants.SetData<byte>(bytes);
     }

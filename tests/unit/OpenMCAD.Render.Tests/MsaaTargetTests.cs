@@ -203,16 +203,21 @@ public sealed class MsaaTargetTests
         // colour without rebuilding leaves the target cleared to one value and optimised for
         // another, which is not an error -- just a silently lost fast-clear path and a debug-layer
         // warning. The texture must therefore be discarded.
-        nint before = fixture.Target.Colour.NativePointer;
-
         fixture.Target.ClearColour = new Color4(0.9f, 0.1f, 0.1f, 1.0f);
 
         fixture.Target.IsAllocated.Should().BeFalse("the old texture carried the old clear value");
 
         fixture.Target.Resize(Size, Size);
 
-        fixture.Target.Colour.NativePointer.Should().NotBe(before);
+        fixture.Target.IsAllocated.Should().BeTrue("resizing should have built a replacement");
         fixture.Target.ClearColour.R.Should().BeApproximately(0.9f, 1e-5f);
+
+        // Deliberately not asserted by comparing the texture's address before and after. That
+        // reads a pointer belonging to a resource that has since been released, and once it is
+        // released the allocator is entitled to hand the very same address back for the
+        // replacement -- so the comparison fails intermittently, depending on nothing more than
+        // what else the process happened to allocate. What the test is actually about is that the
+        // old texture was discarded, and the IsAllocated check above says so directly.
     }
 
     [Fact]

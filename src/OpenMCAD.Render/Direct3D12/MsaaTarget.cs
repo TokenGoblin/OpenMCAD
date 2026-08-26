@@ -138,6 +138,17 @@ public sealed class MsaaTarget : IDisposable
         => _colour ?? throw new InvalidOperationException(
             "The multisample target has no size yet. Resize it before using it.");
 
+    /// <summary>Gets the multisampled depth texture, for passes that read it.</summary>
+    /// <remarks>
+    /// Ambient occlusion works from depth rather than from geometry, so it needs the buffer the
+    /// scene was drawn against. Reading it means transitioning out of <c>DepthWrite</c> and back,
+    /// which the caller has to arrange around whatever else still needs to test against it.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">Nothing has been allocated yet.</exception>
+    public ID3D12Resource Depth
+        => _depth ?? throw new InvalidOperationException(
+            "The multisample target has no size yet. Resize it before using it.");
+
     /// <summary>Gets the render target view to bind.</summary>
     /// <exception cref="InvalidOperationException">Nothing has been allocated yet.</exception>
     /// <remarks>

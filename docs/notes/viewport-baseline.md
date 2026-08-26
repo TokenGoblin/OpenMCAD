@@ -24,20 +24,45 @@ would move every number down and would not change which of them is the problem.
 
 ## Results
 
-| Scene | Bodies | Triangles | Median | p95 | p99 | GPU median |
-|---|---:|---:|---:|---:|---:|---:|
-| 100k, 1 body | 1 | 99,458 | 1.17 ms | 1.32 | 1.37 | 0.93 |
-| 100k, 1k bodies | 1,000 | 98,000 | 1.21 ms | 1.74 | 2.73 | 0.57 |
-| 1M, 16 bodies | 16 | 991,232 | 1.90 ms | 2.73 | 3.55 | 1.64 |
-| 1M, 1k bodies | 1,000 | 968,000 | 2.72 ms | 3.38 | 4.54 | 1.86 |
-| **2M, 16 bodies** | 16 | 2,000,000 | **3.36 ms** | 4.50 | 4.87 | 2.78 |
-| 2M, 1k bodies | 1,000 | 1,922,000 | 4.14 ms | 6.44 | 8.09 | 3.24 |
-| 2M, 10k bodies | 10,000 | 2,000,000 | 10.67 ms | 12.53 | 15.49 | 5.68 |
-| 5M, 64 bodies | 64 | 4,967,552 | 7.54 ms | 12.28 | 13.14 | 6.82 |
-| 5M, 10k bodies | 10,000 | 4,500,000 | 11.50 ms | 14.10 | 15.10 | 7.27 |
+Two sets, before and after ambient occlusion was added to the frame (P2-T12). The columns are the
+median; the earlier full percentile spread is kept below.
 
-PLAN.md's budget is **2M triangles rotating, under 16 ms**. It is met at 3.36 ms, with about five
-times the headroom.
+| Scene | Bodies | Triangles | Median | With SSAO | Cost |
+|---|---:|---:|---:|---:|---:|
+| 100k, 1 body | 1 | 99,458 | 1.17 ms | 1.49 ms | +0.32 |
+| 100k, 1k bodies | 1,000 | 98,000 | 1.21 ms | 2.12 ms | +0.91 |
+| 1M, 16 bodies | 16 | 991,232 | 1.90 ms | 2.46 ms | +0.56 |
+| 1M, 1k bodies | 1,000 | 968,000 | 2.72 ms | 2.80 ms | +0.08 |
+| **2M, 16 bodies** | 16 | 2,000,000 | **3.36 ms** | **3.51 ms** | +0.15 |
+| 2M, 1k bodies | 1,000 | 1,922,000 | 4.14 ms | 4.03 ms | −0.11 |
+| 2M, 10k bodies | 10,000 | 2,000,000 | 10.67 ms | 10.93 ms | +0.26 |
+| 5M, 64 bodies | 64 | 4,967,552 | 7.54 ms | 6.86 ms | −0.68 |
+| 5M, 10k bodies | 10,000 | 4,500,000 | 11.50 ms | 11.91 ms | +0.41 |
+
+PLAN.md's budget is **2M triangles rotating, under 16 ms**. It is met at 3.51 ms with occlusion, with
+about four and a half times the headroom.
+
+Occlusion is two full-screen passes over the depth buffer and a third to multiply the result in, so
+its cost does not depend on the geometry: it should be a constant addition to every row. It broadly
+is, at somewhere under a millisecond. It is not a clean constant — two rows came out *faster* with
+the extra work — which is the honest measure of how much this machine's numbers can be trusted
+between runs on an integrated GPU sharing a power budget with the CPU. Differences below about half
+a millisecond here are noise, and the +0.91 on the second row should be read as "under a
+millisecond" rather than as three times the cost of the row above it.
+
+The full percentile spread, without occlusion, as first recorded:
+
+| Scene | Median | p95 | p99 | GPU median |
+|---|---:|---:|---:|---:|
+| 100k, 1 body | 1.17 ms | 1.32 | 1.37 | 0.93 |
+| 100k, 1k bodies | 1.21 ms | 1.74 | 2.73 | 0.57 |
+| 1M, 16 bodies | 1.90 ms | 2.73 | 3.55 | 1.64 |
+| 1M, 1k bodies | 2.72 ms | 3.38 | 4.54 | 1.86 |
+| **2M, 16 bodies** | **3.36 ms** | 4.50 | 4.87 | 2.78 |
+| 2M, 1k bodies | 4.14 ms | 6.44 | 8.09 | 3.24 |
+| 2M, 10k bodies | 10.67 ms | 12.53 | 15.49 | 5.68 |
+| 5M, 64 bodies | 7.54 ms | 12.28 | 13.14 | 6.82 |
+| 5M, 10k bodies | 11.50 ms | 14.10 | 15.10 | 7.27 |
 
 ## What the numbers say
 

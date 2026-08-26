@@ -372,6 +372,92 @@ public sealed class OffscreenSurface : IDisposable
         WaitForGpu();
     }
 
+    /// <summary>
+    /// Runs an opaque pass, computes ambient occlusion from its depth, and darkens the result.
+    /// </summary>
+    /// <param name="msaa">Where the opaque pass draws.</param>
+    /// <param name="occlusion">The pass, already resized against <paramref name="msaa"/>'s depth.</param>
+    /// <param name="clear">The background colour.</param>
+    /// <param name="constants">Where an <c>OcclusionConstants</c> has been written.</param>
+    /// <param name="opaque">What to draw.</param>
+    /// <param name="apply">
+    /// Whether to multiply the occlusion over the image. Passing false renders the scene through
+    /// the identical code path but without the darkening, which is what a test comparing "with"
+    /// against "without" needs; comparing against a separate plain render would also be comparing
+    /// against different barriers.
+    /// </param>
+    /// <remarks>
+    /// The depth transitions are the interesting part and the reason this exists as a harness
+    /// method rather than as a lambda in each test. A depth buffer is written by the scene and read
+    /// by the occlusion, and those are different resource states; leaving it in the wrong one is
+    /// undefined behaviour that a debug layer complains about and a release driver mostly tolerates.
+    /// </remarks>
+    public void RenderOcclusion(
+        MsaaTarget msaa,
+        AmbientOcclusionPass occlusion,
+        Color4 clear,
+        ulong constants,
+        Action<ID3D12GraphicsCommandList> opaque,
+        bool apply = true)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(msaa);
+        ArgumentNullException.ThrowIfNull(occlusion);
+        ArgumentNullException.ThrowIfNull(opaque);
+
+        _allocator.Reset();
+        _commands.Reset(_allocator);
+
+        _commands.RSSetViewport(0, 0, Width, Height);
+        _commands.RSSetScissorRect(Width, Height);
+
+        _commands.OMSetRenderTargets(msaa.RenderTargetView, msaa.DepthStencilView);
+        _commands.ClearRenderTargetView(msaa.RenderTargetView, clear);
+
+        _commands.ClearDepthStencilView(
+            msaa.DepthStencilView, ClearFlags.Depth, DepthBuffer.ClearDepth, 0);
+
+        opaque(_commands);
+
+        if (apply)
+        {
+            _commands.ResourceBarrierTransition(
+                msaa.Depth, ResourceStates.DepthWrite, ResourceStates.PixelShaderResource);
+
+            occlusion.Compute(_commands, constants);
+
+            _commands.ResourceBarrierTransition(
+                msaa.Depth, ResourceStates.PixelShaderResource, ResourceStates.DepthWrite);
+
+            _commands.OMSetRenderTargets(msaa.RenderTargetView, msaa.DepthStencilView);
+            _commands.RSSetViewport(0, 0, Width, Height);
+            _commands.RSSetScissorRect(Width, Height);
+
+            occlusion.Apply(_commands, constants);
+        }
+
+        msaa.ResolveTo(_commands, _colour, ResourceStates.RenderTarget);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.RenderTarget, ResourceStates.CopySource);
+
+        _commands.CopyTextureRegion(
+            new TextureCopyLocation(_readback, _footprint),
+            0,
+            0,
+            0,
+            new TextureCopyLocation(_colour, 0),
+            null);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.CopySource, ResourceStates.RenderTarget);
+
+        _commands.Close();
+        Device.Queue.ExecuteCommandList(_commands);
+
+        WaitForGpu();
+    }
+
     /// <summary>Reads one pixel out of the last rendered frame.</summary>
     /// <param name="x">Column, from the left.</param>
     /// <param name="y">Row, from the top.</param>
