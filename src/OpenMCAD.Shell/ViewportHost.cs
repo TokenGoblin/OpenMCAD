@@ -61,6 +61,11 @@ public sealed class ViewportHost : HwndHost
     private EdgeStyle _edgeStyle = EdgeStyle.Default;
     private NavigationController? _navigation;
     private long _publishedSelection = -1;
+    private Camera? _camera;
+    private MouseProfile _mouseProfile = MouseProfile.Default;
+    private bool _framedOnce;
+    private int _deviceLossAttempts;
+    private DateTime _lastDeviceLoss = DateTime.MinValue;
 
     /// <summary>
     /// Where a XAML-constructed viewport gets its logger from.
@@ -151,11 +156,14 @@ public sealed class ViewportHost : HwndHost
     /// <summary>Gets or sets which mouse gestures navigate the view.</summary>
     public MouseProfile MouseProfile
     {
-        get => _navigation?.Profile ?? MouseProfile.Default;
+        get => _mouseProfile;
 
         set
         {
             ArgumentNullException.ThrowIfNull(value);
+
+            // Kept here as well as on the controller, which does not survive a device loss.
+            _mouseProfile = value;
 
             if (_navigation is not null)
             {
@@ -188,28 +196,13 @@ public sealed class ViewportHost : HwndHost
                 + $"{Marshal.GetLastWin32Error()}).");
         }
 
-        _device = new D3D12RenderDevice(logger: _logger);
-
-        (int width, int height) = CurrentPixelSize();
-        _target = new SwapChainTarget(_device, _handle, width, height, _logger);
-        _renderer = new ViewportRenderer(_device, _target, _logger)
-        {
-            // Whatever arrived while there was no window to draw it in.
-            Snapshot = _snapshot,
-        };
-
-        _navigation = new NavigationController(_renderer.Camera);
-
-        ApplyEdgeStyle();
-        _renderer.ZoomToFit();
+        CreateDeviceResources();
 
         // Driven by WPF's own frame tick rather than a timer. CompositionTarget.Rendering fires
         // once per composition pass on the UI thread, so the viewport redraws in step with the
         // rest of the window instead of fighting it -- and it stops firing when the window is
         // hidden or minimised, which is the occlusion handling this would otherwise need.
         CompositionTarget.Rendering += OnFrame;
-
-        _logger.LogInformation("Viewport created on {Adapter}", _device.Info);
 
         return new HandleRef(this, _handle);
     }
@@ -218,19 +211,10 @@ public sealed class ViewportHost : HwndHost
     protected override void DestroyWindowCore(HandleRef hwnd)
     {
         CompositionTarget.Rendering -= OnFrame;
-        _navigation = null;
 
-        // Order matters. The renderer holds command lists recorded against the swapchain's
-        // buffers, the swapchain references the queue, and the device waits for the GPU before
-        // releasing anything -- so the window can only go last.
-        _renderer?.Dispose();
-        _renderer = null;
-
-        _target?.Dispose();
-        _target = null;
-
-        _device?.Dispose();
-        _device = null;
+        // Shared with device-loss recovery, so the two cannot disagree about what has to go and in
+        // what order. The window can only be destroyed after all of it.
+        ReleaseDeviceResources();
 
         if (_handle != 0)
         {
@@ -322,15 +306,139 @@ public sealed class ViewportHost : HwndHost
         // vertical blank again would halve the frame rate rather than smooth it.
         if (!_renderer.RenderFrame(verticalSync: false))
         {
-            // Device loss is normal -- a driver update, a GPU reset, a laptop switching adapters.
-            // Recreating the device is P2-T02's remaining work; until then, stop drawing rather
-            // than spin on a dead device, and say so once.
-            _logger.LogError("The graphics device was lost. The viewport has stopped drawing.");
-            CompositionTarget.Rendering -= OnFrame;
+            RecoverFromDeviceLoss();
         }
     }
 
     /// <summary>The viewport's size in physical pixels, at the current DPI.</summary>
+    /// <summary>
+    /// Builds the device, swapchain and renderer, at start-up and again after a device loss.
+    /// </summary>
+    /// <remarks>
+    /// One path for both, deliberately. A separate recovery routine is a second copy of the set-up
+    /// that runs perhaps once a year, on somebody else machine, and it drifts from the real one in
+    /// silence: every new piece of viewport state gets wired into start-up and forgotten here.
+    /// </remarks>
+    private void CreateDeviceResources()
+    {
+        _device = new D3D12RenderDevice(logger: _logger);
+
+        (int width, int height) = CurrentPixelSize();
+        _target = new SwapChainTarget(_device, _handle, width, height, _logger);
+
+        // The camera is carried across rather than rebuilt. Everything else here is a GPU
+        // resource; where the user was looking is not, and a view that snapped back to the default
+        // on a driver update would be a worse failure than the one being recovered from.
+        _renderer = new ViewportRenderer(_device, _target, _logger, _camera)
+        {
+            Snapshot = _snapshot,
+        };
+
+        _camera = _renderer.Camera;
+        _navigation = new NavigationController(_camera) { Profile = _mouseProfile };
+
+        // Highlights survive as data but their GPU buffer does not, so the table has to be
+        // published to the new renderer.
+        _publishedSelection = -1;
+
+        ApplyEdgeStyle();
+
+        // Framed only the first time. Refitting on recovery would throw away the camera that was
+        // just carried across for the purpose.
+        if (!_framedOnce)
+        {
+            _renderer.ZoomToFit();
+            _framedOnce = true;
+        }
+
+        _logger.LogInformation("Viewport created on {Adapter}", _device.Info);
+    }
+
+    /// <summary>
+    /// Rebuilds everything after the graphics device has gone away.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Device loss is ordinary rather than exceptional: a driver update, a GPU reset after a hang,
+    /// a laptop switching between integrated and discrete graphics, a remote session changing
+    /// adapters. Windows expects an application to rebuild and carry on, and one that stops until
+    /// restarted is one users learn to restart pre-emptively.
+    /// </para>
+    /// <para>
+    /// <b>Attempts are counted, and eventually give up.</b> A genuinely broken device fails again
+    /// immediately, and retrying inside the frame loop would spin the machine at full speed while
+    /// filling the log. After a few failures in quick succession the viewport stops for good and
+    /// says why, which is the honest outcome.
+    /// </para>
+    /// </remarks>
+    private void RecoverFromDeviceLoss()
+    {
+        DateTime now = DateTime.UtcNow;
+
+        // Counted within a window, so a machine that loses its device twice in a year recovers
+        // both times rather than being one failure closer to giving up for good.
+        if (now - _lastDeviceLoss > TimeSpan.FromMinutes(5))
+        {
+            _deviceLossAttempts = 0;
+        }
+
+        _lastDeviceLoss = now;
+        _deviceLossAttempts++;
+
+        if (_deviceLossAttempts > MaxDeviceLossAttempts)
+        {
+            _logger.LogError(
+                "The graphics device has been lost {Count} times in quick succession. The viewport "
+                + "has stopped drawing; restart the application.",
+                _deviceLossAttempts);
+
+            CompositionTarget.Rendering -= OnFrame;
+            ReleaseDeviceResources();
+            return;
+        }
+
+        _logger.LogWarning(
+            "The graphics device was lost. Rebuilding it (attempt {Attempt} of {Max}).",
+            _deviceLossAttempts,
+            MaxDeviceLossAttempts);
+
+        try
+        {
+            ReleaseDeviceResources();
+            CreateDeviceResources();
+            Resize();
+
+            _logger.LogInformation("The viewport recovered onto {Adapter}", _device!.Info);
+        }
+        catch (Exception exception)
+        {
+            // Broad on purpose. Anything thrown here leaves the viewport with no device, and
+            // letting it escape into WPF rendering event handling takes the application down over
+            // a failure it was in the middle of recovering from.
+            _logger.LogError(exception, "The graphics device could not be rebuilt");
+
+            ReleaseDeviceResources();
+            CompositionTarget.Rendering -= OnFrame;
+        }
+    }
+
+    /// <summary>Releases the device, swapchain and renderer in dependency order.</summary>
+    private void ReleaseDeviceResources()
+    {
+        // The renderer holds command lists recorded against the swapchain buffers, the swapchain
+        // references the queue, and the device waits for the GPU before releasing anything.
+        _renderer?.Dispose();
+        _renderer = null;
+
+        _target?.Dispose();
+        _target = null;
+
+        _device?.Dispose();
+        _device = null;
+
+        _navigation = null;
+    }
+
     /// <summary>Hands the renderer the current style, scaled for this display.</summary>
     private void ApplyEdgeStyle()
     {
@@ -564,6 +672,9 @@ public sealed class ViewportHost : HwndHost
             _renderer.Highlights = Selection.ToHighlights(_renderer.Snapshot);
         }
     }
+
+    /// <summary>How many device losses in quick succession before giving up.</summary>
+    private const int MaxDeviceLossAttempts = 3;
 
     private const int WmMouseMove = 0x0200;
     private const int WmLButtonDown = 0x0201;

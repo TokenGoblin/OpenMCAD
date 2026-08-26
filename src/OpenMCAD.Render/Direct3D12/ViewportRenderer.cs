@@ -74,7 +74,17 @@ public sealed class ViewportRenderer : IDisposable
     /// <param name="device">The device to record on.</param>
     /// <param name="target">Where frames go.</param>
     /// <param name="logger">Where to report device loss.</param>
-    public ViewportRenderer(D3D12RenderDevice device, SwapChainTarget target, ILogger? logger = null)
+    /// <param name="camera">
+    /// A camera to adopt rather than create. This is what carries the user's view across a device
+    /// loss: everything else here is a GPU resource and has to be rebuilt, but where somebody was
+    /// looking is not, and a viewport that jumped back to the default view every time a driver
+    /// updated would be worse than one that stopped.
+    /// </param>
+    public ViewportRenderer(
+        D3D12RenderDevice device,
+        SwapChainTarget target,
+        ILogger? logger = null,
+        Camera? camera = null)
     {
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(target);
@@ -82,6 +92,7 @@ public sealed class ViewportRenderer : IDisposable
         _logger = logger ?? NullLogger.Instance;
         _device = device;
         _target = target;
+        Camera = camera ?? CreateCamera();
 
         _allocators = new ID3D12CommandAllocator[SwapChainTarget.BufferCount];
         _frameFenceValues = new ulong[SwapChainTarget.BufferCount];
@@ -153,12 +164,12 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets the camera the scene is drawn through.</summary>
     /// <remarks>
-    /// Starts isometric. A camera left at the identity orientation looks straight down an axis,
-    /// which renders a box as a plain rectangle and a cylinder as a circle -- correct, and useless
-    /// as a first impression of a solid. Three-quarter view is what every CAD package opens on,
-    /// for the same reason.
+    /// Starts isometric when one is not supplied. A camera left at the identity orientation looks
+    /// straight down an axis, which renders a box as a plain rectangle and a cylinder as a circle
+    /// -- correct, and useless as a first impression of a solid. Three-quarter view is what every
+    /// CAD package opens on, for the same reason.
     /// </remarks>
-    public Camera Camera { get; } = CreateCamera();
+    public Camera Camera { get; }
 
     /// <summary>Gets how many frames have been presented.</summary>
     public long FrameCount { get; private set; }

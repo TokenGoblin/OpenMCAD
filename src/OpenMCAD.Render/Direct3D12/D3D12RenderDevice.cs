@@ -114,6 +114,22 @@ public sealed class D3D12RenderDevice : IRenderDevice
     /// <summary>Gets the direct command queue.</summary>
     public ID3D12CommandQueue Queue => _queue;
 
+    /// <summary>Gets whether the device has been lost.</summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Submitting work to a removed device does not fail.</b> Recording, executing and even
+    /// waiting on a fence all return success; the work simply never happens, and a fence reports
+    /// itself complete because a removed device signals every fence to its maximum. Nothing throws
+    /// and nothing is drawn.
+    /// </para>
+    /// <para>
+    /// A viewport notices anyway, because presenting does report it. Anything rendering off-screen
+    /// — a thumbnail, an export, the performance harness — has no present to catch it, and would
+    /// otherwise write out an empty image and call it a result. Those paths have to ask.
+    /// </para>
+    /// </remarks>
+    public bool IsRemoved => _device.DeviceRemovedReason.Failure;
+
     /// <inheritdoc />
     public IGpuBuffer CreateStaticBuffer(ReadOnlySpan<byte> data, GpuBufferKind kind, string name)
     {

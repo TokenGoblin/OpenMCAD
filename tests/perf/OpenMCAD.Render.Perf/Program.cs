@@ -97,6 +97,18 @@ foreach ((string label, int triangles, int bodies) in scenes)
 
     results.Add(measurement);
     Console.WriteLine(measurement);
+
+    // Off-screen rendering has no present to report a lost device, and submission stays silent, so
+    // a removed device would produce a full set of plausible-looking timings for work that never
+    // happened.
+    if (device.IsRemoved)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "the graphics device was lost during this run; every figure after it is meaningless");
+
+        return 1;
+    }
 }
 
 Console.WriteLine();
