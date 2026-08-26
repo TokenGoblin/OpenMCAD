@@ -7,9 +7,9 @@ namespace OpenMCAD.Api;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Deliberately almost empty. PLAN.md 5.12 lists what this surface will eventually carry —
-/// documents, features, custom properties, commands and ribbon contributions, selection, event
-/// hooks, geometry queries — and none of it exists yet. Declaring those members now would mean
+/// Deliberately small. PLAN.md 5.12 lists what this surface will eventually carry — documents,
+/// features, custom properties, commands and ribbon contributions, selection, event hooks,
+/// geometry queries — of which only command contribution exists so far. Declaring those members now would mean
 /// designing them against an imagined implementation and then either breaking plugins when the
 /// real one disagrees, or freezing the design to avoid it. §5.12 opens by naming that trade
 /// explicitly; the way to take the good half is to establish the *contract* early and let the
@@ -30,6 +30,14 @@ public interface IPluginHost
     /// for a plugin that wants to light up a feature only on newer hosts.
     /// </remarks>
     Version ApiVersion { get; }
+
+    /// <summary>Gets where the plugin registers ribbon commands.</summary>
+    /// <remarks>
+    /// The first capability on this interface. It takes descriptions of commands rather than
+    /// controls, so a plugin never names a UI framework and the shell stays free to present the
+    /// same command as a ribbon button, a palette entry and a shortcut.
+    /// </remarks>
+    ICommandRegistry Commands { get; }
 
     /// <summary>Gets a logger scoped to the plugin.</summary>
     /// <remarks>

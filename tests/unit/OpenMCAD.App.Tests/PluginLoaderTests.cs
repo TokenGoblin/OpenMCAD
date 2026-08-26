@@ -205,6 +205,80 @@ public sealed class PluginLoaderTests
     }
 
     [Fact]
+    public void AGoodPluginContributesItsRibbonCommand()
+    {
+        // P2-T15's actual deliverable. The loader working is not the same as a plugin being able
+        // to do anything, and a plugin that loads and contributes nothing is indistinguishable
+        // from one that failed silently.
+        PluginLoader loader = new();
+        TestHost host = new();
+
+        loader.Load(FixturePath("OpenMCAD.SamplePlugin"), host).Loaded.Should().BeTrue();
+
+        host.Registry.Commands.Should().ContainSingle();
+
+        ContributedCommand contributed = host.Registry.Commands[0];
+        contributed.Command.Id.Should().Be("openmcad.sample.hello");
+        contributed.Command.Label.Should().Be("Say Hello");
+        contributed.Command.Group.Should().Be("Sample");
+
+        // And it runs. A command whose action never fires looks perfectly correct in a ribbon.
+        contributed.Command.Execute();
+    }
+
+    [Fact]
+    public void TwoPluginsCannotClaimTheSameCommandId()
+    {
+        // Silently letting the second overwrite the first would make one plugin's buttons vanish
+        // depending on the order a directory happened to enumerate in.
+        CommandRegistry registry = new();
+
+        registry.For("first").Add(Command("shared.id"));
+
+        Action act = () => registry.For("second").Add(Command("shared.id"));
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*already registered*");
+        registry.Commands.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void CommandsCannotBeAddedAfterLoadingFinishes()
+    {
+        // A plugin that held the registry and added a button months later, from a thread nobody
+        // expected, would produce a ribbon the user cannot learn.
+        CommandRegistry registry = new();
+        ICommandRegistry scoped = registry.For("late");
+
+        registry.Close();
+
+        Action act = () => scoped.Add(Command("too.late"));
+
+        act.Should().Throw<InvalidOperationException>().WithMessage("*after loading finished*");
+    }
+
+    [Fact]
+    public void ACommandWithoutAnActionIsRefusedWhenItIsBuilt()
+    {
+        // Not when the button is pressed. A command with no action looks correct in a ribbon and
+        // does nothing, which a user reports as the application being broken.
+        Action act = () => _ = new PluginCommand("id", "Label", "Description", "Group", null!);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void ACommandKeepsItsContributorSoAFailureIsAttributable()
+    {
+        CommandRegistry registry = new();
+        registry.For("Acme Exporter").Add(Command("acme.export"));
+
+        registry.Commands[0].PluginName.Should().Be("Acme Exporter");
+    }
+
+    private static PluginCommand Command(string id)
+        => new(id, "Label", "Description", "Group", static () => { });
+
+    [Fact]
     public void TheHostApiVersionMatchesTheDeclaredSurface()
     {
         PluginLoader.HostApiVersion.Major.Should().Be(ApiVersion.Major);
@@ -215,7 +289,12 @@ public sealed class PluginLoaderTests
     {
         public bool Initialised { get; private set; }
 
+        /// <summary>The real registry, so contributions are exercised rather than swallowed.</summary>
+        public CommandRegistry Registry { get; } = new();
+
         public Version ApiVersion => PluginLoader.HostApiVersion;
+
+        public ICommandRegistry Commands => Registry.For("test");
 
         public ILogger Logger => new RecordingLogger(() => Initialised = true);
 

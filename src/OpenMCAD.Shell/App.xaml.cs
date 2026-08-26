@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
@@ -5,6 +6,8 @@ using Microsoft.Extensions.Logging;
 using OpenMCAD.App;
 using OpenMCAD.App.Diagnostics;
 using OpenMCAD.App.Hosting;
+using OpenMCAD.Api;
+using OpenMCAD.App.Plugins;
 using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Occt;
 using OpenMCAD.Render;
@@ -59,6 +62,8 @@ public sealed partial class App : Application, IDisposable
             DataContext = _services.GetRequiredService<MainWindowViewModel>(),
         };
 
+        LoadPlugins(window);
+
         MainWindow = window;
         window.Show();
         _logger.LogInformation("Main window shown");
@@ -67,6 +72,96 @@ public sealed partial class App : Application, IDisposable
         // its dedicated thread and loads the native shim, which is not work to do between the
         // splash and the first paint.
         _ = ShowStarterSceneAsync(window);
+    }
+
+    /// <summary>
+    /// Loads plugins and puts whatever they contribute on the ribbon.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Before the window is shown, so the ribbon is laid out once rather than growing buttons
+    /// while the user watches. Registration closes immediately afterwards: a plugin that held the
+    /// registry and added a command later would produce a ribbon nobody can learn.
+    /// </para>
+    /// <para>
+    /// Plugins are loaded from a <c>plugins</c> directory beside the executable. A missing
+    /// directory is the ordinary case and yields nothing.
+    /// </para>
+    /// </remarks>
+    private void LoadPlugins(MainWindow window)
+    {
+        ILogger logger = _logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
+
+        try
+        {
+            string directory = Path.Combine(AppContext.BaseDirectory, "plugins");
+
+            PluginLoader loader = new(_loggerFactory?.CreateLogger<PluginLoader>());
+            CommandRegistry registry = new(logger);
+            PluginHost host = new(registry, _loggerFactory);
+
+            IReadOnlyList<PluginLoadResult> results = loader.LoadFrom(directory, host);
+            registry.Close();
+
+            int loaded = results.Count(r => r.Loaded);
+
+            if (results.Count > 0)
+            {
+                logger.LogInformation(
+                    "Loaded {Loaded} of {Total} plugins from {Directory}",
+                    loaded,
+                    results.Count,
+                    directory);
+            }
+
+            PublishCommands(window, registry, logger);
+        }
+        catch (Exception exception)
+        {
+            // Deliberately broad, and for the same reason the loader itself is: a third-party
+            // assembly must not be able to stop the application from starting, because the user's
+            // only remedy would be to find and delete a file they may not know exists.
+            logger.LogError(exception, "Plugins could not be loaded");
+        }
+    }
+
+    /// <summary>Groups contributed commands and hands them to the view model.</summary>
+    private static void PublishCommands(
+        MainWindow window, CommandRegistry registry, ILogger logger)
+    {
+        if (window.DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        foreach (ContributedCommand contributed in registry.Commands)
+        {
+            PluginCommand command = contributed.Command;
+            string plugin = contributed.PluginName;
+
+            viewModel.PluginCommands.Add(
+                new PluginCommandItem(command.Label, command.Description, plugin, command.Group)
+                {
+                    Invoke = () =>
+                    {
+                        // The command is somebody else's code, and an exception escaping a click
+                        // handler takes the application down. A plugin that throws is reported and
+                        // survived, exactly as one that throws during loading is.
+                        try
+                        {
+                            command.Execute();
+                        }
+                        catch (Exception exception)
+                        {
+                            logger.LogError(
+                                exception,
+                                "The command '{Command}' from plugin '{Plugin}' threw",
+                                command.Id,
+                                plugin);
+                        }
+                    },
+                });
+        }
     }
 
     /// <summary>

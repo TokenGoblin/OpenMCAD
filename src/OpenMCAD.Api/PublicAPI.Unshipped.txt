@@ -1,5 +1,7 @@
 #nullable enable
 OpenMCAD.Api.ApiVersion
+OpenMCAD.Api.ICommandRegistry
+OpenMCAD.Api.ICommandRegistry.Add(OpenMCAD.Api.PluginCommand! command) -> void
 OpenMCAD.Api.IPlugin
 OpenMCAD.Api.IPlugin.ApiVersion.get -> System.Version!
 OpenMCAD.Api.IPlugin.Initialize(OpenMCAD.Api.IPluginHost! host) -> void
@@ -7,9 +9,29 @@ OpenMCAD.Api.IPlugin.Name.get -> string!
 OpenMCAD.Api.IPlugin.Version.get -> System.Version!
 OpenMCAD.Api.IPluginHost
 OpenMCAD.Api.IPluginHost.ApiVersion.get -> System.Version!
+OpenMCAD.Api.IPluginHost.Commands.get -> OpenMCAD.Api.ICommandRegistry!
 OpenMCAD.Api.IPluginHost.Logger.get -> Microsoft.Extensions.Logging.ILogger!
+OpenMCAD.Api.PluginCommand
+OpenMCAD.Api.PluginCommand.<Clone>$() -> OpenMCAD.Api.PluginCommand!
+OpenMCAD.Api.PluginCommand.Description.get -> string!
+OpenMCAD.Api.PluginCommand.Description.init -> void
+OpenMCAD.Api.PluginCommand.Equals(OpenMCAD.Api.PluginCommand? other) -> bool
+OpenMCAD.Api.PluginCommand.Execute.get -> System.Action!
+OpenMCAD.Api.PluginCommand.Execute.init -> void
+OpenMCAD.Api.PluginCommand.Group.get -> string!
+OpenMCAD.Api.PluginCommand.Group.init -> void
+OpenMCAD.Api.PluginCommand.Id.get -> string!
+OpenMCAD.Api.PluginCommand.Id.init -> void
+OpenMCAD.Api.PluginCommand.Label.get -> string!
+OpenMCAD.Api.PluginCommand.Label.init -> void
+OpenMCAD.Api.PluginCommand.PluginCommand(string! id, string! label, string! description, string! group, System.Action! execute) -> void
+override OpenMCAD.Api.PluginCommand.Equals(object? obj) -> bool
+override OpenMCAD.Api.PluginCommand.GetHashCode() -> int
+override OpenMCAD.Api.PluginCommand.ToString() -> string!
 static OpenMCAD.Api.ApiVersion.Major.get -> int
 static OpenMCAD.Api.ApiVersion.Minor.get -> int
 static OpenMCAD.Api.ApiVersion.Patch.get -> int
 static OpenMCAD.Api.ApiVersion.Supports(System.Version! required) -> bool
 static OpenMCAD.Api.ApiVersion.Value.get -> string!
+static OpenMCAD.Api.PluginCommand.operator !=(OpenMCAD.Api.PluginCommand? left, OpenMCAD.Api.PluginCommand? right) -> bool
+static OpenMCAD.Api.PluginCommand.operator ==(OpenMCAD.Api.PluginCommand? left, OpenMCAD.Api.PluginCommand? right) -> bool

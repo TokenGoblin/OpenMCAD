@@ -31,6 +31,8 @@
 
     <fluent:RibbonWindow.Resources>
 
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibility" />
+
         <!--
             Implicit template: any ToolPanel placed in the docking manager renders like this.
             An implicit DataTemplate keyed on the view model type is used in preference to
@@ -91,6 +93,38 @@
                     <fluent:Button Header="Extrude" IsEnabled="False" SizeDefinition="Large" />
                     <fluent:Button Header="Revolve" IsEnabled="False" SizeDefinition="Large" />
                     <fluent:Button Header="Fillet" IsEnabled="False" SizeDefinition="Large" />
+                </fluent:RibbonGroupBox>
+
+            </fluent:RibbonTabItem>
+
+            <!--
+                Plugin contributions get a tab of their own rather than being mixed into Home, so
+                a plugin can never displace or reorder a built-in command. Office and SolidWorks
+                both put add-ins on their own tab for the same reason.
+
+                One group box holding every contributed command. A RibbonTabItem exposes an
+                ObservableCollection<RibbonGroupBox> rather than an ItemsSource, so a box per
+                plugin group would mean constructing ribbon controls in code-behind; the group name
+                is carried on each command so that can be done when plugins offer enough to need
+                it. RibbonGroupBox is itself an ItemsControl, which is what makes this much
+                declarative.
+
+                The tab is collapsed when nothing contributed, which is the ordinary case: an empty
+                "Add-Ins" tab reads as something having gone wrong.
+            -->
+            <fluent:RibbonTabItem Header="Add-Ins"
+                                  Visibility="{Binding HasPluginCommands,
+                                               Converter={StaticResource BooleanToVisibility}}">
+                <fluent:RibbonGroupBox Header="Add-Ins"
+                                       ItemsSource="{Binding PluginCommands}">
+                    <fluent:RibbonGroupBox.ItemTemplate>
+                        <DataTemplate>
+                            <fluent:Button Header="{Binding Label}"
+                                           SizeDefinition="Large"
+                                           Click="OnPluginCommandClick"
+                                           ToolTip="{Binding Description}" />
+                        </DataTemplate>
+                    </fluent:RibbonGroupBox.ItemTemplate>
                 </fluent:RibbonGroupBox>
             </fluent:RibbonTabItem>
 

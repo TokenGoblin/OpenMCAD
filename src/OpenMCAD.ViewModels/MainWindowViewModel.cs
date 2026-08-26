@@ -19,6 +19,38 @@ public sealed record ToolPanel(string ContentId, string Title)
 }
 
 /// <summary>
+/// A plugin command, as the ribbon needs it.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A view-model shape rather than the API type, because ADR-0007 keeps this assembly free of
+/// anything a UI framework understands and because the two want different things: the API type
+/// describes what a plugin offers, and this describes what a button needs.
+/// </para>
+/// <para>
+/// <b>Invoking catches everything.</b> The command belongs to somebody else's code, and a
+/// third-party exception escaping into a WPF click handler takes the application down. A plugin
+/// that throws is reported and survived, exactly as one that throws during loading is.
+/// </para>
+/// </remarks>
+/// <param name="Label">The text on the button.</param>
+/// <param name="Description">The tooltip.</param>
+/// <param name="PluginName">Who contributed it, for attributing a failure.</param>
+/// <param name="Group">
+/// The group the plugin asked for. Carried but not yet rendered: a ribbon tab holds an
+/// <c>ObservableCollection&lt;RibbonGroupBox&gt;</c> rather than an <c>ItemsSource</c>, so one box
+/// per group means building ribbon controls in code-behind. That is not worth doing for a single
+/// contributed command, and the information is kept so it can be when plugins offer enough to
+/// need it.
+/// </param>
+public sealed record PluginCommandItem(
+    string Label, string Description, string PluginName, string Group)
+{
+    /// <summary>Gets or sets what the button does.</summary>
+    public Action Invoke { get; init; } = static () => { };
+}
+
+/// <summary>
 /// The root view model for the main window.
 /// </summary>
 /// <remarks>
@@ -41,6 +73,10 @@ public sealed class MainWindowViewModel : ObservableObject
     /// <summary>Initialises the view model with its default panel set.</summary>
     public MainWindowViewModel()
     {
+        // The tab's visibility follows the collection, so publishing commands after construction
+        // -- which is when plugins are loaded -- still reveals it.
+        PluginCommands.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasPluginCommands));
+
         Panels =
         [
             new ToolPanel("FeatureTree", "Feature Tree")
@@ -84,6 +120,20 @@ public sealed class MainWindowViewModel : ObservableObject
 
     /// <summary>Gets the dockable panels shown around the viewport.</summary>
     public ObservableCollection<ToolPanel> Panels { get; }
+
+    /// <summary>Gets the commands contributed by plugins.</summary>
+    /// <remarks>
+    /// Empty when no plugin contributed anything, which is the ordinary case and must look like
+    /// nothing rather than like an empty tab with a heading.
+    /// </remarks>
+    public ObservableCollection<PluginCommandItem> PluginCommands { get; } = [];
+
+    /// <summary>Gets whether any plugin contributed a command.</summary>
+    /// <remarks>
+    /// What hides the Add-Ins tab when nothing did, which is the ordinary case. An empty tab with
+    /// a heading reads as something having gone wrong rather than as nothing being installed.
+    /// </remarks>
+    public bool HasPluginCommands => PluginCommands.Count > 0;
 
     /// <summary>Gets or sets the status bar text.</summary>
     public string StatusText

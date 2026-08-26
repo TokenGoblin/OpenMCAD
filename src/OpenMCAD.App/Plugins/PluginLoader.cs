@@ -222,6 +222,13 @@ public sealed class PluginLoader
 
         try
         {
+            // Named first, so anything it contributes is attributed to it rather than to whichever
+            // plugin was initialised before.
+            if (host is PluginHost named)
+            {
+                named.BeginPlugin(plugin.Name);
+            }
+
             plugin.Initialize(host);
         }
         catch (Exception exception)

@@ -1,4 +1,8 @@
+using System.Windows;
+
 using Fluent;
+
+using OpenMCAD.ViewModels;
 
 namespace OpenMCAD.Shell;
 
@@ -15,4 +19,22 @@ public partial class MainWindow : RibbonWindow
 {
     /// <summary>Initialises the window.</summary>
     public MainWindow() => InitializeComponent();
+
+    /// <summary>Runs a plugin's command when its ribbon button is pressed.</summary>
+    /// <remarks>
+    /// The one thing in this code-behind, and it is here because a <c>Click</c> handler is the
+    /// only way to reach a <c>DataTemplate</c>'s data item without introducing a command
+    /// abstraction that would put an <c>ICommand</c> — and therefore <c>System.Windows.Input</c> —
+    /// into the view models, which ADR-0007 forbids and <c>tests/arch</c> enforces.
+    ///
+    /// It contains no logic: it finds the item and invokes it. The error handling that matters
+    /// lives around the delegate itself, in App, where a throwing plugin can be named.
+    /// </remarks>
+    private void OnPluginCommandClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: PluginCommandItem item })
+        {
+            item.Invoke();
+        }
+    }
 }
