@@ -308,6 +308,65 @@ public sealed class FacePassTests
         coveredFarAway.Should().BeCloseTo(coveredAtOrigin, 32);
     }
 
+    [Fact]
+    public void AWhiteBodyIsNotDrawnBrighterThanWhite()
+    {
+        using Fixture fixture = Fixture.Create(128);
+
+        if (fixture.Skipped is not null)
+        {
+            Assert.Skip(fixture.Skipped);
+        }
+
+        // White is the worst case for the energy rule, and not a hypothetical one: white is what a
+        // part is drawn in when it is being printed, and near-white is what most engineering greys
+        // are. If the ambient and diffuse terms can total more than one, the faces bright enough
+        // clip to pure white and whatever shading they were carrying is gone.
+        Color4 white = new(1.0f, 1.0f, 1.0f, 1.0f);
+
+        Pixel saturated = new(255, 255, 255, 255);
+
+        fixture.Pass.Material = SurfaceMaterial.Default;
+        fixture.Draw(Cube(Vec3d.Zero, 1.0), white);
+        int withinBudget = 128 * 128 - fixture.Surface.CountDifferingFrom(saturated, tolerance: 2);
+
+        // The numbers this shader carried before the material became a type: a hemisphere fill
+        // reaching 0.40 and a diffuse term of 0.85, totalling well over one.
+        fixture.Pass.Material = new SurfaceMaterial(0.40f, 0.85f, 0.20f, 48.0f);
+        fixture.Draw(Cube(Vec3d.Zero, 1.0), white);
+        int overBudget = 128 * 128 - fixture.Surface.CountDifferingFrom(saturated, tolerance: 2);
+
+        withinBudget.Should().Be(
+            0,
+            "no pixel of a white body should reach pure white under the default material, because "
+            + "a pixel that has clipped is one whose shading has been thrown away");
+
+        // The comparison is the point. Without it this test would pass just as happily against a
+        // material so dark that nothing could clip, which would be the wrong fix for the right
+        // assertion. The old numbers blow out a few thousand pixels on this cube.
+        overBudget.Should().BeGreaterThan(
+            1_000,
+            "a material whose ambient and diffuse total more than one should visibly clip, or "
+            + $"there is nothing for the rule to prevent -- but it clipped {overBudget} pixels");
+    }
+
+    [Fact]
+    public void TheDefaultMaterialStaysWithinItsEnergyBudget()
+    {
+        SurfaceMaterial.Default.IsWithinEnergyBudget.Should().BeTrue(
+            "the default must not draw a surface brighter than its own colour");
+
+        (SurfaceMaterial.Default.Ambient + SurfaceMaterial.Default.Diffuse)
+            .Should().BeApproximately(
+                1.0f,
+                1e-5f,
+                "the default should use the whole range available to it and none beyond, so that "
+                + "the shading spans as much of it as it can without clipping");
+
+        new SurfaceMaterial(0.40f, 0.85f, 0.20f, 48.0f).IsWithinEnergyBudget.Should().BeFalse(
+            "the rule has to reject something, or it is not a rule");
+    }
+
     // --- Fixtures -----------------------------------------------------------------------------
 
     /// <summary>An axis-aligned cube, four vertices per face so the normals stay flat.</summary>
@@ -438,18 +497,23 @@ public sealed class FacePassTests
         }
 
         /// <summary>Uploads a mesh, frames it isometrically and renders it.</summary>
-        public void Draw(MeshBuffer mesh)
+        /// <param name="mesh">The geometry.</param>
+        /// <param name="colour">The body colour, or null for the pass's default.</param>
+        public void Draw(MeshBuffer mesh, Color4? colour = null)
         {
             using SceneGeometry scene = Upload(mesh);
 
             Camera.LookFrom(StandardView.Isometric);
             Camera.ZoomToFit(scene.Bounds);
 
-            Render(scene, Camera);
+            Render(scene, Camera, colour);
         }
 
         /// <summary>Renders one scene through a camera.</summary>
-        public void Render(SceneGeometry scene, Camera camera)
+        /// <param name="scene">The geometry.</param>
+        /// <param name="camera">Where to view it from.</param>
+        /// <param name="colour">The body colour, or null for the pass's default.</param>
+        public void Render(SceneGeometry scene, Camera camera, Color4? colour = null)
         {
             camera.AspectRatio = (double)Surface.Width / Surface.Height;
 
@@ -469,7 +533,8 @@ public sealed class FacePassTests
 
             Surface.Render(
                 Clear,
-                commands => Pass.Draw(commands, scene, Surface.ConstantBufferAddress, frustum));
+                commands => Pass.Draw(
+                    commands, scene, Surface.ConstantBufferAddress, frustum, colour));
         }
 
         /// <summary>Renders two scenes in the order given and returns the centre pixel.</summary>

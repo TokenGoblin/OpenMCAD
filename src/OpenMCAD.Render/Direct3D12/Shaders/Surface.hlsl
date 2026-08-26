@@ -53,11 +53,32 @@ uint StateOf(uint id)
 cbuffer BodyConstants : register(b1)
 {
     float4 BaseColour;
+
+    // Ambient, diffuse, specular, gloss. Root constants rather than a buffer, because this is
+    // eight floats pushed inline per body -- cheaper than allocating, writing and addressing a
+    // constant buffer for each one.
+    float4 Material;
 };
 
 // One display id per triangle, indexed by SV_PrimitiveID. Read only by the ID pass; the shaded
 // pass leaves it unbound, which is legal because nothing it runs references it.
 StructuredBuffer<uint> EntityIds : register(t0);
+
+// Hemisphere fill: cooler from above, warmer from below, about the world Z up axis. It costs one
+// lerp and does the job an ambient constant cannot -- faces turned away from the key light stay
+// distinguishable from one another instead of flattening into a single dark tone.
+//
+// The two tints are written so that the brightest component of either is exactly one, which leaves
+// the material's ambient term as the only thing setting how bright the fill is. That is what makes
+// "ambient plus diffuse must not exceed one" a rule that can be checked in C# rather than a
+// property of whatever numbers happen to be in this file.
+float3 Fill(float3 n)
+{
+    static const float3 ground = float3(0.62, 0.58, 0.54);
+    static const float3 sky = float3(0.85, 0.90, 1.00);
+
+    return lerp(ground, sky, 0.5 + (0.5 * n.z)) * Material.x;
+}
 
 struct VSInput
 {
@@ -140,15 +161,9 @@ float4 PSMain(VSOutput input, uint primitive : SV_PrimitiveID) : SV_Target
     float diffuse = saturate(dot(n, LightDirection));
 
     float3 halfway = normalize(LightDirection + viewDirection);
-    float specular = pow(saturate(dot(n, halfway)), 48.0) * 0.20;
+    float specular = pow(saturate(dot(n, halfway)), Material.w) * Material.z;
 
-    // Hemisphere fill: cooler from above, warmer from below, about the world Z up axis. It costs
-    // one lerp and does the job an ambient constant cannot -- faces turned away from the key light
-    // stay distinguishable from one another instead of flattening into a single dark tone.
-    float  sky     = 0.5 + (0.5 * n.z);
-    float3 ambient = lerp(float3(0.16, 0.15, 0.14), float3(0.34, 0.36, 0.40), sky);
-
-    float3 lit = (BaseColour.rgb * (ambient + (diffuse * 0.85))) + specular;
+    float3 lit = (BaseColour.rgb * (Fill(n) + (diffuse * Material.y))) + specular;
 
     return float4(ApplyHighlight(lit, StateOf(EntityIds[primitive])), BaseColour.a);
 }
@@ -214,10 +229,10 @@ TransparentOutput PSMainTransparent(VSOutput input, uint primitive : SV_Primitiv
     }
 
     float diffuse = saturate(dot(n, LightDirection));
-    float sky = 0.5 + (0.5 * n.z);
-    float3 ambient = lerp(float3(0.16, 0.15, 0.14), float3(0.34, 0.36, 0.40), sky);
 
-    float3 lit = BaseColour.rgb * (ambient + (diffuse * 0.85));
+    // No highlight on the transparent path. A specular bloom on a surface being seen through
+    // reads as a smear on the glass rather than as a property of the part behind it.
+    float3 lit = BaseColour.rgb * (Fill(n) + (diffuse * Material.y));
     lit = ApplyHighlight(lit, StateOf(EntityIds[primitive]));
 
     float alpha = saturate(BaseColour.a);

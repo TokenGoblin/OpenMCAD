@@ -158,9 +158,12 @@ public sealed class TransparencyPass : IDisposable
     /// <summary>Gets how many bodies the last accumulation drew.</summary>
     public int BodiesDrawn { get; private set; }
 
-    /// <summary>
-    /// Accumulates a scene's transparent faces.
-    /// </summary>
+    /// <summary>Gets or sets how the transparent surfaces respond to the light.</summary>
+    /// <remarks>Kept in step with the shaded pass, so a body does not change material when it
+    /// becomes transparent.</remarks>
+    public SurfaceMaterial Material { get; set; } = SurfaceMaterial.Default;
+
+    /// <summary>Accumulates a scene's transparent faces.</summary>
     /// <param name="commands">An open command list with the transparency targets bound.</param>
     /// <param name="scene">The geometry to draw.</param>
     /// <param name="constantBufferAddress">Where the caller wrote a <see cref="FrameConstants"/>.</param>
@@ -190,7 +193,7 @@ public sealed class TransparencyPass : IDisposable
         commands.SetPipelineState(_accumulate);
         commands.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         commands.SetGraphicsRootConstantBufferView(0, constantBufferAddress);
-        commands.SetGraphicsRoot32BitConstants(1, colour, 0);
+        commands.SetGraphicsRoot32BitConstants(1, BodyConstants.For(colour, Material), 0);
 
         commands.SetGraphicsRootShaderResourceView(
             3, highlightStates == 0 ? _noHighlights.GPUVirtualAddress : highlightStates);
@@ -311,7 +314,8 @@ public sealed class TransparencyPass : IDisposable
                     RootParameterType.ConstantBufferView,
                     new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic),
                     ShaderVisibility.All),
-                new RootParameter1(new RootConstants(1, 0, 4), ShaderVisibility.Pixel),
+                new RootParameter1(
+                    new RootConstants(1, 0, BodyConstants.DwordCount), ShaderVisibility.Pixel),
                 new RootParameter1(
                     RootParameterType.ShaderResourceView,
                     new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic),

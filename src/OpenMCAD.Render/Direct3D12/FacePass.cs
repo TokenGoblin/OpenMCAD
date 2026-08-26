@@ -214,13 +214,13 @@ public sealed class FacePass : IDisposable
             return;
         }
 
-        Color4 bodyColour = colour ?? DefaultColour;
+        BodyConstants constants = BodyConstants.For(colour ?? DefaultColour, Material);
 
         commands.SetGraphicsRootSignature(_rootSignature);
         commands.SetPipelineState(_pipelineState);
         commands.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         commands.SetGraphicsRootConstantBufferView(0, constantBufferAddress);
-        commands.SetGraphicsRoot32BitConstants(1, bodyColour, 0);
+        commands.SetGraphicsRoot32BitConstants(1, constants, 0);
 
         // Bound once for the whole scene. A root descriptor of zero is legal and the shader
         // handles it: GetDimensions reports nothing, so every entity reads as unhighlighted.
@@ -299,6 +299,13 @@ public sealed class FacePass : IDisposable
         return length < Tolerance.Linear ? camera.Backward : direction / length;
     }
 
+    /// <summary>Gets or sets how the shaded surfaces respond to the light.</summary>
+    /// <remarks>
+    /// Scene-wide rather than per body. Nothing produces per-body appearance yet — the snapshot
+    /// does not carry any — so a single default is the honest shape for this until something does.
+    /// </remarks>
+    public SurfaceMaterial Material { get; set; } = SurfaceMaterial.Default;
+
     /// <summary>Gets the colour bodies are drawn in when the caller names none.</summary>
     /// <remarks>
     /// A warm mid grey. Steel and aluminium read as neutral, and a saturated default would fight
@@ -311,9 +318,9 @@ public sealed class FacePass : IDisposable
     /// </summary>
     /// <remarks>
     /// The frame constants are a root descriptor rather than a descriptor table, so there is no
-    /// descriptor heap to bind and no per-frame heap management for a single buffer. The body
-    /// colour is four root constants, which is cheaper still: pushing sixteen bytes inline beats
-    /// allocating, writing and addressing a constant buffer per body.
+    /// descriptor heap to bind and no per-frame heap management for a single buffer. The body's
+    /// colour and material are root constants, which is cheaper still: pushing thirty-two bytes
+    /// inline beats allocating, writing and addressing a constant buffer per body.
     /// </remarks>
     private static ID3D12RootSignature CreateRootSignature(ID3D12Device device)
     {
@@ -325,7 +332,7 @@ public sealed class FacePass : IDisposable
                     new RootDescriptor1(0, 0, RootDescriptorFlags.DataStatic),
                     ShaderVisibility.All),
                 new RootParameter1(
-                    new RootConstants(1, 0, 4),
+                    new RootConstants(1, 0, BodyConstants.DwordCount),
                     ShaderVisibility.Pixel),
 
                 // t0: this body's per-triangle display ids. t1: the highlight state of every
