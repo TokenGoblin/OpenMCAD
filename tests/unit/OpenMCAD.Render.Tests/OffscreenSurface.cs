@@ -231,6 +231,17 @@ public sealed class OffscreenSurface : IDisposable
         ArgumentNullException.ThrowIfNull(msaa);
         ArgumentNullException.ThrowIfNull(record);
 
+        // Both the resolve and the copy require identical dimensions, and a mismatch is only
+        // discovered when the command list refuses to close -- reporting a failure that names
+        // neither the resolve nor the size.
+        if (msaa.Width != Width || msaa.Height != Height)
+        {
+            throw new ArgumentException(
+                $"The multisample target is {msaa.Width}x{msaa.Height} and this surface is "
+                + $"{Width}x{Height}. They must match to resolve between them.",
+                nameof(msaa));
+        }
+
         _allocator.Reset();
         _commands.Reset(_allocator);
 

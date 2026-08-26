@@ -63,6 +63,7 @@ public sealed class ViewportRenderer : IDisposable
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
     private PickRequest? _pending;
     private HighlightTable _highlightTable = HighlightTable.Empty;
+    private Color4 _background = new(0.22f, 0.24f, 0.27f, 1.0f);
     private ulong _frameConstantAddress;
     private Frustum? _frameFrustum;
     private SceneGeometry? _scene;
@@ -105,7 +106,7 @@ public sealed class ViewportRenderer : IDisposable
 
         // Before the passes: each bakes the sample count into its pipeline state, and the device
         // refuses a state whose sample count does not match the target it is used with.
-        _msaa = new MsaaTarget(device.Device, Background);
+        _msaa = new MsaaTarget(device.Device, _background);
 
         _faces = new FacePass(
             device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
@@ -134,7 +135,21 @@ public sealed class ViewportRenderer : IDisposable
     /// swallows dark faces and hides silhouettes, and white makes every edge look like glare. A
     /// neutral mid-tone is what CAD packages settle on for the same reason.
     /// </remarks>
-    public Color4 Background { get; set; } = new(0.22f, 0.24f, 0.27f, 1.0f);
+    public Color4 Background
+    {
+        get => _background;
+
+        set
+        {
+            _background = value;
+
+            // The multisampled target's optimised clear value is fixed when its texture is
+            // created, so changing this without telling it would clear to one colour while the
+            // resource was optimised for another -- a silent loss of the fast-clear path, and a
+            // debug-layer warning about a mismatch.
+            _msaa.ClearColour = value;
+        }
+    }
 
     /// <summary>Gets the camera the scene is drawn through.</summary>
     /// <remarks>

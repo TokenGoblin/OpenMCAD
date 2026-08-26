@@ -41,7 +41,8 @@ public sealed class MsaaTarget : IDisposable
     private readonly ID3D12Device _device;
     private readonly ID3D12DescriptorHeap _rtvHeap;
     private readonly ID3D12DescriptorHeap _dsvHeap;
-    private readonly Color4 _clearColour;
+
+    private Color4 _clearColour;
 
     private ID3D12Resource? _colour;
     private ID3D12Resource? _depth;
@@ -65,14 +66,54 @@ public sealed class MsaaTarget : IDisposable
         _clearColour = clearColour;
         SampleCount = Negotiate(device, requestedSamples);
 
-        _rtvHeap = device.CreateDescriptorHeap(new DescriptorHeapDescription(
+        // Both created before either is assigned. Assigning the first and then throwing on the
+        // second would strand its COM reference for the life of the process: the constructor never
+        // completes, so Dispose is never called and there is no finalizer to catch it.
+        ID3D12DescriptorHeap rtv = device.CreateDescriptorHeap(new DescriptorHeapDescription(
             DescriptorHeapType.RenderTargetView, 1, DescriptorHeapFlags.None));
 
-        _dsvHeap = device.CreateDescriptorHeap(new DescriptorHeapDescription(
-            DescriptorHeapType.DepthStencilView, 1, DescriptorHeapFlags.None));
+        ID3D12DescriptorHeap dsv;
 
+        try
+        {
+            dsv = device.CreateDescriptorHeap(new DescriptorHeapDescription(
+                DescriptorHeapType.DepthStencilView, 1, DescriptorHeapFlags.None));
+        }
+        catch
+        {
+            rtv.Dispose();
+            throw;
+        }
+
+        _rtvHeap = rtv;
+        _dsvHeap = dsv;
         _rtvHeap.Name = "msaa render target view heap";
         _dsvHeap.Name = "msaa depth stencil view heap";
+    }
+
+    /// <summary>Gets or sets the colour this target is cleared to.</summary>
+    /// <remarks>
+    /// Changing it discards the textures so they can be recreated with a matching optimised clear
+    /// value. A committed resource's clear value is fixed when it is created, so a target whose
+    /// colour was changed underneath it would be cleared to one value and optimised for another —
+    /// which is not an error, just a silent loss of the fast-clear path and a debug-layer warning
+    /// about a mismatch. The viewport's background is a legitimate thing for an application to
+    /// change, so it cannot simply be made read-only.
+    /// </remarks>
+    public Color4 ClearColour
+    {
+        get => _clearColour;
+
+        set
+        {
+            if (_clearColour == value)
+            {
+                return;
+            }
+
+            _clearColour = value;
+            Invalidate();
+        }
     }
 
     /// <summary>Gets how many samples per pixel this actually has.</summary>
@@ -98,10 +139,25 @@ public sealed class MsaaTarget : IDisposable
             "The multisample target has no size yet. Resize it before using it.");
 
     /// <summary>Gets the render target view to bind.</summary>
-    public CpuDescriptorHandle RenderTargetView => _rtvHeap.GetCPUDescriptorHandleForHeapStart();
+    /// <exception cref="InvalidOperationException">Nothing has been allocated yet.</exception>
+    /// <remarks>
+    /// Guarded, because the views are only written inside <see cref="Resize"/>. Before that the
+    /// heap holds uninitialised memory, and binding it is a GPU fault or a removed device rather
+    /// than anything that names the mistake.
+    /// </remarks>
+    public CpuDescriptorHandle RenderTargetView
+        => _colour is null
+            ? throw new InvalidOperationException(
+                "The multisample target has no size yet. Resize it before binding it.")
+            : _rtvHeap.GetCPUDescriptorHandleForHeapStart();
 
     /// <summary>Gets the depth stencil view to bind.</summary>
-    public CpuDescriptorHandle DepthStencilView => _dsvHeap.GetCPUDescriptorHandleForHeapStart();
+    /// <exception cref="InvalidOperationException">Nothing has been allocated yet.</exception>
+    public CpuDescriptorHandle DepthStencilView
+        => _depth is null
+            ? throw new InvalidOperationException(
+                "The multisample target has no size yet. Resize it before binding it.")
+            : _dsvHeap.GetCPUDescriptorHandleForHeapStart();
 
     /// <summary>Gets the state the colour texture rests in between frames.</summary>
     public static ResourceStates RestingState => ResourceStates.RenderTarget;
@@ -121,8 +177,12 @@ public sealed class MsaaTarget : IDisposable
             return;
         }
 
-        _colour?.Dispose();
-        _depth?.Dispose();
+        // Released and forgotten *before* anything is allocated. Disposing without nulling means
+        // a failure part-way -- running out of video memory on a large resize is the realistic
+        // case, at roughly 130 MB per attachment for 4K at four samples -- leaves the fields
+        // pointing at released textures while Width and Height still describe the old size. The
+        // next frame's Resize would then take the unchanged-size early return and bind them.
+        Invalidate();
 
         _colour = _device.CreateCommittedResource(
             HeapType.Default,
@@ -230,13 +290,21 @@ public sealed class MsaaTarget : IDisposable
 
         _disposed = true;
 
+        Invalidate();
+        _dsvHeap.Dispose();
+        _rtvHeap.Dispose();
+    }
+
+    /// <summary>Releases the textures and forgets the size, so the next resize rebuilds.</summary>
+    private void Invalidate()
+    {
         _colour?.Dispose();
         _depth?.Dispose();
         _colour = null;
         _depth = null;
 
-        _dsvHeap.Dispose();
-        _rtvHeap.Dispose();
+        Width = 0;
+        Height = 0;
     }
 
     /// <summary>
@@ -249,7 +317,17 @@ public sealed class MsaaTarget : IDisposable
     /// </remarks>
     private static int Negotiate(ID3D12Device device, int requested)
     {
-        for (int samples = System.Math.Clamp(requested, 1, 16); samples > 1; samples >>= 1)
+        // Rounded down to a power of two first. Halving from a count that is not one walks through
+        // more counts that are not one and falls out at the bottom: asking for six checked six and
+        // three, found neither supported, and returned one on a device offering both four and two.
+        int start = System.Math.Clamp(requested, 1, 16);
+
+        while (start > 1 && (start & (start - 1)) != 0)
+        {
+            start &= start - 1;
+        }
+
+        for (int samples = start; samples > 1; samples >>= 1)
         {
             uint colour = device.CheckMultisampleQualityLevels(
                 SwapChainTarget.BackBufferFormat, (uint)samples, MultisampleQualityLevelFlags.None);

@@ -92,9 +92,15 @@ public sealed class MsaaTargetTests
         using Fixture multisampled = Fixture.Create(4);
         using Fixture plain = Fixture.Create(1);
 
-        if (multisampled.Skipped is { } reason)
+        // Both, not just the first. Fixture.Create turns a device failure into a skipped fixture
+        // with null members, and two WARP devices alive at once is exactly when the second is
+        // likely to fail -- which would surface as a NullReferenceException below rather than a
+        // skip.
+        string? skipped = multisampled.Skipped ?? plain.Skipped;
+
+        if (skipped is not null)
         {
-            Assert.Skip(reason);
+            Assert.Skip(skipped);
             return;
         }
 
@@ -153,6 +159,81 @@ public sealed class MsaaTargetTests
 
         Action act = () => _ = fixture.Target.Colour;
         act.Should().Throw<InvalidOperationException>().WithMessage("*Resize*");
+    }
+
+    [Fact]
+    public void ANonPowerOfTwoRequestFallsToTheNextSupportedCountNotToOne()
+    {
+        using Fixture four = Fixture.Create(4);
+
+        if (four.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        if (four.Target.SampleCount < 4)
+        {
+            Assert.Skip("this device does not support four samples, so there is nothing to fall from");
+            return;
+        }
+
+        // Halving from a count that is not a power of two walks through more counts that are not,
+        // and falls out at the bottom: asking for six checked six and three, found neither
+        // supported, and returned one on a device offering both four and two. Nothing crashed and
+        // nothing complained -- the viewport was simply unsmoothed.
+        using Fixture six = Fixture.Create(6);
+
+        six.Target.SampleCount.Should().Be(
+            4, "six should round down to four, not collapse to one");
+    }
+
+    [Fact]
+    public void ChangingTheClearColourRebuildsSoTheOptimisedValueStillMatches()
+    {
+        using Fixture fixture = Fixture.Create(4);
+
+        if (fixture.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        // A committed resource's optimised clear value is fixed when it is created. Changing the
+        // colour without rebuilding leaves the target cleared to one value and optimised for
+        // another, which is not an error -- just a silently lost fast-clear path and a debug-layer
+        // warning. The texture must therefore be discarded.
+        nint before = fixture.Target.Colour.NativePointer;
+
+        fixture.Target.ClearColour = new Color4(0.9f, 0.1f, 0.1f, 1.0f);
+
+        fixture.Target.IsAllocated.Should().BeFalse("the old texture carried the old clear value");
+
+        fixture.Target.Resize(Size, Size);
+
+        fixture.Target.Colour.NativePointer.Should().NotBe(before);
+        fixture.Target.ClearColour.R.Should().BeApproximately(0.9f, 1e-5f);
+    }
+
+    [Fact]
+    public void ViewsAreRefusedBeforeAnythingIsAllocated()
+    {
+        using Fixture fixture = Fixture.Create(4, size: 0);
+
+        if (fixture.Skipped is { } reason)
+        {
+            Assert.Skip(reason);
+            return;
+        }
+
+        // The views are only written inside Resize. Handing out a descriptor into an untouched
+        // heap binds uninitialised memory, which is a GPU fault or a removed device rather than
+        // anything naming the mistake.
+        Action renderTarget = () => _ = fixture.Target.RenderTargetView;
+        Action depthStencil = () => _ = fixture.Target.DepthStencilView;
+
+        renderTarget.Should().Throw<InvalidOperationException>().WithMessage("*Resize*");
+        depthStencil.Should().Throw<InvalidOperationException>().WithMessage("*Resize*");
     }
 
     // --- Fixture ------------------------------------------------------------------------------
