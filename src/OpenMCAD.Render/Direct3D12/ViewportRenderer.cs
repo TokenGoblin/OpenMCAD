@@ -58,6 +58,8 @@ public sealed class ViewportRenderer : IDisposable
     private readonly EnvironmentPass _environment;
     private readonly AxisOverlayPass _axes;
     private readonly MsaaTarget _msaa;
+    private readonly TransparencyTarget _transparency;
+    private readonly TransparencyPass _transparent;
     private readonly UploadRing _uploads;
 
     private DisplaySnapshot _snapshot = DisplaySnapshot.Empty;
@@ -137,6 +139,12 @@ public sealed class ViewportRenderer : IDisposable
         _axes = new AxisOverlayPass(
             device.Device, AxisStyle.Default, SwapChainTarget.BackBufferFormat,
             DepthBuffer.DepthFormat, optimiseShaders: true, _msaa.SampleCount);
+
+        _transparency = new TransparencyTarget(device.Device, _msaa.SampleCount);
+
+        _transparent = new TransparencyPass(
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
         _uploads = new UploadRing(device.Device, UploadRingBytes, "viewport constants");
     }
 
@@ -205,6 +213,26 @@ public sealed class ViewportRenderer : IDisposable
 
     /// <summary>Gets or sets whether to draw the ground grid.</summary>
     public bool ShowGrid { get; set; } = true;
+
+    /// <summary>
+    /// Gets or sets how opaque the scene is drawn, from zero to one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A single figure for the whole scene, because there is nowhere yet to record it per body: a
+    /// <see cref="DisplaySnapshot"/> carries geometry and identity but no appearance. Materials
+    /// arrive with the document model, and this becomes the default they override.
+    /// </para>
+    /// <para>
+    /// Below one, the scene is drawn through the order-independent path instead of the opaque one.
+    /// That is the switch rather than a blend factor on the opaque pass: transparency is a
+    /// different algorithm, not a parameter of the same one.
+    /// </para>
+    /// </remarks>
+    public double Opacity { get; set; } = 1.0;
+
+    /// <summary>Gets whether the scene is currently drawn as transparent.</summary>
+    public bool IsTransparent => Opacity < 0.999;
 
     /// <summary>Gets or sets how the origin triad and corner gizmo look.</summary>
     public AxisStyle AxisStyle { get; set; } = AxisStyle.Default;
@@ -275,6 +303,11 @@ public sealed class ViewportRenderer : IDisposable
         SyncScene();
         _highlights.Update(_highlightTable);
         _msaa.Resize(_target.Width, _target.Height);
+
+        if (IsTransparent)
+        {
+            _transparency.Resize(_target.Width, _target.Height);
+        }
 
         _allocators[index].Reset();
         _commands.Reset(_allocators[index]);
@@ -423,6 +456,8 @@ public sealed class ViewportRenderer : IDisposable
         _disposed = true;
 
         _scene?.Dispose();
+        _transparent.Dispose();
+        _transparency.Dispose();
         _msaa.Dispose();
         _axes.Dispose();
         _environment.Dispose();
@@ -618,7 +653,17 @@ public sealed class ViewportRenderer : IDisposable
         Frustum frustum = Frustum.FromViewProjection(projection * Camera.ViewMatrix());
         _frameFrustum = frustum;
 
-        _faces.Draw(_commands, _scene, address, frustum, colour: null, _highlights.Address);
+        if (IsTransparent)
+        {
+            // A separate algorithm, not a blend factor on the opaque pass: the faces accumulate
+            // into their own buffers and are resolved back after the edges, so the edges of a
+            // transparent body still read against whatever is behind it.
+            AccumulateTransparent(address, frustum);
+        }
+        else
+        {
+            _faces.Draw(_commands, _scene, address, frustum, colour: null, _highlights.Address);
+        }
 
         // Edges last, over the faces they bound. They carry their own depth bias rather than
         // relying on draw order: order alone would put an edge in front of the face behind it as
@@ -631,6 +676,58 @@ public sealed class ViewportRenderer : IDisposable
         {
             _edges.Reset();
         }
+
+        if (IsTransparent)
+        {
+            CompositeTransparent();
+        }
+    }
+
+    /// <summary>Draws the scene into the transparency buffers instead of the colour target.</summary>
+    /// <remarks>
+    /// The buffers are cleared here rather than with the rest of the frame, because they are only
+    /// allocated when something is transparent — clearing them unconditionally would mean paying
+    /// for two full-screen targets on every frame of a model that has no transparency in it.
+    /// </remarks>
+    private void AccumulateTransparent(ulong constants, Frustum? frustum)
+    {
+        _transparency.Transition(
+            _commands, TransparencyTarget.RestingState, ResourceStates.RenderTarget);
+
+        CpuDescriptorHandle[] targets = _transparency.RenderTargetViews();
+
+        // Against the same depth buffer the opaque pass used, so anything already drawn still
+        // occludes. Revealage clears to one: nothing drawn yet, everything behind visible.
+        _commands.OMSetRenderTargets(targets, _msaa.DepthStencilView);
+        _commands.ClearRenderTargetView(targets[0], new Color4(0, 0, 0, 0));
+        _commands.ClearRenderTargetView(targets[1], new Color4(1, 1, 1, 1));
+
+        Color4 colour = new(0.72f, 0.71f, 0.68f, (float)System.Math.Clamp(Opacity, 0.0, 1.0));
+
+        _transparent.Accumulate(
+            _commands, _scene!, constants, colour, frustum, _highlights.Address);
+
+        _transparency.Transition(
+            _commands, ResourceStates.RenderTarget, TransparencyTarget.RestingState);
+
+        // Back to the colour target, so the edges and axes that follow draw where they should.
+        _commands.OMSetRenderTargets(_msaa.RenderTargetView, _msaa.DepthStencilView);
+    }
+
+    /// <summary>Resolves the accumulated transparency over the colour target.</summary>
+    private void CompositeTransparent()
+    {
+        CompositeConstants constants = new()
+        {
+            Multisampled = _msaa.IsMultisampled ? 1u : 0u,
+            SampleCount = (uint)_msaa.SampleCount,
+        };
+
+        Span<byte> destination = _uploads.Allocate(CompositeConstants.SizeInBytes, out int offset);
+        MemoryMarshal.Write(destination, in constants);
+
+        _transparent.Composite(
+            _commands, _transparency, _uploads.Resource.GPUVirtualAddress + (ulong)offset);
     }
 
     /// <summary>

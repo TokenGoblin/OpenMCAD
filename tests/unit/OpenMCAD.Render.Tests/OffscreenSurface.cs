@@ -285,6 +285,93 @@ public sealed class OffscreenSurface : IDisposable
         WaitForGpu();
     }
 
+    /// <summary>
+    /// Runs an opaque pass, a transparency accumulation and a composite, and reads the result.
+    /// </summary>
+    /// <param name="msaa">Where the opaque pass and the composite draw.</param>
+    /// <param name="transparency">The accumulation and revealage buffers.</param>
+    /// <param name="clear">The background colour.</param>
+    /// <param name="opaque">What to draw before the transparency.</param>
+    /// <param name="accumulate">What to accumulate.</param>
+    /// <param name="composite">How to resolve it back over the opaque image.</param>
+    /// <remarks>
+    /// The three stages are separate callbacks because they bind different targets, and the
+    /// barriers between them are the part most easily got wrong: the accumulation buffers are
+    /// render targets while being written and shader resources while being read, and a missing
+    /// transition there is undefined behaviour that happens to work on some drivers.
+    /// </remarks>
+    public void RenderTransparency(
+        MsaaTarget msaa,
+        TransparencyTarget transparency,
+        Color4 clear,
+        Action<ID3D12GraphicsCommandList> opaque,
+        Action<ID3D12GraphicsCommandList> accumulate,
+        Action<ID3D12GraphicsCommandList> composite)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(msaa);
+        ArgumentNullException.ThrowIfNull(transparency);
+        ArgumentNullException.ThrowIfNull(opaque);
+        ArgumentNullException.ThrowIfNull(accumulate);
+        ArgumentNullException.ThrowIfNull(composite);
+
+        _allocator.Reset();
+        _commands.Reset(_allocator);
+
+        _commands.RSSetViewport(0, 0, Width, Height);
+        _commands.RSSetScissorRect(Width, Height);
+
+        // Opaque, into the colour target and its depth.
+        _commands.OMSetRenderTargets(msaa.RenderTargetView, msaa.DepthStencilView);
+        _commands.ClearRenderTargetView(msaa.RenderTargetView, clear);
+
+        _commands.ClearDepthStencilView(
+            msaa.DepthStencilView, ClearFlags.Depth, DepthBuffer.ClearDepth, 0);
+
+        opaque(_commands);
+
+        // Transparency, into its own two buffers against the same depth. Revealage clears to one
+        // because nothing has been drawn and everything behind is fully visible.
+        transparency.Transition(
+            _commands, TransparencyTarget.RestingState, ResourceStates.RenderTarget);
+
+        CpuDescriptorHandle[] targets = transparency.RenderTargetViews();
+
+        _commands.OMSetRenderTargets(targets, msaa.DepthStencilView);
+        _commands.ClearRenderTargetView(targets[0], new Color4(0, 0, 0, 0));
+        _commands.ClearRenderTargetView(targets[1], new Color4(1, 1, 1, 1));
+
+        accumulate(_commands);
+
+        transparency.Transition(
+            _commands, ResourceStates.RenderTarget, TransparencyTarget.RestingState);
+
+        // Composite back over the opaque image.
+        _commands.OMSetRenderTargets(msaa.RenderTargetView, null);
+        composite(_commands);
+
+        msaa.ResolveTo(_commands, _colour, ResourceStates.RenderTarget);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.RenderTarget, ResourceStates.CopySource);
+
+        _commands.CopyTextureRegion(
+            new TextureCopyLocation(_readback, _footprint),
+            0,
+            0,
+            0,
+            new TextureCopyLocation(_colour, 0),
+            null);
+
+        _commands.ResourceBarrierTransition(
+            _colour, ResourceStates.CopySource, ResourceStates.RenderTarget);
+
+        _commands.Close();
+        Device.Queue.ExecuteCommandList(_commands);
+
+        WaitForGpu();
+    }
+
     /// <summary>Reads one pixel out of the last rendered frame.</summary>
     /// <param name="x">Column, from the left.</param>
     /// <param name="y">Row, from the top.</param>

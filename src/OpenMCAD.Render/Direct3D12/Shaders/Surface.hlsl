@@ -160,3 +160,75 @@ uint PSMainId(VSOutput input, uint primitive : SV_PrimitiveID) : SV_Target
 {
     return EntityIds[primitive];
 }
+
+// --- Weighted-blended transparency (P2-T10) ---------------------------------------------------
+//
+// Paired with the same VSMain as the opaque and ID passes, for the same reason: a transparent face
+// must occupy exactly the pixels its opaque version would, or a body fading in and out would
+// appear to change shape as it did so.
+
+struct TransparentOutput
+{
+    float4 Accumulation : SV_Target0;
+    float  Revealage    : SV_Target1;
+};
+
+// How much a fragment counts, given how far away it is.
+//
+// The weight falls off sharply with depth so that nearer surfaces dominate, which is what makes an
+// unordered sum resemble an ordered blend. The constants are McGuire and Bavoil's, and the ranges
+// matter: too flat and everything averages into fog, too steep and the far surfaces vanish
+// entirely rather than showing faintly.
+//
+// Clamped at both ends because the expression spans several orders of magnitude and the target is
+// a half float -- unclamped, near fragments saturate to infinity and far ones round to zero, which
+// are the two ways this technique visibly fails.
+float TransparencyWeight(float viewDepth, float alpha)
+{
+    float falloff = 10.0 / (1e-5 + pow(abs(viewDepth) / 5.0, 2.0) + pow(abs(viewDepth) / 200.0, 6.0));
+
+    return alpha * clamp(falloff, 1e-2, 3e3);
+}
+
+TransparentOutput PSMainTransparent(VSOutput input, uint primitive : SV_PrimitiveID)
+{
+    float3 n = input.Normal;
+
+    if (dot(n, n) < 1e-12)
+    {
+        n = cross(ddx(input.World), ddy(input.World));
+
+        if (dot(n, n) < 1e-30)
+        {
+            n = float3(0.0, 0.0, 1.0);
+        }
+    }
+
+    n = normalize(n);
+
+    float3 viewDirection = normalize(CameraPosition - input.World);
+
+    if (dot(n, viewDirection) < 0.0)
+    {
+        n = -n;
+    }
+
+    float diffuse = saturate(dot(n, LightDirection));
+    float sky = 0.5 + (0.5 * n.z);
+    float3 ambient = lerp(float3(0.16, 0.15, 0.14), float3(0.34, 0.36, 0.40), sky);
+
+    float3 lit = BaseColour.rgb * (ambient + (diffuse * 0.85));
+    lit = ApplyHighlight(lit, StateOf(EntityIds[primitive]));
+
+    float alpha = saturate(BaseColour.a);
+    float weight = TransparencyWeight(length(CameraPosition - input.World), alpha);
+
+    TransparentOutput output;
+
+    // Both of these are commutative, which is the whole point: the accumulation is summed and the
+    // revealage multiplied, so neither depends on the order fragments happen to arrive in.
+    output.Accumulation = float4(lit * alpha, alpha) * weight;
+    output.Revealage = alpha;
+
+    return output;
+}
