@@ -1,0 +1,343 @@
+using System.Collections.Immutable;
+
+namespace OpenMCAD.Core.Documents;
+
+/// <summary>
+/// A part document: its parameters, its features, what they produced, and the geometry they refer
+/// to.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>Immutable, with every change producing a new document.</b> §5.4 requires that nothing mutates
+/// outside a transaction, and names internal setters as the mechanism. This goes one further and
+/// makes the state unchangeable altogether: the <c>With…</c> methods below are <see langword="internal"/>,
+/// so only a transaction in this assembly can produce a new version, and no amount of holding a
+/// reference lets a caller alter the one they have.
+/// </para>
+/// <para>
+/// That is not gold-plating; it is what makes the rest of the phase cheap. Undo becomes holding an
+/// earlier reference rather than replaying inverse operations (P3-T17). A rebuild running on the
+/// kernel thread reads a document that cannot change underneath it, which is the same reason the
+/// viewport renders from an immutable snapshot. And "identical after undo, asserted by full graph
+/// comparison" — Phase 3's fourth exit criterion — is a comparison the type can answer itself.
+/// The cost is allocation per edit, and the collections here share structure, so an edit to one
+/// feature copies a spine of pointers rather than the document.
+/// </para>
+/// <para>
+/// <b>The feature list is order and the inputs are truth.</b> <see cref="Features"/> is the
+/// sequence the user arranged and sees in the tree. What must be evaluated before what comes from
+/// each feature's declared inputs, and building that graph is P3-T03. Nothing here should be read
+/// as implying that a feature depends on the one before it.
+/// </para>
+/// </remarks>
+public sealed class Document
+{
+    private readonly ImmutableDictionary<FeatureId, Feature> _featuresById;
+    private readonly ImmutableDictionary<BodyId, Body> _bodiesById;
+    private readonly ImmutableDictionary<string, Parameter> _parametersByName;
+
+    private Document(
+        ImmutableArray<Feature> features,
+        ImmutableDictionary<FeatureId, Feature> featuresById,
+        ImmutableDictionary<BodyId, Body> bodiesById,
+        ImmutableDictionary<string, Parameter> parametersByName,
+        ImmutableArray<ReferenceGeometry> references,
+        DocumentMetadata metadata,
+        long version)
+    {
+        Features = features;
+        _featuresById = featuresById;
+        _bodiesById = bodiesById;
+        _parametersByName = parametersByName;
+        References = references;
+        Metadata = metadata;
+        Version = version;
+    }
+
+    /// <summary>Gets the features, in the order the user arranged them.</summary>
+    public ImmutableArray<Feature> Features { get; }
+
+    /// <summary>Gets the reference geometry: datum planes, axes, points and frames.</summary>
+    public ImmutableArray<ReferenceGeometry> References { get; }
+
+    /// <summary>Gets the document's properties.</summary>
+    public DocumentMetadata Metadata { get; }
+
+    /// <summary>
+    /// Gets which version of this document's history this is. Increases with every change.
+    /// </summary>
+    /// <remarks>
+    /// Not a revision in the engineering sense — that lives in <see cref="DocumentMetadata"/> and
+    /// means something to a person. This one exists so that two documents can be told apart, so a
+    /// cache can know whether what it holds is current, and so a rebuild that finishes late can be
+    /// recognised as superseded rather than applied over a newer state.
+    /// </remarks>
+    public long Version { get; }
+
+    /// <summary>Gets the bodies the features have produced.</summary>
+    public IReadOnlyCollection<Body> Bodies => _bodiesById.Values.ToImmutableArray();
+
+    /// <summary>Gets the document's named values.</summary>
+    public IReadOnlyCollection<Parameter> Parameters => _parametersByName.Values.ToImmutableArray();
+
+    /// <summary>Gets an empty document, with origin geometry and nothing else.</summary>
+    /// <returns>The document.</returns>
+    public static Document Empty() => new(
+        [],
+        ImmutableDictionary<FeatureId, Feature>.Empty,
+        ImmutableDictionary<BodyId, Body>.Empty,
+        ImmutableDictionary.Create<string, Parameter>(Parameter.NameComparer),
+        [.. ReferenceGeometry.StandardDatums()],
+        DocumentMetadata.Empty,
+        version: 0);
+
+    /// <summary>Finds a feature by its id.</summary>
+    /// <param name="id">Which feature.</param>
+    /// <returns>The feature, or <see langword="null"/> if this document has no such feature.</returns>
+    public Feature? FindFeature(FeatureId id)
+        => _featuresById.TryGetValue(id, out Feature? feature) ? feature : null;
+
+    /// <summary>Finds a body by its id.</summary>
+    /// <param name="id">Which body.</param>
+    /// <returns>The body, or <see langword="null"/> if this document has no such body.</returns>
+    public Body? FindBody(BodyId id) => _bodiesById.TryGetValue(id, out Body? body) ? body : null;
+
+    /// <summary>Finds a parameter by name.</summary>
+    /// <param name="name">What it is called, compared without regard to case.</param>
+    /// <returns>The parameter, or <see langword="null"/> if there is none by that name.</returns>
+    public Parameter? FindParameter(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        return _parametersByName.TryGetValue(name, out Parameter? parameter) ? parameter : null;
+    }
+
+    /// <summary>Gets the bodies a given feature produced.</summary>
+    /// <param name="owner">Which feature.</param>
+    /// <returns>Its bodies, in no particular order.</returns>
+    public ImmutableArray<Body> BodiesOf(FeatureId owner)
+    {
+        ImmutableArray<Body>.Builder found = ImmutableArray.CreateBuilder<Body>();
+
+        foreach (Body body in _bodiesById.Values)
+        {
+            if (body.Owner == owner)
+            {
+                found.Add(body);
+            }
+        }
+
+        return found.ToImmutable();
+    }
+
+    /// <summary>Adds a feature to the end of the tree.</summary>
+    /// <param name="feature">The feature.</param>
+    /// <returns>The new document.</returns>
+    /// <exception cref="ArgumentException">A feature with that id is already present.</exception>
+    internal Document WithFeatureAdded(Feature feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+
+        if (_featuresById.ContainsKey(feature.Id))
+        {
+            throw new ArgumentException(
+                $"This document already contains {feature.Id}. Adding a second feature under one "
+                + "id would make every lookup ambiguous and every reference to it undecidable.",
+                nameof(feature));
+        }
+
+        return With(
+            features: Features.Add(feature),
+            featuresById: _featuresById.Add(feature.Id, feature));
+    }
+
+    /// <summary>Replaces a feature, keeping its position in the tree.</summary>
+    /// <param name="feature">The replacement, carrying the same id.</param>
+    /// <returns>The new document.</returns>
+    /// <exception cref="ArgumentException">No feature with that id is present.</exception>
+    internal Document WithFeatureReplaced(Feature feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+
+        int index = IndexOf(feature.Id);
+
+        if (index < 0)
+        {
+            throw new ArgumentException(
+                $"This document contains no {feature.Id}, so there is nothing to replace. Adding a "
+                + "feature and replacing one are different intentions and are kept separate so a "
+                + "typo in an id cannot silently become an insertion.",
+                nameof(feature));
+        }
+
+        return With(
+            features: Features.SetItem(index, feature),
+            featuresById: _featuresById.SetItem(feature.Id, feature));
+    }
+
+    /// <summary>Removes a feature, and every body it produced.</summary>
+    /// <param name="id">Which feature.</param>
+    /// <returns>The new document.</returns>
+    /// <exception cref="ArgumentException">No feature with that id is present.</exception>
+    /// <remarks>
+    /// Removing the bodies with it is not tidying up. A body names its producer, so a body left
+    /// behind would point at a feature that is gone — and it could never be rebuilt, because the
+    /// thing that knew how to build it no longer exists.
+    /// </remarks>
+    internal Document WithFeatureRemoved(FeatureId id)
+    {
+        int index = IndexOf(id);
+
+        if (index < 0)
+        {
+            throw new ArgumentException(
+                $"This document contains no {id}, so there is nothing to remove.", nameof(id));
+        }
+
+        ImmutableDictionary<BodyId, Body> bodies = _bodiesById;
+
+        foreach (Body body in BodiesOf(id))
+        {
+            bodies = bodies.Remove(body.Id);
+        }
+
+        return With(
+            features: Features.RemoveAt(index),
+            featuresById: _featuresById.Remove(id),
+            bodiesById: bodies);
+    }
+
+    /// <summary>Moves a feature to a different position in the tree.</summary>
+    /// <param name="id">Which feature.</param>
+    /// <param name="index">Where it should end up.</param>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// Only the order changes. Whether the move is legal — whether it puts a feature before
+    /// something it consumes — is a question about the dependency graph, which P3-T03 builds and
+    /// P3-T02's commit is where it gets asked. This method does not know the answer and does not
+    /// pretend to.
+    /// </remarks>
+    internal Document WithFeatureMoved(FeatureId id, int index)
+    {
+        int from = IndexOf(id);
+
+        if (from < 0)
+        {
+            throw new ArgumentException(
+                $"This document contains no {id}, so there is nothing to move.", nameof(id));
+        }
+
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, Features.Length);
+
+        Feature feature = Features[from];
+
+        return With(features: Features.RemoveAt(from).Insert(index, feature));
+    }
+
+    /// <summary>Adds or replaces a body.</summary>
+    /// <param name="body">The body.</param>
+    /// <returns>The new document.</returns>
+    /// <exception cref="ArgumentException">No feature owns it.</exception>
+    internal Document WithBody(Body body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+
+        if (!_featuresById.ContainsKey(body.Owner))
+        {
+            throw new ArgumentException(
+                $"No feature in this document has id {body.Owner}, so nothing could have produced "
+                + $"{body.Id}. Every body is the result of a feature, and one whose producer is "
+                + "absent can never be rebuilt.",
+                nameof(body));
+        }
+
+        return With(bodiesById: _bodiesById.SetItem(body.Id, body));
+    }
+
+    /// <summary>Removes a body.</summary>
+    /// <param name="id">Which body.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithBodyRemoved(BodyId id) => With(bodiesById: _bodiesById.Remove(id));
+
+    /// <summary>Adds or replaces a parameter.</summary>
+    /// <param name="parameter">The parameter.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithParameter(Parameter parameter)
+    {
+        ArgumentNullException.ThrowIfNull(parameter);
+        ArgumentException.ThrowIfNullOrWhiteSpace(parameter.Name);
+
+        return With(parametersByName: _parametersByName.SetItem(parameter.Name, parameter));
+    }
+
+    /// <summary>Removes a parameter.</summary>
+    /// <param name="name">What it is called.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithParameterRemoved(string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        return With(parametersByName: _parametersByName.Remove(name));
+    }
+
+    /// <summary>Adds a piece of reference geometry.</summary>
+    /// <param name="reference">The geometry.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithReference(ReferenceGeometry reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        return With(references: References.Add(reference));
+    }
+
+    /// <summary>Replaces the document's properties.</summary>
+    /// <param name="metadata">The new properties.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithMetadata(DocumentMetadata metadata)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+
+        return With(metadata: metadata);
+    }
+
+    private int IndexOf(FeatureId id)
+    {
+        for (int i = 0; i < Features.Length; ++i)
+        {
+            if (Features[i].Id == id)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The same document with some parts replaced and the version advanced.</summary>
+    /// <remarks>
+    /// Every mutator goes through here, so the version cannot be advanced by one of them and
+    /// forgotten by another — which would leave two different documents claiming to be the same
+    /// one, and a geometry cache confidently serving the wrong result for it.
+    /// </remarks>
+    private Document With(
+        ImmutableArray<Feature>? features = null,
+        ImmutableDictionary<FeatureId, Feature>? featuresById = null,
+        ImmutableDictionary<BodyId, Body>? bodiesById = null,
+        ImmutableDictionary<string, Parameter>? parametersByName = null,
+        ImmutableArray<ReferenceGeometry>? references = null,
+        DocumentMetadata? metadata = null)
+        => new(
+            features ?? Features,
+            featuresById ?? _featuresById,
+            bodiesById ?? _bodiesById,
+            parametersByName ?? _parametersByName,
+            references ?? References,
+            metadata ?? Metadata,
+            Version + 1);
+
+    /// <inheritdoc />
+    public override string ToString()
+        => $"document v{Version}: {Features.Length} features, {_bodiesById.Count} bodies, "
+            + $"{_parametersByName.Count} parameters";
+}

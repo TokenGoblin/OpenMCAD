@@ -5,6 +5,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The document's mutation surface is internal on purpose: only a transaction may change a
+         document (5.4). That puts it out of reach of a test project too, so the tests are let in
+         here rather than the surface being widened for their benefit. -->
+    <InternalsVisibleTo Include="OpenMCAD.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../OpenMCAD.Kernel/OpenMCAD.Kernel.csproj" />
     <ProjectReference Include="../OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
   </ItemGroup>
