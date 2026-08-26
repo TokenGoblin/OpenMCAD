@@ -195,6 +195,38 @@ public sealed class TypeDependencyTests
     }
 
     [Fact]
+    public void TheRenderLayerCannotReachTheKernelDispatcher()
+    {
+        // Phase 2's fourth exit criterion is that the viewport keeps rendering at full rate while
+        // a long kernel operation runs. That holds because a frame never asks the kernel for
+        // anything: it draws whatever DisplaySnapshot was last published and returns. The moment
+        // any render code can see the dispatcher, that stops being a property of the design and
+        // becomes a property of nobody having called it yet -- and a single synchronous call
+        // added later would freeze the viewport for the length of a rebuild, which is the one
+        // failure the whole snapshot architecture exists to prevent (ADR-0004).
+        //
+        // The rule is narrow on purpose. OpenMCAD.Render depends on OpenMCAD.Kernel for the data
+        // it draws -- MeshBuffer, SubEntity, KernelShape -- so the assembly cannot be fenced off
+        // wholesale. What it must not reach is the threading namespace, which is the only way to
+        // get onto the kernel thread or wait for something already on it.
+        const string ThreadingNamespace = "OpenMCAD.Kernel.Threading";
+
+        string[] mustNotSee = ["OpenMCAD.Render", "OpenMCAD.ViewModels"];
+
+        foreach (string assemblyName in mustNotSee)
+        {
+            ArchTestResult result = Types.InAssembly(LayeringTests.AssemblyFor(assemblyName))
+                .ShouldNot()
+                .HaveDependencyOn(ThreadingNamespace)
+                .GetResult();
+
+            FailingTypeNames(result).Should().BeEmpty(
+                $"{assemblyName} must not reference {ThreadingNamespace}: a frame that can wait "
+                + "on the kernel thread is a frame that can be frozen by a rebuild (ADR-0004)");
+        }
+    }
+
+    [Fact]
     public void NoOcctTypeAppearsOutsideTheOcctBindingAssembly()
     {
         // ADR-0002: callers above the kernel layer never touch a TopoDS_Face. The native binding

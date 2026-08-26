@@ -895,6 +895,15 @@ Four epochs, eighteen phases. Each phase states a **goal**, **exit criteria** (m
 - Per-monitor DPI changes and window resizes are handled without artifacts or leaks.
 - The viewport continues rendering at full rate while a synthetic 10-second kernel operation runs.
 
+*Where each is checked.* The frame budget is `OpenMCAD.Render.Perf` and `docs/notes/viewport-baseline.md`
+(2M triangles at 3.51 ms against 16). Picking is `PickTests` and `IdPassTests`. Scaling and resize are
+`ViewportScalingTests` and `MsaaTargetTests`, and device loss is `DeviceLossTests`. The fourth was the
+one with nothing behind it, and is now `ViewportResponsivenessTests` plus a NetArchTest rule that the
+render layer cannot reference `OpenMCAD.Kernel.Threading` — which is what makes it structural rather
+than a property of nobody having made the call yet. The synthetic operation blocks the kernel thread
+rather than burning processor time: the failure being guarded against is a lock or a synchronous
+marshal, and modelling it as processor contention would only measure how many cores the machine has.
+
 **Tasks.**
 
 - [x] **P2-T01** `IRenderDevice` thin RHI abstraction; D3D12 implementation via Vortice: device, swapchain, descriptor heaps, fence-paced upload ring. *(Adapter selection prefers high performance and falls back to WARP, which is also what the headless tests run on. The upload ring is a true ring with per-frame reclamation; two bugs in its full-versus-empty handling were found by tests rather than by rendering.)*
