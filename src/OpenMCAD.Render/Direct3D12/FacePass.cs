@@ -95,6 +95,8 @@ public sealed class FacePass : IDisposable
     private readonly ID3D12RootSignature _rootSignature;
     private readonly ID3D12PipelineState _pipelineState;
 
+    private readonly ID3D12Resource _noHighlights;
+
     private bool _disposed;
 
     /// <summary>
@@ -119,6 +121,23 @@ public sealed class FacePass : IDisposable
         ArgumentNullException.ThrowIfNull(device);
 
         _rootSignature = CreateRootSignature(device);
+
+        // A root descriptor bound to address zero removes the device on some drivers -- observed
+        // on AMD, and it is the whole device rather than a draw that fails. It happens even though
+        // the shader never dereferences it, because the count that guards the read is zero: the
+        // binding alone is enough. WARP tolerates it, so every test passed while real hardware
+        // did not.
+        //
+        // Rather than requiring every caller to remember, a one-entry buffer stands in whenever
+        // there are no highlight states to bind. Sixteen bytes to make the API safe by
+        // construction.
+        _noHighlights = device.CreateCommittedResource(
+            HeapType.Upload,
+            HeapFlags.None,
+            ResourceDescription.Buffer(SceneGeometry.IdStride),
+            ResourceStates.GenericRead);
+
+        _noHighlights.Name = "no highlight states";
 
         ReadOnlyMemory<byte> vertexShader = ShaderLibrary.Compile(
             ShaderFile, "VSMain", ShaderLibrary.VertexProfile, optimiseShaders);
@@ -205,7 +224,8 @@ public sealed class FacePass : IDisposable
 
         // Bound once for the whole scene. A root descriptor of zero is legal and the shader
         // handles it: GetDimensions reports nothing, so every entity reads as unhighlighted.
-        commands.SetGraphicsRootShaderResourceView(3, highlightStates);
+        commands.SetGraphicsRootShaderResourceView(
+            3, highlightStates == 0 ? _noHighlights.GPUVirtualAddress : highlightStates);
 
         foreach (BodyGeometry body in scene.Bodies)
         {
@@ -246,6 +266,7 @@ public sealed class FacePass : IDisposable
 
         _disposed = true;
 
+        _noHighlights.Dispose();
         _pipelineState.Dispose();
         _rootSignature.Dispose();
     }

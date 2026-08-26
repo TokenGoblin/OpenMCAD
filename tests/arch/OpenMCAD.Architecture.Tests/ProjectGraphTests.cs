@@ -136,6 +136,12 @@ public sealed class ProjectGraphTests
             + "determinism gate, and to select a kernel at run time. Neither fits a test host, so "
             + "it is an executable that build.ps1 and the nightly workflow invoke directly.",
 
+        ["OpenMCAD.Render.Perf"] =
+            "Rendering is measured by rendering: the harness creates a device, builds synthetic "
+            + "scenes of a given triangle count, and times whole frames through the real passes. "
+            + "It needs a GPU, several seconds per scene and a quiet machine, none of which "
+            + "belongs in a suite that runs on every build.",
+
         ["OpenMCAD.Kernel.Benchmarks"] =
             "BenchmarkDotNet is its own host: it spawns a process per benchmark, needs Release "
             + "and a quiet machine, and takes minutes. Running it inside the test suite would "
