@@ -438,6 +438,15 @@ public sealed class Document
         return With(metadata: metadata);
     }
 
+    /// <summary>Drops the reference geometry, so a reader can supply the file's own.</summary>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// An empty document starts with the standard datums, which is right for a new part and wrong
+    /// for one being read back: the file carries its own, and adding them to the ones already
+    /// there would give the document two of each after every open.
+    /// </remarks>
+    internal Document WithoutReferences() => With(references: []);
+
     /// <summary>Records how every feature stood after a rebuild.</summary>
     /// <param name="report">The report.</param>
     /// <returns>The new document.</returns>
