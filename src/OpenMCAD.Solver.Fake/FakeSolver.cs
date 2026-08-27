@@ -52,6 +52,18 @@ public sealed class FakeSolver : ISketchSolver
     public string Name => "fake";
 
     /// <inheritdoc/>
+    /// <remarks>
+    /// <para>
+    /// Decomposed first (P4-T05). A sketch is almost never one problem — it is several features
+    /// that happen to share a plane — and solving all of it to satisfy a constraint in one corner
+    /// is the difference between a drag that keeps up and one that does not.
+    /// </para>
+    /// <para>
+    /// A drag goes further and solves only the group holding what is being dragged. Nothing outside
+    /// it can have moved, by the definition of a subsystem, so there is nothing for the rest of the
+    /// sketch to be re-solved to.
+    /// </para>
+    /// </remarks>
     public SolveResult Solve(
         Sketch sketch,
         DragTarget? drag = null,
@@ -63,9 +75,95 @@ public sealed class FakeSolver : ISketchSolver
         SolverOptions settings = options ?? SolverOptions.Default;
 
         Sketch working = drag is null ? sketch : Dragged(sketch, drag);
+        SketchAnalysis analysis = SketchAnalysis.Of(working);
 
-        SketchParameters layout = SketchParameters.Of(working);
-        ImmutableArray<int> frozen = Frozen(working, layout);
+        ImmutableArray<Subsystem> wanted = drag is null
+            ? analysis.Subsystems
+            : analysis.Containing(drag.Point.Entity) is { } touched ? [touched] : [];
+
+        if (wanted.IsEmpty)
+        {
+            // Every entity is ground, or the drag is on geometry that is. The sketch still comes
+            // back, because the caller has to draw something either way.
+            return new SolveResult(
+                working,
+                new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Nothing can move."));
+        }
+
+        Sketch solved = working;
+        List<SolveDiagnosis> verdicts = [];
+
+        int iterations = 0;
+        double residual = 0;
+
+        foreach (Subsystem subsystem in wanted)
+        {
+            (Sketch moved, SolveDiagnosis verdict, int steps, double left) =
+                SolveOne(analysis.Restrict(subsystem), settings, cancellationToken);
+
+            // Only what this group owns is written back. The ground it borrowed belongs to the
+            // whole sketch and was never the sub-solve's to move -- though today that is a
+            // statement of intent rather than a load-bearing check, because ground is frozen in
+            // the sub-solve too and writing it back would write the same numbers. Sabotaging this
+            // to copy everything fails no test, and the loop stays because "a sub-solve owns its
+            // own geometry" is the property, not "it happens to come out the same".
+            foreach (SketchEntityId id in subsystem.Entities)
+            {
+                if (moved.Entities.Find(id) is { } entity)
+                {
+                    solved = solved.With(entity);
+                }
+            }
+
+            verdicts.Add(verdict);
+            iterations += steps;
+            residual = System.Math.Max(residual, left);
+        }
+
+        return new SolveResult(solved, Combined(verdicts), iterations, residual);
+    }
+
+    /// <summary>Rolls several groups' verdicts into one for the sketch.</summary>
+    /// <remarks>
+    /// The worst outcome wins and the freedom adds up. A sketch with one contradicting group is a
+    /// contradicting sketch however well the others solved, because the user cannot proceed — and
+    /// reporting the best of them would say "fully defined" about a sketch that is not.
+    /// </remarks>
+    private static SolveDiagnosis Combined(List<SolveDiagnosis> verdicts)
+    {
+        if (verdicts.Count == 1)
+        {
+            return verdicts[0];
+        }
+
+        SolveOutcome worst = verdicts.Select(v => v.Outcome).OrderByDescending(Severity).First();
+
+        return new SolveDiagnosis(
+            worst,
+            verdicts.Sum(v => v.RemainingFreedom),
+            [.. verdicts.SelectMany(v => v.Free).Distinct()],
+            [.. verdicts.SelectMany(v => v.Conflicts).Distinct()],
+            [.. verdicts.SelectMany(v => v.Surplus).Distinct()],
+            verdicts.First(v => v.Outcome == worst).Message);
+    }
+
+    private static int Severity(SolveOutcome outcome) => outcome switch
+    {
+        SolveOutcome.OverConstrained => 4,
+        SolveOutcome.Failed => 3,
+        SolveOutcome.Redundant => 2,
+        SolveOutcome.UnderConstrained => 1,
+        _ => 0,
+    };
+
+    /// <summary>Solves one group, which is one subsystem plus whatever ground it refers to.</summary>
+    private static (Sketch Sketch, SolveDiagnosis Diagnosis, int Iterations, double Residual) SolveOne(
+        Sketch working, SolverOptions settings, CancellationToken cancellationToken)
+    {
+        SketchAnalysis analysis = SketchAnalysis.Of(working);
+
+        SketchParameters layout = analysis.Parameters;
+        ImmutableArray<int> frozen = analysis.FrozenParameters;
 
         double[] values = [.. layout.Values];
 
@@ -92,10 +190,9 @@ public sealed class FakeSolver : ISketchSolver
             }
         }
 
-        Sketch solved = layout.Scatter(working, [.. values]);
+        Sketch moved = layout.Scatter(working, [.. values]);
 
-        return new SolveResult(
-            solved, Diagnose(solved, layout, frozen, residual, settings), iteration, residual);
+        return (moved, Diagnose(moved, layout, frozen, residual, settings), iteration, residual);
     }
 
     /// <summary>Moves the dragged point to where the pointer is, as the starting guess.</summary>
@@ -133,32 +230,6 @@ public sealed class FakeSolver : ISketchSolver
         };
 
         return sketch.With(moved);
-    }
-
-    /// <summary>Which parameters the solver may not move.</summary>
-    /// <remarks>
-    /// Fixed points, and nothing else. Their columns are struck out of the Jacobian, so no step can
-    /// move them at all. Expressing "fixed" as a residual instead would let a least-squares step
-    /// trade a little of it away against another constraint, which is exactly what fixing something
-    /// is meant to prevent. The dragged point is deliberately not here: see <see cref="Dragged"/>.
-    /// </remarks>
-    private static ImmutableArray<int> Frozen(Sketch sketch, SketchParameters layout)
-    {
-        HashSet<int> frozen = [];
-
-        foreach (SketchConstraint constraint in sketch.Constraints.Ordered)
-        {
-            if (constraint.Kind == ConstraintKind.Fix
-                && constraint.IsDriving
-                && constraint.On.Length > 0
-                && layout.IndexOf(constraint.On[0]) is { } fixedAt)
-            {
-                frozen.Add(fixedAt.X);
-                frozen.Add(fixedAt.Y);
-            }
-        }
-
-        return [.. frozen.Order()];
     }
 
     private static (ImmutableArray<double> Values, ImmutableArray<SketchConstraintId> From) Residuals(

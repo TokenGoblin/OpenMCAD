@@ -440,6 +440,78 @@ public sealed class FakeSolverTests
     }
 
     [Fact]
+    public void ADragTouchesOnlyTheGroupItIsIn()
+    {
+        // The whole point of the decomposition (P4-T05). The second pair is deliberately left
+        // unsolved, so that a solver which re-solved the whole sketch would visibly move it.
+        SketchLine untouchedOne = new(Entity(3), Vec2d.Zero, new Vec2d(4, 1));
+        SketchLine untouchedTwo = new(Entity(4), new Vec2d(0, 9), new Vec2d(1, 9.3));
+
+        Sketch sketch = Sketch.Empty
+            .With(new SketchLine(Entity(1), Vec2d.Zero, new Vec2d(4, 0)))
+            .With(untouchedOne)
+            .With(untouchedTwo)
+            .With(Fixed(1, Point(1, EntityPoint.Start)))
+            .With(Constraint(2, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 4))
+            .With(Constraint(3, ConstraintKind.Perpendicular, [Whole(3), Whole(4)]));
+
+        SolveResult result = Solver.Solve(
+            sketch,
+            new DragTarget(Point(1, EntityPoint.End), new Vec2d(0, 9)),
+            SolverOptions.ForDrag);
+
+        Line(result, 1).End.Should().BeApproximately(
+            new Vec2d(0, 4), 1e-6, "the dragged group solved");
+
+        result.Sketch.Entities.Find(Entity(3)).Should().Be(
+            untouchedOne, "the other group was never in this problem");
+
+        result.Sketch.Entities.Find(Entity(4)).Should().Be(untouchedTwo);
+    }
+
+    [Fact]
+    public void TheWorstOfSeveralGroupsDecidesTheVerdict()
+    {
+        // A sketch with one contradicting group is a contradicting sketch however well the others
+        // solved, because the user cannot proceed. Reporting the best of them would say "fully
+        // defined" about a sketch that is not.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchLine(Entity(1), Vec2d.Zero, new Vec2d(5, 0)))
+            .With(new SketchPoint(Entity(2), new Vec2d(9, 9)))
+            .With(Fixed(1, Point(1, EntityPoint.Start)))
+            .With(Constraint(3, ConstraintKind.Horizontal, [Whole(1)]))
+            .With(Constraint(4, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 4))
+            .With(Constraint(5, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 9));
+
+        // The loose point is a second group in its own right, and an under-constrained one. Both
+        // groups are real, which is what makes the combination mean anything.
+        SketchAnalysis.Of(sketch).Subsystems.Should().HaveCount(2);
+
+        SolveResult result = Solver.Solve(sketch);
+
+        result.Diagnosis.Outcome.Should().Be(SolveOutcome.OverConstrained);
+        result.Diagnosis.Conflicts.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void FreedomFromEveryGroupIsCountedTogether()
+    {
+        // Two loose points are four degrees of freedom, not two. A count that reported the largest
+        // group's freedom would tell a user their sketch was half as loose as it is.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchPoint(Entity(2), Vec2d.One));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        result.Diagnosis.Outcome.Should().Be(SolveOutcome.UnderConstrained);
+        result.Diagnosis.RemainingFreedom.Should().Be(4);
+    }
+
+    [Fact]
     public void ASolveNeverThrowsForASketchItCannotSolve()
     {
         // The sketcher has to draw the result either way, and a user mid-drag with a momentarily
