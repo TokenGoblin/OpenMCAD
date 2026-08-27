@@ -24,6 +24,7 @@ public sealed class ProjectGraphTests
         ["OpenMCAD.Solver"] = 1,
         ["OpenMCAD.Kernel.Occt"] = 2,
         ["OpenMCAD.Kernel.Fake"] = 2,
+        ["OpenMCAD.Solver.Fake"] = 2,
         ["OpenMCAD.Solver.Planegcs"] = 2,
         ["OpenMCAD.Core"] = 3,
         ["OpenMCAD.Modeling"] = 4,

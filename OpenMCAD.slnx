@@ -18,6 +18,7 @@
     <Project Path="src/OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
     <Project Path="src/OpenMCAD.Render/OpenMCAD.Render.csproj" />
     <Project Path="src/OpenMCAD.Shell/OpenMCAD.Shell.csproj" />
+    <Project Path="src/OpenMCAD.Solver.Fake/OpenMCAD.Solver.Fake.csproj" />
     <Project Path="src/OpenMCAD.Solver.Planegcs/OpenMCAD.Solver.Planegcs.csproj" />
     <Project Path="src/OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
     <Project Path="src/OpenMCAD.ViewModels/OpenMCAD.ViewModels.csproj" />
@@ -41,6 +42,7 @@
     <Project Path="tests/unit/OpenMCAD.Modeling.Tests/OpenMCAD.Modeling.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Api.Tests/OpenMCAD.Api.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Render.Tests/OpenMCAD.Render.Tests.csproj" />
+    <Project Path="tests/unit/OpenMCAD.Solver.Fake.Tests/OpenMCAD.Solver.Fake.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Solver.Tests/OpenMCAD.Solver.Tests.csproj" />
     <Project Path="tests/perf/OpenMCAD.Kernel.Benchmarks/OpenMCAD.Kernel.Benchmarks.csproj" />
     <Project Path="tests/perf/OpenMCAD.Render.Perf/OpenMCAD.Render.Perf.csproj" />

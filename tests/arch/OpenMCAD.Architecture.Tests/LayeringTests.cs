@@ -24,7 +24,12 @@ public sealed class LayeringTests
     [
         ["OpenMCAD.Math"],
         ["OpenMCAD.Kernel", "OpenMCAD.Solver"],
-        ["OpenMCAD.Kernel.Occt", "OpenMCAD.Kernel.Fake", "OpenMCAD.Solver.Planegcs"],
+        [
+            "OpenMCAD.Kernel.Occt",
+            "OpenMCAD.Kernel.Fake",
+            "OpenMCAD.Solver.Planegcs",
+            "OpenMCAD.Solver.Fake",
+        ],
         ["OpenMCAD.Core"],
         ["OpenMCAD.Modeling"],
         ["OpenMCAD.Exchange", "OpenMCAD.Render", "OpenMCAD.Api"],
@@ -101,6 +106,7 @@ public sealed class LayeringTests
             "OpenMCAD.Kernel.Occt",
             "OpenMCAD.Kernel.Fake",
             "OpenMCAD.Solver.Planegcs",
+            "OpenMCAD.Solver.Fake",
         ]);
 
         foreach (string layer in new[] { "OpenMCAD.Core", "OpenMCAD.Modeling" })
@@ -241,7 +247,7 @@ public sealed class TypeDependencyTests
         string[] mustNotSee =
         [
             "OpenMCAD.Math", "OpenMCAD.Kernel", "OpenMCAD.Solver", "OpenMCAD.Solver.Planegcs",
-            "OpenMCAD.Kernel.Fake", "OpenMCAD.Core", "OpenMCAD.Modeling", "OpenMCAD.Exchange",
+            "OpenMCAD.Solver.Fake", "OpenMCAD.Kernel.Fake", "OpenMCAD.Core", "OpenMCAD.Modeling", "OpenMCAD.Exchange",
             "OpenMCAD.Render", "OpenMCAD.Interaction", "OpenMCAD.Api", "OpenMCAD.App",
             "OpenMCAD.ViewModels",
         ];

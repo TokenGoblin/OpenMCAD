@@ -25,6 +25,7 @@
     <ProjectReference Include="../../../src/OpenMCAD.Kernel.Occt/OpenMCAD.Kernel.Occt.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Kernel.Fake/OpenMCAD.Kernel.Fake.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Solver.Fake/OpenMCAD.Solver.Fake.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Solver.Planegcs/OpenMCAD.Solver.Planegcs.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Core/OpenMCAD.Core.csproj" />
     <ProjectReference Include="../../../src/OpenMCAD.Modeling/OpenMCAD.Modeling.csproj" />
