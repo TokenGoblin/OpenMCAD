@@ -243,7 +243,25 @@ public static class DocumentPackage
     {
         ArgumentNullException.ThrowIfNull(stream);
 
-        using ZipArchive archive = new(stream, ZipArchiveMode.Read, leaveOpen: true);
+        // A file that is not a Zip at all is the commonest way to arrive here with something
+        // wrong: a partial download, a text file renamed, a path pointing at the wrong thing. The
+        // contract above promises one exception type, and letting InvalidDataException out means a
+        // caller that catches what is documented still sees an unhandled failure.
+        ZipArchive archive;
+
+        try
+        {
+            archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        }
+        catch (Exception failure) when (failure is InvalidDataException or IOException)
+        {
+            throw new DocumentFormatException(
+                "This file is not an OpenMCAD package. It is not even a Zip archive, so it is "
+                + "either damaged or was never one.",
+                failure);
+        }
+
+        using ZipArchive opened = archive;
 
         DocumentManifest manifest = ReadManifest(archive);
 

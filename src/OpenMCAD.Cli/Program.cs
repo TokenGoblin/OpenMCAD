@@ -20,7 +20,10 @@ namespace OpenMCAD.Cli;
 /// headless operation onto subsystems that had quietly assumed a window.
 /// </para>
 /// <para>
-/// Commands are added by later phases. Phase 0 ships the shell of the tool and nothing else.
+/// The document commands (P3-T22) do their work in <see cref="DocumentCommands"/> rather than in
+/// the actions here. Every later phase tests through this tool, and a test that had to start a
+/// process to check an exit code would be slow, awkward to debug, and unable to see anything the
+/// command did not print.
 /// </para>
 /// </remarks>
 internal static class Program
@@ -71,6 +74,91 @@ internal static class Program
 
         root.Subcommands.Add(versionCommand);
 
+        Option<bool> jsonOption = new("--json")
+        {
+            Description = "Answer in JSON, for a script rather than a person.",
+        };
+
+        Option<bool> noCacheOption = new("--no-cache")
+        {
+            Description = "Ignore the regenerable caches in the file (\u00a75.8).",
+        };
+
+        Argument<FileInfo> specArgument = new("spec")
+        {
+            Description = "A document spec, as JSON.",
+        };
+
+        Option<FileInfo> outputOption = new("--output", "-o")
+        {
+            Description = "Where to write the result.",
+            Required = true,
+        };
+
+        Command buildCommand = new("build", "Build a document from a spec and write it out.");
+        buildCommand.Arguments.Add(specArgument);
+        buildCommand.Options.Add(outputOption);
+        buildCommand.Options.Add(jsonOption);
+        buildCommand.SetAction(parse => DocumentCommands.Build(
+            parse.GetValue(specArgument)!,
+            parse.GetValue(outputOption)!,
+            parse.GetValue(jsonOption),
+            Console.Out));
+
+        Argument<FileInfo> packageArgument = new("document")
+        {
+            Description = "A document package.",
+        };
+
+        Command inspectCommand = new("inspect", "Describe a document.");
+        inspectCommand.Arguments.Add(packageArgument);
+        inspectCommand.Options.Add(jsonOption);
+        inspectCommand.Options.Add(noCacheOption);
+        inspectCommand.SetAction(parse => DocumentCommands.Inspect(
+            parse.GetValue(packageArgument)!,
+            parse.GetValue(jsonOption),
+            Console.Out,
+            !parse.GetValue(noCacheOption)));
+
+        Command saveCommand = new("save", "Open a document and write it out again.");
+        saveCommand.Arguments.Add(packageArgument);
+        saveCommand.Options.Add(outputOption);
+        saveCommand.Options.Add(jsonOption);
+        saveCommand.Options.Add(noCacheOption);
+        saveCommand.SetAction(parse => DocumentCommands.Save(
+            parse.GetValue(packageArgument)!,
+            parse.GetValue(outputOption)!,
+            parse.GetValue(jsonOption),
+            Console.Out,
+            !parse.GetValue(noCacheOption)));
+
+        Command rebuildCommand = new(
+            "rebuild", "Check a document against what this build knows how to make.");
+
+        rebuildCommand.Arguments.Add(packageArgument);
+        rebuildCommand.Options.Add(jsonOption);
+        rebuildCommand.SetAction(parse => DocumentCommands.Rebuild(
+            parse.GetValue(packageArgument)!, parse.GetValue(jsonOption), Console.Out));
+
+        Argument<FileInfo> firstArgument = new("first") { Description = "A document package." };
+        Argument<FileInfo> secondArgument = new("second") { Description = "Another one." };
+
+        Command diffCommand = new("diff", "Compare two documents. Exits 1 if they differ.");
+        diffCommand.Arguments.Add(firstArgument);
+        diffCommand.Arguments.Add(secondArgument);
+        diffCommand.Options.Add(jsonOption);
+        diffCommand.SetAction(parse => DocumentCommands.Diff(
+            parse.GetValue(firstArgument)!,
+            parse.GetValue(secondArgument)!,
+            parse.GetValue(jsonOption),
+            Console.Out));
+
+        root.Subcommands.Add(buildCommand);
+        root.Subcommands.Add(inspectCommand);
+        root.Subcommands.Add(rebuildCommand);
+        root.Subcommands.Add(saveCommand);
+        root.Subcommands.Add(diffCommand);
+
         // Bare invocation prints help rather than doing nothing, which is what a person running
         // an unfamiliar tool actually wants.
         root.SetAction(parseResult =>
@@ -109,7 +197,7 @@ internal static class Program
 
         foreach (Command command in root.Subcommands)
         {
-            lines.Add($"  {command.Name,-12} {command.Description}");
+            lines.Add($"  {command.Name,-9} {command.Description}");
         }
 
         lines.Add(string.Empty);

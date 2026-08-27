@@ -74,6 +74,15 @@ public sealed class Document
     /// </remarks>
     internal ImmutableArray<UnknownField> UnknownFields { get; }
 
+    /// <summary>Gets how many fields of the file this document came from it could not read.</summary>
+    /// <remarks>
+    /// Public where the fields themselves are not, because the count is the part anyone outside
+    /// this assembly has a use for: it means the file came from a build that knows things this one
+    /// does not, and someone about to edit and save it is entitled to be told. The fields are kept
+    /// whole and handed back untouched (P3-T20); what is in them is nobody here's business.
+    /// </remarks>
+    public int UnreadFieldCount => UnknownFields.Length;
+
     /// <summary>
     /// Gets how many features from the top of the tree are active, or null when all of them are.
     /// </summary>

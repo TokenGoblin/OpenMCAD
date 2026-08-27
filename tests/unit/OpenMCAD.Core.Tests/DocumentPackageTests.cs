@@ -534,6 +534,20 @@ public sealed class DocumentPackageTests
         return copy.ToArray();
     }
 
+    [Fact]
+    public void AFileThatIsNotEvenAZipIsRefusedAsADocumentProblem()
+    {
+        // The commonest way to arrive here with something wrong: a partial download, a text file
+        // renamed, a path pointing at the wrong thing. Open promises one exception type, and
+        // letting InvalidDataException out means a caller catching what is documented still sees an
+        // unhandled failure. Found by the headless tool (P3-T22), which is what that tool is for.
+        using MemoryStream stream = new(Encoding.UTF8.GetBytes("this is not a zip"));
+
+        Action open = () => DocumentPackage.Open(stream);
+
+        open.Should().Throw<DocumentFormatException>().WithMessage("*not even a Zip*");
+    }
+
     /// <summary>A document with one of everything, and a chain of ten features.</summary>
     /// <param name="reverseParameterOrder">
     /// Whether to add the parameters the other way round, so that two builds of the same document
