@@ -42,7 +42,7 @@ public enum NameResolutionOutcome
 }
 
 /// <summary>
-/// What tier one made of a reference.
+/// What resolving a reference came to, from whichever tier answered.
 /// </summary>
 /// <param name="Outcome">How it turned out.</param>
 /// <param name="Entity">The entity, when exactly one was found.</param>
@@ -54,14 +54,23 @@ public enum NameResolutionOutcome
 /// Why, in words, for the states where a person needs telling. This is what reaches the user
 /// through P3-T11, so it says what happened to their model rather than what happened in the code.
 /// </param>
+/// <param name="Ranking">
+/// How well each candidate fitted, best first, when geometry was the one doing the deciding.
+/// Empty from tier one, which does not score anything — it either knows or it does not.
+/// </param>
 public sealed record NameResolution(
     NameResolutionOutcome Outcome,
     SubEntity Entity,
     ImmutableArray<SubEntity> Candidates,
-    string? Reason = null)
+    string? Reason = null,
+    ImmutableArray<ScoredEntity> Ranking = default)
 {
     /// <summary>Gets whether exactly one entity was found.</summary>
     public bool IsResolved => Outcome == NameResolutionOutcome.Resolved;
+
+    /// <summary>Gets the scores, never a default array.</summary>
+    public ImmutableArray<ScoredEntity> Scores
+        => Ranking.IsDefault ? [] : Ranking;
 
     /// <summary>A resolution that found one entity.</summary>
     /// <param name="entity">The entity.</param>
