@@ -1,0 +1,10 @@
+# The format corpus is deliberately *not* in git-lfs, unlike the regression
+# corpus binaries the root .gitattributes routes there.
+#
+# These are a couple of kilobytes each and the build fails without them. Behind
+# lfs, a clone without the filter installed gets pointer files instead, and the
+# gate then reports that OpenMCAD cannot open its own historical documents --
+# which is a true statement about the working tree and a completely misleading
+# one about the format. Small files that must be present are worth having in
+# the object database.
+*.ompart     -filter -diff -merge binary

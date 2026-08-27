@@ -123,7 +123,19 @@ public static class DocumentCodec
     {
         try
         {
-            return ReadDocument(data);
+            int version = VersionOf(data);
+
+            if (version == SchemaVersion)
+            {
+                return ReadDocument(data);
+            }
+
+            // Only an old file pays for this. Bringing a document forward means parsing it into a
+            // tree, rewriting it and encoding it again, which is three passes where opening a
+            // current file takes one -- worth it once for a file written years ago, and not worth
+            // paying on every open of a file that needs nothing done to it.
+            return ReadDocument(
+                SchemaMigrator.Migrate(MessagePackValue.Read(data), version).ToBytes());
         }
         catch (Exception exception) when (exception is FormatException
             or ArgumentException
@@ -134,6 +146,34 @@ public static class DocumentCodec
                 $"This document is damaged or was not written by OpenMCAD: {exception.Message}",
                 exception);
         }
+    }
+
+    /// <summary>Reads only the schema version, without parsing the rest.</summary>
+    /// <param name="data">The encoded document.</param>
+    /// <returns>What version the document says it is.</returns>
+    /// <remarks>
+    /// A file with no schema field at all is taken to be current. That is a guess either way, and
+    /// it is the guess that changes nothing: every file this project writes states its version, so
+    /// one that does not was made by hand or by something else, and running the migration chain
+    /// over it would rewrite a document that never asked to be rewritten.
+    /// </remarks>
+    private static int VersionOf(ReadOnlySpan<byte> data)
+    {
+        MessagePackReader reader = new(data);
+
+        int fields = reader.ReadMapHeader();
+
+        for (int i = 0; i < fields; ++i)
+        {
+            if (reader.ReadString() == "schema")
+            {
+                return reader.ReadInt32();
+            }
+
+            reader.Skip();
+        }
+
+        return SchemaVersion;
     }
 
     private static Document ReadDocument(ReadOnlySpan<byte> data)

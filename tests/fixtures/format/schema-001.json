@@ -1,0 +1,72 @@
+{
+  "Schema": 1,
+  "WrittenBy": "OpenMCAD P3-T19",
+  "Title": "Format fixture",
+  "PartNumber": "F-1",
+  "Revision": "A",
+  "Features": [
+    {
+      "Name": "Feature0",
+      "Type": "Sketch",
+      "Suppressed": false,
+      "Inputs": 0,
+      "Parameters": {
+        "Depth": "0.01 Length"
+      }
+    },
+    {
+      "Name": "Feature1",
+      "Type": "Extrude",
+      "Suppressed": false,
+      "Inputs": 1,
+      "Parameters": {
+        "Depth": "0.011 Length"
+      }
+    },
+    {
+      "Name": "Feature2",
+      "Type": "Fillet",
+      "Suppressed": false,
+      "Inputs": 1,
+      "Parameters": {
+        "Depth": "0.012 Length"
+      }
+    },
+    {
+      "Name": "Feature3",
+      "Type": "Pattern",
+      "Suppressed": true,
+      "Inputs": 1,
+      "Parameters": {
+        "Depth": "0.013 Length"
+      }
+    }
+  ],
+  "Parameters": {
+    "Width": {
+      "Value": "0.04 Length",
+      "Expression": null,
+      "Description": null
+    },
+    "Height": {
+      "Value": "0.025 Length",
+      "Expression": "Width * 0.625",
+      "Description": "Tall"
+    },
+    "Angle": {
+      "Value": "0.5235987755982988 Angle",
+      "Expression": null,
+      "Description": null
+    }
+  },
+  "Bodies": [
+    "Main"
+  ],
+  "Rollback": 3,
+  "References": [
+    "Front",
+    "Origin",
+    "Right",
+    "Top"
+  ]
+}
