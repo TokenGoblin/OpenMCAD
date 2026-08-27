@@ -5,21 +5,27 @@ name: Nightly regression
 # the ones that decay silently: determinism, robustness, and the golden values that make a
 # regression visible at all.
 
-# The schedule is deliberately switched off. This repository is private, so Actions minutes are
-# billed, and Windows runners are charged at twice the rate -- an OCCT build from cold is around
-# 660 billable minutes, which would consume a monthly allowance in two nights. It ran on a
-# schedule while the workflow could not build OCCT at all and the cost was hypothetical; it is not
-# hypothetical now.
+# The schedule was switched off while this repository was private: Actions minutes were billed,
+# Windows runners are charged at twice the rate, and an OCCT build from cold is around 660 billable
+# minutes -- two nights of that consumed a monthly allowance. The repository is public now, runner
+# time is free, and the reason is gone.
 #
-# Restore the schedule when either the repository is public, where Actions minutes are free, or a
-# spending limit is set deliberately. Until then this runs on request, and the local build --
-# which does build OCCT, on every commit -- is what actually covers the kernel.
+# Worth knowing about a scheduled workflow on a public repository: GitHub disables it after sixty
+# days with no commits, and tells the owner by email rather than by failing the job. A quiet stretch
+# on the project therefore stops the nightly silently -- which is precisely the failure this job
+# exists to catch. If the corpus has not reported in a while, check the schedule is still enabled
+# before reading the silence as good news.
 on:
-  # schedule:
-  #   - cron: '0 3 * * *'
-  # No kernel input yet: 'occt' is not a runnable choice until P1-T06, and an input the job
-  # silently ignored would be worse than not offering it. Add it back, wired into the matrix with
-  # fromJSON, when there is a second kernel to choose.
+  schedule:
+    # 03:00 UTC. A run that can take five hours wants to start when the runner pool is least
+    # contended, and it has all night to finish before anyone looks at the result.
+    - cron: '0 3 * * *'
+
+  # Deliberately no kernel input, though there is now a real choice to offer: both kernels became
+  # runnable at P1-T06 and the matrix below runs each of them. Adding a workflow_dispatch input
+  # wired into that matrix with fromJSON would let a manual run pick one, which is worth having --
+  # it is left undone rather than written blind, because a workflow file can only be tested by
+  # pushing it, and a broken one is worse than a missing convenience.
   workflow_dispatch:
 
 permissions:
