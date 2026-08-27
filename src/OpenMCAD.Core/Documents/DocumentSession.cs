@@ -100,6 +100,34 @@ public sealed class DocumentSession
         }
     }
 
+    /// <summary>Opens a transaction, or returns null if one is already open.</summary>
+    /// <param name="name">What this edit is called.</param>
+    /// <returns>The transaction, or null.</returns>
+    /// <remarks>
+    /// For callers to whom "someone else is editing right now" is an ordinary answer rather than a
+    /// mistake. A rebuild finishing at the moment the user opens a dialog is exactly that: its
+    /// results describe a document that is about to change anyway, so there is nothing to report
+    /// and nothing to retry. <see cref="BeginTransaction"/> stays the right call for an edit that
+    /// was asked for and must therefore either happen or say why not.
+    /// </remarks>
+    public IDocumentTransaction? TryBeginTransaction(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        lock (_gate)
+        {
+            if (_open is not null)
+            {
+                return null;
+            }
+
+            DocumentTransaction transaction = new(this, name, _current);
+            _open = transaction;
+
+            return transaction;
+        }
+    }
+
     /// <summary>Replaces the current document, from a committing transaction.</summary>
     /// <returns>What changed, or null if the transaction changed nothing.</returns>
     /// <remarks>
