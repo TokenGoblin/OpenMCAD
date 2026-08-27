@@ -30,6 +30,9 @@ internal enum MessagePackType
     /// <summary>Pairs.</summary>
     Map,
 
+    /// <summary>An application-defined type, including the standard timestamp.</summary>
+    Extension,
+
     /// <summary>Something this build has no name for.</summary>
     Unknown,
 }
@@ -100,6 +103,8 @@ internal ref struct MessagePackReader(ReadOnlySpan<byte> data)
             0xCA or 0xCB => MessagePackType.Float,
             0xCC or 0xCD or 0xCE or 0xCF => MessagePackType.Integer,
             0xD0 or 0xD1 or 0xD2 or 0xD3 => MessagePackType.Integer,
+            0xC7 or 0xC8 or 0xC9 => MessagePackType.Extension,
+            >= 0xD4 and <= 0xD8 => MessagePackType.Extension,
             0xD9 or 0xDA or 0xDB => MessagePackType.String,
             0xDC or 0xDD => MessagePackType.Array,
             0xDE or 0xDF => MessagePackType.Map,
@@ -302,6 +307,10 @@ internal ref struct MessagePackReader(ReadOnlySpan<byte> data)
 
                 break;
 
+            case MessagePackType.Extension:
+                SkipExtension();
+                break;
+
             default:
                 throw Fail("a value");
         }
@@ -319,6 +328,34 @@ internal ref struct MessagePackReader(ReadOnlySpan<byte> data)
         Skip();
 
         return _data[start.._at];
+    }
+
+    /// <summary>Steps over an application-defined value.</summary>
+    /// <remarks>
+    /// Nothing here writes one, and skipping them still matters. MessagePack's standard timestamp
+    /// is an extension type, so a field written by a peer of the same version using one would
+    /// otherwise fail the whole open rather than being stepped over — and P3-T20 could not preserve
+    /// it either, since preserving a value means being able to find where it ends.
+    /// </remarks>
+    private void SkipExtension()
+    {
+        byte marker = Take();
+
+        int length = marker switch
+        {
+            0xD4 => 1,
+            0xD5 => 2,
+            0xD6 => 4,
+            0xD7 => 8,
+            0xD8 => 16,
+            0xC7 => Take(),
+            0xC8 => TakeUInt16(),
+            0xC9 => checked((int)TakeUInt32()),
+            _ => throw Fail("a value"),
+        };
+
+        // One byte of type, then the payload.
+        TakeBytes(length + 1);
     }
 
     private readonly byte PeekMarker()

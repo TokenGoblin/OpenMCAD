@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.IO.Compression;
 using System.Text;
 
 using FluentAssertions;
@@ -322,6 +323,215 @@ public sealed class DocumentPackageTests
         Action open = () => DocumentPackage.Open(stream);
 
         open.Should().Throw<DocumentFormatException>().WithMessage("*holds no document*");
+    }
+
+    [Fact]
+    public void TheFieldsOfADocumentCanArriveInAnyOrder()
+    {
+        // A MessagePack map has no defined order, so a conforming writer may put the bodies before
+        // the features that own them, or the rollback bar before there is a tree to put it in.
+        // Reading field by field into a document as each arrived made both of those a crash on a
+        // file that is entirely legal, and this document reversed hits both at once: its body
+        // belongs to a feature not yet read, and its rollback bar is at 9 in an empty tree.
+        Document original = Build();
+
+        Document read = DocumentCodec.Read(ReverseFields(DocumentCodec.Write(original)));
+
+        read.Matches(original).Should().BeTrue(
+            "the order the fields happened to be written in says nothing about the document");
+    }
+
+    [Fact]
+    public void ADamagedDocumentComesBackAsADocumentFormatException()
+    {
+        // The id of the first feature, cut down to something Guid.Parse will not take. Read's
+        // contract promises one exception type, and a caller told to catch DocumentFormatException
+        // should not also have to catch FormatException because of which byte went wrong.
+        byte[] encoded = DocumentCodec.Write(Build());
+        int at = Find(encoded, "00000000-0000-0000-0000-000000000001");
+
+        encoded[at + 8] = (byte)'z';
+
+        Action read = () => DocumentCodec.Read(encoded);
+
+        read.Should().Throw<DocumentFormatException>()
+            .WithInnerException<FormatException>(
+                "the cause is worth keeping even though the type the caller sees is fixed");
+    }
+
+    [Fact]
+    public void ADocumentWithNoReferenceGeometryFieldKeepsTheStandardDatums()
+    {
+        // Not the same as a document that says it has none. Clearing the datums unconditionally
+        // meant that anything written before the field existed -- or by a writer that leaves out
+        // what it has nothing to say about -- opened with no origin and no planes, so the first
+        // sketch in it would have had nothing to sit on.
+        byte[] stripped = WithoutField(DocumentCodec.Write(Build()), "references");
+
+        Document read = DocumentCodec.Read(stripped);
+
+        read.References.Select(r => r.Name)
+            .Should().BeEquivalentTo(ReferenceGeometry.StandardDatums().Select(r => r.Name));
+    }
+
+    [Fact]
+    public void ADocumentThatSaysItHasNoReferenceGeometryHasNone()
+    {
+        byte[] encoded = DocumentCodec.Write(Build());
+        byte[] emptied = WithEmptyReferences(encoded);
+
+        Document read = DocumentCodec.Read(emptied);
+
+        read.References.Should().BeEmpty(
+            "an empty field is a statement about the document, not the absence of one");
+    }
+
+    [Fact]
+    public void AnUnrecognisedPartOfTheContainerSurvivesBeingOpenedAndSaved()
+    {
+        byte[] first = Save(Build(), Manifest());
+        byte[] withStranger = WithExtraEntry(first, "future/whatever.bin", [1, 2, 3, 4]);
+
+        using MemoryStream stream = new(withStranger);
+        OpenedPackage opened = DocumentPackage.Open(stream);
+
+        opened.Contents.Unrecognised.Should().ContainKey("future/whatever.bin");
+
+        byte[] again = Save(opened.Document, opened.Manifest, opened.Contents);
+
+        using MemoryStream reopened = new(again);
+        DocumentPackage.Open(reopened).Contents.Unrecognised
+            .Should().ContainKey(
+                "future/whatever.bin",
+                "or saving a file from a newer build here would quietly delete what it had added")
+            .WhoseValue.Should().Equal(1, 2, 3, 4);
+    }
+
+    [Fact]
+    public void TheManifestUsesTheSameLineEndingsEverywhere()
+    {
+        // WriteIndented takes its newline from Environment.NewLine, so the same document saved on
+        // Windows and on Linux differed in the manifest -- which is exactly what the fixed
+        // timestamps and the canonical encoder exist to prevent, and which CI on one OS cannot see.
+        byte[] manifest = EntryOf(Save(Build(), Manifest()), DocumentPackage.ManifestEntry);
+
+        manifest.Should().NotContain((byte)'\r');
+    }
+
+    [Fact]
+    public void SavingRecordsTheVersionsOfTheBuildThatWrote()
+    {
+        // The natural re-save is to hand back the manifest that came out of Open with a fresh
+        // Modified stamp. Persisting its versions verbatim would then record the old file's schema
+        // beside a payload written at the current one, and P3-T19's migration chain reads the
+        // manifest to decide what to run.
+        DocumentManifest stale = Manifest() with { FormatVersion = 0, SchemaVersion = 0 };
+
+        using MemoryStream stream = new(Save(Build(), stale));
+
+        DocumentManifest written = DocumentPackage.Open(stream).Manifest;
+
+        written.FormatVersion.Should().Be(DocumentManifest.CurrentFormatVersion);
+        written.SchemaVersion.Should().Be(DocumentCodec.SchemaVersion);
+    }
+
+    /// <summary>Rewrites an encoded document with its top-level fields in the opposite order.</summary>
+    private static byte[] ReverseFields(byte[] encoded)
+    {
+        List<(string Key, byte[] Value)> pairs = [.. FieldsOf(encoded)];
+        pairs.Reverse();
+
+        return Rebuild(pairs);
+    }
+
+    /// <summary>Rewrites an encoded document without one of its top-level fields.</summary>
+    private static byte[] WithoutField(byte[] encoded, string field)
+    {
+        List<(string Key, byte[] Value)> kept = [.. FieldsOf(encoded).Where(f => f.Key != field)];
+
+        kept.Should().HaveCount(
+            FieldsOf(encoded).Count - 1, "the field to remove has to have been there");
+
+        return Rebuild(kept);
+    }
+
+    /// <summary>Rewrites an encoded document whose reference geometry is an empty list.</summary>
+    private static byte[] WithEmptyReferences(byte[] encoded)
+    {
+        MessagePackWriter empty = new();
+        empty.WriteArrayHeader(0);
+
+        return Rebuild(
+        [
+            .. FieldsOf(encoded)
+                .Select(f => f.Key == "references" ? (f.Key, empty.ToArray()) : f),
+        ]);
+    }
+
+    private static List<(string Key, byte[] Value)> FieldsOf(byte[] encoded)
+    {
+        MessagePackReader reader = new(encoded);
+
+        int fields = reader.ReadMapHeader();
+        List<(string Key, byte[] Value)> pairs = [];
+
+        for (int i = 0; i < fields; ++i)
+        {
+            string key = reader.ReadString();
+            pairs.Add((key, reader.ReadRaw().ToArray()));
+        }
+
+        return pairs;
+    }
+
+    private static byte[] Rebuild(List<(string Key, byte[] Value)> fields)
+    {
+        MessagePackWriter writer = new();
+        writer.WriteMapHeader(fields.Count);
+
+        foreach ((string key, byte[] value) in fields)
+        {
+            writer.Write(key);
+            writer.WriteRaw(value);
+        }
+
+        return writer.ToArray();
+    }
+
+    private static int Find(byte[] haystack, string needle)
+    {
+        int at = haystack.AsSpan().IndexOf(Encoding.UTF8.GetBytes(needle).AsSpan());
+
+        at.Should().BeGreaterThanOrEqualTo(0, "the test needs {0} to be in the file", needle);
+
+        return at;
+    }
+
+    private static byte[] WithExtraEntry(byte[] package, string name, byte[] content)
+    {
+        using MemoryStream stream = new();
+        stream.Write(package);
+        stream.Position = 0;
+
+        using (ZipArchive archive = new(stream, ZipArchiveMode.Update, leaveOpen: true))
+        {
+            using Stream entry = archive.CreateEntry(name).Open();
+            entry.Write(content);
+        }
+
+        return stream.ToArray();
+    }
+
+    private static byte[] EntryOf(byte[] package, string name)
+    {
+        using MemoryStream stream = new(package);
+        using ZipArchive archive = new(stream, ZipArchiveMode.Read);
+        using Stream entry = archive.GetEntry(name)!.Open();
+        using MemoryStream copy = new();
+
+        entry.CopyTo(copy);
+
+        return copy.ToArray();
     }
 
     /// <summary>A document with one of everything, and a chain of ten features.</summary>

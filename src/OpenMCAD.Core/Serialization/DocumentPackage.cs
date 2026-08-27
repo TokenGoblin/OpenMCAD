@@ -82,6 +82,10 @@ public sealed record DocumentManifest(
 /// <param name="Previews">Per-configuration pictures, by configuration name.</param>
 /// <param name="ExternalReferences">The contents of <c>/refs/external.json</c>, or null.</param>
 /// <param name="Custom">Anything a plugin or a user put in <c>/custom/</c>.</param>
+/// <param name="Unrecognised">
+/// Every other part of the container, by its full path. A newer build writing a part this one has
+/// never heard of must find it still there after this one has opened and saved the file.
+/// </param>
 /// <remarks>
 /// Carried as opaque bytes. §5.8 makes the geometry and tessellation caches regenerable and never
 /// the source of truth, and this layer is not the one that knows how to regenerate them — its job
@@ -94,7 +98,8 @@ public sealed record PackageContents(
     byte[]? Thumbnail = null,
     ImmutableDictionary<string, byte[]>? Previews = null,
     byte[]? ExternalReferences = null,
-    ImmutableDictionary<string, byte[]>? Custom = null)
+    ImmutableDictionary<string, byte[]>? Custom = null,
+    ImmutableDictionary<string, byte[]>? Unrecognised = null)
 {
     /// <summary>Gets contents with nothing in them.</summary>
     public static PackageContents Empty { get; } = new(
@@ -152,6 +157,13 @@ public static class DocumentPackage
     private static readonly JsonSerializerOptions ManifestFormat = new()
     {
         WriteIndented = true,
+
+        // Without this the manifest's line endings come from Environment.NewLine, so the same
+        // document written on Windows and on Linux produces different bytes -- which is precisely
+        // what the fixed timestamps, the sorted collections and the canonical encoder exist to
+        // prevent, and which a Windows-only CI would never notice.
+        NewLine = "\n",
+
         Converters = { new JsonStringEnumConverter() },
     };
 
@@ -174,7 +186,17 @@ public static class DocumentPackage
 
         using ZipArchive archive = new(stream, ZipArchiveMode.Create, leaveOpen: true);
 
-        Put(archive, ManifestEntry, JsonSerializer.SerializeToUtf8Bytes(manifest, ManifestFormat));
+        // The versions are taken from this build rather than from the caller's manifest. The
+        // natural re-save is to open a file and pass its manifest back with a new Modified stamp,
+        // which would otherwise record the old file's schema beside a payload written at the
+        // current one -- and P3-T19's migration chain reads the manifest to decide what to do.
+        DocumentManifest stamped = manifest with
+        {
+            FormatVersion = DocumentManifest.CurrentFormatVersion,
+            SchemaVersion = DocumentCodec.SchemaVersion,
+        };
+
+        Put(archive, ManifestEntry, JsonSerializer.SerializeToUtf8Bytes(stamped, ManifestFormat));
         Put(archive, DocumentEntry, DocumentCodec.Write(document));
 
         PutAll(archive, "geometry/", contents.Geometry, ".brep");
@@ -193,6 +215,17 @@ public static class DocumentPackage
         }
 
         PutAll(archive, "custom/", contents.Custom, string.Empty);
+
+        // Last, and verbatim. These were written by something this build does not know about, and
+        // dropping them would mean that opening a file from a newer version and saving it silently
+        // deleted whatever that version had added.
+        if (contents.Unrecognised is { } unknown)
+        {
+            foreach (string name in unknown.Keys.OrderBy(k => k, StringComparer.Ordinal))
+            {
+                Put(archive, name, unknown[name]);
+            }
+        }
     }
 
     /// <summary>Reads a package.</summary>
@@ -200,6 +233,9 @@ public static class DocumentPackage
     /// <param name="useCaches">
     /// Whether to load the regenerable caches. False is the <c>--no-cache</c> mode §5.8 asks be
     /// testable: the same reader, with the caches ignored, so that the two can be compared.
+    /// Note that the returned contents then hold no cache blobs, so saving them writes a package
+    /// without caches — which costs the next reader a rebuild and loses nothing, since §5.8 makes
+    /// them regenerable by definition.
     /// </param>
     /// <returns>What was found.</returns>
     /// <exception cref="DocumentFormatException">It is not a package this build can read.</exception>
@@ -229,6 +265,7 @@ public static class DocumentPackage
         ImmutableDictionary<string, byte[]>.Builder tessellation = Builder();
         ImmutableDictionary<string, byte[]>.Builder previews = Builder();
         ImmutableDictionary<string, byte[]>.Builder custom = Builder();
+        ImmutableDictionary<string, byte[]>.Builder unrecognised = Builder();
 
         byte[]? thumbnail = null;
         byte[]? externals = null;
@@ -274,6 +311,13 @@ public static class DocumentPackage
                 // and a plugin that wrote settings.json expects settings.json back.
                 custom[name["custom/".Length..]] = Read(entry);
             }
+            else if (!name.EndsWith('/'))
+            {
+                // Something no version of this reader has a name for. Kept so that it survives
+                // being opened and saved here, which is the whole of what forward compatibility
+                // means for a part nobody can interpret.
+                unrecognised[name] = Read(entry);
+            }
         }
 
         return new OpenedPackage(
@@ -285,7 +329,8 @@ public static class DocumentPackage
                 thumbnail,
                 previews.ToImmutable(),
                 externals,
-                custom.ToImmutable()));
+                custom.ToImmutable(),
+                unrecognised.ToImmutable()));
     }
 
     private static DocumentManifest ReadManifest(ZipArchive archive)

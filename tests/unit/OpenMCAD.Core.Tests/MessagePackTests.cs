@@ -27,6 +27,50 @@ namespace OpenMCAD.Core.Tests;
 public sealed class MessagePackTests
 {
     [Theory]
+
+    // fixext1 .. fixext16, then ext8, ext16 and ext32. The standard timestamp is a fixext4 or a
+    // fixext8, so the first two are the ones a peer of this very version could put in a file.
+    [InlineData("D4FF01")]
+    [InlineData("D5FF0102")]
+    [InlineData("D6FF00000001")]
+    [InlineData("D7FF0000000000000001")]
+    [InlineData("D8FF0102030405060708090A0B0C0D0E0F10")]
+    [InlineData("C703FF010203")]
+    [InlineData("C80002FF0102")]
+    [InlineData("C900000002FF0102")]
+    public void SkippingStepsOverAnApplicationDefinedValue(string extension)
+    {
+        // Nothing here writes an extension, and reading past one still matters: MessagePack's
+        // standard timestamp is one, so a field written by another implementation using it would
+        // otherwise fail the whole open. Worse than failing, it would fail confusingly -- Skip
+        // threw on the marker rather than on anything the file had got wrong.
+        byte[] data = Convert.FromHexString("82A16B" + extension + "A16E07");
+
+        MessagePackReader reader = new(data);
+
+        reader.ReadMapHeader().Should().Be(2);
+        reader.ReadString().Should().Be("k");
+        reader.Skip();
+
+        reader.ReadString().Should().Be("n", "the reader has to land exactly after the value");
+        reader.ReadInt64().Should().Be(7);
+        reader.AtEnd.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AnApplicationDefinedValueIsHandedBackWhole()
+    {
+        // What P3-T20 needs from the extension family: preserving an unknown field means copying
+        // its bytes, which needs the ability to say where it ended.
+        byte[] data = Convert.FromHexString("91D6FF00000001");
+
+        MessagePackReader reader = new(data);
+        reader.ReadArrayHeader().Should().Be(1);
+
+        Convert.ToHexString(reader.ReadRaw()).Should().Be("D6FF00000001");
+    }
+
+    [Theory]
     [InlineData(0, "00")]
     [InlineData(1, "01")]
     [InlineData(127, "7F")]

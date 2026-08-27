@@ -103,17 +103,51 @@ public static class DocumentCodec
     /// <param name="data">The bytes.</param>
     /// <returns>The document.</returns>
     /// <exception cref="DocumentFormatException">The bytes are not a document this build can read.</exception>
+    /// <remarks>
+    /// <para>
+    /// Every field is collected before anything is assembled, and that is not merely tidy: a
+    /// MessagePack map has no defined order, so a legal file may put its bodies before its
+    /// features or its rollback bar before either. Applying each field as it arrived would make a
+    /// body whose owner has not been read yet, or a rollback bar past the end of a tree that is
+    /// still empty, into a crash on a file that is perfectly valid.
+    /// </para>
+    /// <para>
+    /// Everything that can go wrong with a damaged file comes out as
+    /// <see cref="DocumentFormatException"/>. A malformed identifier throws
+    /// <see cref="FormatException"/> and a duplicate one throws
+    /// <see cref="ArgumentException"/>, and a caller told to expect one exception type should not
+    /// have to catch three because of where in this method the bytes went wrong.
+    /// </para>
+    /// </remarks>
     public static Document Read(ReadOnlySpan<byte> data)
+    {
+        try
+        {
+            return ReadDocument(data);
+        }
+        catch (Exception exception) when (exception is FormatException
+            or ArgumentException
+            or OverflowException
+            or IndexOutOfRangeException)
+        {
+            throw new DocumentFormatException(
+                $"This document is damaged or was not written by OpenMCAD: {exception.Message}",
+                exception);
+        }
+    }
+
+    private static Document ReadDocument(ReadOnlySpan<byte> data)
     {
         MessagePackReader reader = new(data);
 
         int fields = reader.ReadMapHeader();
 
-        Document document = Document.Empty();
-
-        // Rebuilt from nothing rather than mutated into place, because the standard datums an
-        // empty document starts with would otherwise be duplicated by the ones in the file.
-        document = document.WithoutReferences();
+        ImmutableArray<Feature> features = [];
+        ImmutableArray<Parameter> parameters = [];
+        ImmutableArray<Body> bodies = [];
+        ImmutableArray<ReferenceGeometry>? references = null;
+        DocumentMetadata metadata = DocumentMetadata.Empty;
+        int? rollback = null;
 
         for (int i = 0; i < fields; ++i)
         {
@@ -133,63 +167,74 @@ public static class DocumentCodec
                     break;
 
                 case "features":
-                    int features = reader.ReadArrayHeader();
+                    int count = reader.ReadArrayHeader();
+                    ImmutableArray<Feature>.Builder read =
+                        ImmutableArray.CreateBuilder<Feature>(count);
 
-                    for (int f = 0; f < features; ++f)
+                    for (int f = 0; f < count; ++f)
                     {
-                        document = document.WithFeatureAdded(ReadFeature(ref reader));
+                        read.Add(ReadFeature(ref reader));
                     }
 
+                    features = read.ToImmutable();
                     break;
 
                 case "parameters":
-                    foreach (Parameter parameter in ReadParameters(ref reader))
-                    {
-                        document = document.WithParameter(parameter);
-                    }
-
+                    parameters = ReadParameters(ref reader);
                     break;
 
                 case "bodies":
-                    int bodies = reader.ReadArrayHeader();
+                    int bodyCount = reader.ReadArrayHeader();
+                    ImmutableArray<Body>.Builder found =
+                        ImmutableArray.CreateBuilder<Body>(bodyCount);
 
-                    for (int b = 0; b < bodies; ++b)
+                    for (int b = 0; b < bodyCount; ++b)
                     {
-                        document = document.WithBody(ReadBody(ref reader));
+                        found.Add(ReadBody(ref reader));
                     }
 
+                    bodies = found.ToImmutable();
                     break;
 
                 case "references":
-                    int references = reader.ReadArrayHeader();
+                    int referenceCount = reader.ReadArrayHeader();
+                    ImmutableArray<ReferenceGeometry>.Builder geometry =
+                        ImmutableArray.CreateBuilder<ReferenceGeometry>(referenceCount);
 
-                    for (int r = 0; r < references; ++r)
+                    for (int r = 0; r < referenceCount; ++r)
                     {
-                        document = document.WithReference(ReadReferenceGeometry(ref reader));
+                        geometry.Add(ReadReferenceGeometry(ref reader));
                     }
 
+                    references = geometry.ToImmutable();
                     break;
 
                 case "metadata":
-                    document = document.WithMetadata(ReadMetadata(ref reader));
+                    metadata = ReadMetadata(ref reader);
                     break;
 
                 case "rollback":
-                    document = reader.TryReadNil()
-                        ? document
-                        : document.WithRollbackPosition(reader.ReadInt32());
-
+                    rollback = reader.TryReadNil() ? null : reader.ReadInt32();
                     break;
 
                 default:
-                    // P3-T20 will keep these. Skipping is recursive, so the reader lands exactly
-                    // after the value whatever shape it was.
+                    // P3-T20 will keep these. Skipping is recursive and handles the extension
+                    // family, so the reader lands exactly after the value whatever shape it was.
                     reader.Skip();
                     break;
             }
         }
 
-        return document;
+        // A file with no references field at all keeps the standard datums, rather than opening
+        // with no origin and no planes. Only a file that says what its reference geometry is --
+        // including saying that it has none -- replaces them.
+        return Document.FromParts(
+            features,
+            parameters,
+            bodies,
+            references ?? [.. ReferenceGeometry.StandardDatums()],
+            metadata,
+            rollback);
     }
 
     private static void WriteFeature(MessagePackWriter writer, Feature feature)

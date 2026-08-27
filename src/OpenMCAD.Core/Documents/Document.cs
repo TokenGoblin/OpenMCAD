@@ -438,6 +438,88 @@ public sealed class Document
         return With(metadata: metadata);
     }
 
+    /// <summary>Assembles a document from parts that have already been collected.</summary>
+    /// <param name="features">The features, in tree order.</param>
+    /// <param name="parameters">The parameters.</param>
+    /// <param name="bodies">The bodies.</param>
+    /// <param name="references">The reference geometry.</param>
+    /// <param name="metadata">The properties.</param>
+    /// <param name="rollbackPosition">Where the rollback bar sits.</param>
+    /// <returns>The document.</returns>
+    /// <remarks>
+    /// For a reader, which knows everything before it builds anything. Adding features one at a
+    /// time through <see cref="WithFeatureAdded"/> copies the whole array and allocates a document
+    /// per feature, so opening a part with ten thousand of them does fifty million element copies
+    /// on the file-open path -- quadratic in the size of the model, for no reason except that the
+    /// editing API is the wrong shape for bulk loading.
+    /// </remarks>
+    internal static Document FromParts(
+        ImmutableArray<Feature> features,
+        IEnumerable<Parameter> parameters,
+        IEnumerable<Body> bodies,
+        ImmutableArray<ReferenceGeometry> references,
+        DocumentMetadata metadata,
+        int? rollbackPosition)
+    {
+        ImmutableDictionary<FeatureId, Feature>.Builder featuresById =
+            ImmutableDictionary.CreateBuilder<FeatureId, Feature>();
+
+        foreach (Feature feature in features)
+        {
+            if (featuresById.ContainsKey(feature.Id))
+            {
+                throw new ArgumentException(
+                    $"Two features share the id {feature.Id}, so every reference to it would be "
+                    + "ambiguous.",
+                    nameof(features));
+            }
+
+            featuresById.Add(feature.Id, feature);
+        }
+
+        ImmutableDictionary<BodyId, Body>.Builder bodiesById =
+            ImmutableDictionary.CreateBuilder<BodyId, Body>();
+
+        foreach (Body body in bodies)
+        {
+            if (!featuresById.ContainsKey(body.Owner))
+            {
+                throw new ArgumentException(
+                    $"No feature has id {body.Owner}, so nothing could have produced {body.Id}.",
+                    nameof(bodies));
+            }
+
+            bodiesById[body.Id] = body;
+        }
+
+        ImmutableDictionary<string, Parameter>.Builder byName =
+            ImmutableDictionary.CreateBuilder<string, Parameter>(Parameter.NameComparer);
+
+        foreach (Parameter parameter in parameters)
+        {
+            byName[parameter.Name] = parameter;
+        }
+
+        if (rollbackPosition is { } bar && (bar < 0 || bar > features.Length))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(rollbackPosition),
+                bar,
+                $"The rollback bar is at {bar} and there are {features.Length} features.");
+        }
+
+        return new Document(
+            features,
+            featuresById.ToImmutable(),
+            bodiesById.ToImmutable(),
+            byName.ToImmutable(),
+            references,
+            metadata,
+            rollbackPosition,
+            RebuildReport.Empty,
+            version: 0);
+    }
+
     /// <summary>Drops the reference geometry, so a reader can supply the file's own.</summary>
     /// <returns>The new document.</returns>
     /// <remarks>
