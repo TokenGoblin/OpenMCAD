@@ -258,13 +258,25 @@ public sealed class RebuildEngine : IDisposable
                 continue;
             }
 
-            if (feature.IsSuppressed || DependsOnSomethingUnusable(graph, id, unusable))
+            if (!working.IsActive(id)
+                || feature.IsSuppressed
+                || DependsOnSomethingUnusable(graph, id, unusable))
             {
-                // Independent branches carry on. A failure contains itself to what actually
-                // depended on it, which is the difference between one broken feature and a
-                // document that will not rebuild.
+                // Rollback needed no machinery of its own. Being behind the bar is simply another
+                // reason a feature is not evaluated, alongside being suppressed and depending on
+                // something that failed -- and the propagation, ordering and skipping were already
+                // here. §5.4 said this would fall out of the design if it was not special-cased,
+                // and it did.
+                //
+                // Its geometry goes with it. A feature that is not evaluated must not leave last
+                // time's bodies on screen: dragging the bar up the tree is how the user looks at
+                // the part half-built, and a rolled-back extrude still showing its solid would
+                // make that gesture show them nothing.
                 unusable.Add(id);
                 skipped.Add(id);
+
+                working = Discard(working, id);
+
                 continue;
             }
 
@@ -384,6 +396,17 @@ public sealed class RebuildEngine : IDisposable
 
         superseded = false;
         return _session.Current;
+    }
+
+    /// <summary>Takes away the geometry of a feature that is no longer evaluated.</summary>
+    private static Document Discard(Document document, FeatureId id)
+    {
+        foreach (Body existing in document.BodiesOf(id))
+        {
+            document = document.WithBodyRemoved(existing.Id);
+        }
+
+        return document;
     }
 
     /// <summary>Replaces what a feature owned with what it has just produced.</summary>

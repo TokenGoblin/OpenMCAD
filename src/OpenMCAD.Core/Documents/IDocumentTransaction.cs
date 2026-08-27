@@ -85,6 +85,16 @@ public interface IDocumentTransaction : IDisposable
     /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
     void AddReference(ReferenceGeometry reference);
 
+    /// <summary>Moves the rollback bar.</summary>
+    /// <param name="position">
+    /// How many features from the top of the tree stay active, or null to roll forward to the end.
+    /// </param>
+    /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The position is negative, or beyond the end of the tree.
+    /// </exception>
+    void SetRollbackPosition(int? position);
+
     /// <summary>Replaces the document's properties.</summary>
     /// <param name="metadata">The new properties.</param>
     /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>

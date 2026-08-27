@@ -155,6 +155,27 @@ internal sealed class DocumentTransaction : IDocumentTransaction
     }
 
     /// <inheritdoc />
+    public void SetRollbackPosition(int? position)
+    {
+        EnsureOpen();
+
+        int before = _working.ActiveFeatureCount;
+
+        _working = _working.WithRollbackPosition(position);
+
+        int after = _working.ActiveFeatureCount;
+
+        // Every feature that crossed the bar is a dirty seed, in whichever direction it crossed:
+        // one that became active has to be built, and one that became inactive has to give up its
+        // geometry. Seeding only the newly active ones would leave the rolled-back part of the
+        // model still on screen.
+        for (int i = System.Math.Min(before, after); i < System.Math.Max(before, after); ++i)
+        {
+            _touchedFeatures.Add(_working.Features[i].Id);
+        }
+    }
+
+    /// <inheritdoc />
     public void SetMetadata(DocumentMetadata metadata)
     {
         ArgumentNullException.ThrowIfNull(metadata);

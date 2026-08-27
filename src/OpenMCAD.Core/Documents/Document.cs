@@ -43,8 +43,10 @@ public sealed class Document
         ImmutableDictionary<string, Parameter> parametersByName,
         ImmutableArray<ReferenceGeometry> references,
         DocumentMetadata metadata,
+        int? rollbackPosition,
         long version)
     {
+        RollbackPosition = rollbackPosition;
         Features = features;
         _featuresById = featuresById;
         _bodiesById = bodiesById;
@@ -56,6 +58,34 @@ public sealed class Document
 
     /// <summary>Gets the features, in the order the user arranged them.</summary>
     public ImmutableArray<Feature> Features { get; }
+
+    /// <summary>
+    /// Gets how many features from the top of the tree are active, or null when all of them are.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The rollback bar (P3-T06). Everything at or after this position is rolled back: not
+    /// evaluated, and holding no geometry. It is a position rather than a feature id because that
+    /// is what the user is manipulating -- they drag a line to a place in the list, and a line that
+    /// stuck to a particular feature would move when the tree was reordered around it.
+    /// </para>
+    /// <para>
+    /// Null rather than <c>Features.Length</c> for "no rollback", so that adding a feature to a
+    /// document that was never rolled back does not leave the bar sitting one short of the end and
+    /// silently hide the new feature.
+    /// </para>
+    /// </remarks>
+    public int? RollbackPosition { get; }
+
+    /// <summary>Gets how many features are active.</summary>
+    public int ActiveFeatureCount
+        => System.Math.Clamp(RollbackPosition ?? Features.Length, 0, Features.Length);
+
+    /// <summary>Gets the features that are not rolled back, in tree order.</summary>
+    public ImmutableArray<Feature> ActiveFeatures => Features[..ActiveFeatureCount];
+
+    /// <summary>Gets whether the document is rolled back at all.</summary>
+    public bool IsRolledBack => ActiveFeatureCount < Features.Length;
 
     /// <summary>Gets the reference geometry: datum planes, axes, points and frames.</summary>
     public ImmutableArray<ReferenceGeometry> References { get; }
@@ -89,7 +119,18 @@ public sealed class Document
         ImmutableDictionary.Create<string, Parameter>(Parameter.NameComparer),
         [.. ReferenceGeometry.StandardDatums()],
         DocumentMetadata.Empty,
+        rollbackPosition: null,
         version: 0);
+
+    /// <summary>Gets whether a feature is evaluated, or is behind the rollback bar.</summary>
+    /// <param name="id">Which feature.</param>
+    /// <returns>Whether it is active. A feature that is not in this document is not.</returns>
+    public bool IsActive(FeatureId id)
+    {
+        int index = IndexOf(id);
+
+        return index >= 0 && index < ActiveFeatureCount;
+    }
 
     /// <summary>Finds a feature by its id.</summary>
     /// <param name="id">Which feature.</param>
@@ -201,10 +242,17 @@ public sealed class Document
             bodies = bodies.Remove(body.Id);
         }
 
+        // The bar is a position, so removing a feature above it shifts every feature below up by
+        // one -- and a bar left where it was would quietly roll back one feature that was active a
+        // moment ago. Moving the bar with the removal keeps the same features active, which is what
+        // the user means by deleting something that is already visible.
+        int? rollback = RollbackPosition is { } bar && index < bar ? bar - 1 : RollbackPosition;
+
         return With(
             features: Features.RemoveAt(index),
             featuresById: _featuresById.Remove(id),
-            bodiesById: bodies);
+            bodiesById: bodies,
+            rollbackPosition: rollback);
     }
 
     /// <summary>Moves a feature to a different position in the tree.</summary>
@@ -301,6 +349,24 @@ public sealed class Document
         return With(metadata: metadata);
     }
 
+    /// <summary>Moves the rollback bar.</summary>
+    /// <param name="position">
+    /// How many features from the top stay active, or null to roll forward to the end.
+    /// </param>
+    /// <returns>The new document.</returns>
+    internal Document WithRollbackPosition(int? position)
+    {
+        if (position is { } value)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(value, nameof(position));
+
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(
+                value, Features.Length, nameof(position));
+        }
+
+        return With(rollbackPosition: position, clearRollback: position is null);
+    }
+
     private int IndexOf(FeatureId id)
     {
         for (int i = 0; i < Features.Length; ++i)
@@ -326,7 +392,9 @@ public sealed class Document
         ImmutableDictionary<BodyId, Body>? bodiesById = null,
         ImmutableDictionary<string, Parameter>? parametersByName = null,
         ImmutableArray<ReferenceGeometry>? references = null,
-        DocumentMetadata? metadata = null)
+        DocumentMetadata? metadata = null,
+        int? rollbackPosition = null,
+        bool clearRollback = false)
         => new(
             features ?? Features,
             featuresById ?? _featuresById,
@@ -334,10 +402,12 @@ public sealed class Document
             parametersByName ?? _parametersByName,
             references ?? References,
             metadata ?? Metadata,
+            clearRollback ? null : rollbackPosition ?? RollbackPosition,
             Version + 1);
 
     /// <inheritdoc />
     public override string ToString()
         => $"document v{Version}: {Features.Length} features, {_bodiesById.Count} bodies, "
-            + $"{_parametersByName.Count} parameters";
+            + $"{_parametersByName.Count} parameters"
+            + (IsRolledBack ? $", rolled back to {ActiveFeatureCount}" : string.Empty);
 }
