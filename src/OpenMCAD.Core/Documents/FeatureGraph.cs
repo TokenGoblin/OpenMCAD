@@ -101,7 +101,10 @@ public sealed class FeatureGraph
         {
             ImmutableArray<FeatureId>.Builder resolved = ImmutableArray.CreateBuilder<FeatureId>();
 
-            foreach (FeatureId input in feature.Inputs)
+            // Declared inputs first, then anything the entity references imply. A feature that
+            // points at a face of Extrude1 depends on Extrude1 whether or not it also said so, and
+            // a graph that missed that would order it before the thing it is built on.
+            foreach (FeatureId input in feature.Inputs.Concat(ReferencedFeatures(feature)))
             {
                 if (!position.ContainsKey(input))
                 {
@@ -203,6 +206,25 @@ public sealed class FeatureGraph
         }
 
         return ordered.ToImmutable();
+    }
+
+    /// <summary>The features a feature's entity references depend on, in a stable order.</summary>
+    private static IEnumerable<FeatureId> ReferencedFeatures(Feature feature)
+    {
+        foreach (Naming.EntityReference reference in feature.EntityReferences)
+        {
+            foreach (FeatureId id in reference.Name.ReferencedFeatures())
+            {
+                // Its own id turns up when a reference points into what this very feature made,
+                // which a later segment of a name legitimately does. Self-dependency is a cycle,
+                // and this one would be an artefact of how the name is written rather than
+                // anything the user did.
+                if (id != feature.Id)
+                {
+                    yield return id;
+                }
+            }
+        }
     }
 
     /// <summary>Kahn's algorithm, with ties broken by position in the tree.</summary>

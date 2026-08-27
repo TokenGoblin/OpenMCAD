@@ -173,7 +173,7 @@ public sealed class GeometryCacheTests
         RebuildKey key = RebuildKey.For(feature, []);
 
         key.ToString().Should().Be(
-            "key(21A6E8BE13588B3C905B3AA1322642A4)",
+            "key(F5B6B222A74D4FC7415DB2E25E748DA9)",
             "the encoding is a compatibility surface: when it changes, every cached entry has to "
             + "miss rather than be misread, which is what the version tag in the key is for");
     }

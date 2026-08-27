@@ -82,11 +82,16 @@ public sealed record PersistentName
     /// </remarks>
     public ImmutableArray<FeatureId> ReferencedFeatures()
     {
-        HashSet<FeatureId> found = [];
+        // Encounter order, kept explicitly. A HashSet promises no order at all, and this feeds the
+        // dependency graph -- where the order features are discovered in decides the tie-break that
+        // makes a rebuild reproducible (P3-T03). Relying on the incidental order of a hash set is
+        // how that guarantee is lost without anything appearing to change.
+        List<FeatureId> ordered = [];
+        HashSet<FeatureId> seen = [];
 
-        Collect(this, found);
+        Collect(this, ordered, seen);
 
-        return [.. found];
+        return [.. ordered];
     }
 
     /// <summary>Renders the name using feature names, as §5.3 shows it.</summary>
@@ -192,28 +197,37 @@ public sealed record PersistentName
         text.Append(')');
     }
 
-    private static void Collect(PersistentName name, HashSet<FeatureId> found)
+    private static void Collect(
+        PersistentName name, List<FeatureId> ordered, HashSet<FeatureId> seen)
     {
         foreach (NameSegment segment in name.Path)
         {
-            found.Add(segment.Feature);
+            Note(segment.Feature, ordered, seen);
 
             foreach (NameSource source in segment.Sources)
             {
                 switch (source)
                 {
                     case NameSource.Entity entity:
-                        Collect(entity.Name, found);
+                        Collect(entity.Name, ordered, seen);
                         break;
 
                     case NameSource.Sketch sketch:
-                        found.Add(sketch.Owner);
+                        Note(sketch.Owner, ordered, seen);
                         break;
 
                     default:
                         break;
                 }
             }
+        }
+    }
+
+    private static void Note(FeatureId id, List<FeatureId> ordered, HashSet<FeatureId> seen)
+    {
+        if (seen.Add(id))
+        {
+            ordered.Add(id);
         }
     }
 }

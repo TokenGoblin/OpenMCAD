@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Core.Naming;
 
 namespace OpenMCAD.Core.Rebuild;
 
@@ -64,8 +65,9 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
 
         // A version tag. When the encoding below changes, every key changes with it, so entries
         // written by an older build are missed rather than misread. Without this, adding a field
-        // here would silently make old cache entries answer new questions.
-        Write(hash, 1);
+        // here would silently make old cache entries answer new questions -- which is exactly what
+        // adding the entity references at version 2 would otherwise have done.
+        Write(hash, 2);
 
         // The feature's own identity, and not only its definition. Two features of the same type
         // with the same parameters do produce the same geometry, so a purely content-addressed key
@@ -87,6 +89,18 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
             WriteText(hash, parameter.Name);
             Write(hash, (int)parameter.Value.Dimension);
             Write(hash, BitConverter.DoubleToInt64Bits(parameter.Value.Value));
+        }
+
+        // Re-pointing a reference changes what the feature is built on, and therefore what it
+        // produces. Leaving these out of the key would have a repaired reference (P3-T11) hit the
+        // cache and hand back the geometry from before the repair -- the one case where a stale
+        // answer is guaranteed to be wrong, because the user has just said so.
+        Write(hash, feature.EntityReferences.Length);
+
+        foreach (EntityReference reference in feature.EntityReferences)
+        {
+            WriteText(hash, PersistentNameFormat.Write(reference.Name));
+            Write(hash, (int)reference.Multiplicity);
         }
 
         Write(hash, inputKeys.Length);

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using OpenMCAD.Core.Documents;
 using OpenMCAD.Kernel;
 
@@ -27,6 +29,7 @@ public sealed class NameResolver
     private readonly HistoryNameResolver _history;
     private readonly GeometricNameResolver? _geometry;
     private readonly Func<FeatureId, IEnumerable<SubEntity>>? _searchPool;
+    private readonly Func<SubEntity, GeoHint?>? _hintOf;
 
     /// <summary>Creates a resolver.</summary>
     /// <param name="history">What each feature in the rebuild did.</param>
@@ -54,6 +57,7 @@ public sealed class NameResolver
         _history = new HistoryNameResolver(history, sketchEntities);
         _geometry = hintOf is null ? null : new GeometricNameResolver(hintOf, settings);
         _searchPool = searchPool;
+        _hintOf = hintOf;
     }
 
     /// <summary>Finds what a reference points at, or says why it cannot.</summary>
@@ -91,6 +95,105 @@ public sealed class NameResolver
                 // Deleted, unsupported, or nothing to search. All settled questions.
                 return byHistory;
         }
+    }
+
+    /// <summary>Finds what a reference points at, applying its multiplicity policy.</summary>
+    /// <param name="reference">The reference, with the policy its feature declared.</param>
+    /// <param name="consumer">The feature that wants to use it.</param>
+    /// <returns>What it points at, or why it could not be resolved.</returns>
+    /// <remarks>
+    /// <para>
+    /// <b>The policy decides whether the geometric tier is consulted at all.</b> That is the part
+    /// worth understanding: tier two exists to arbitrate an ambiguity, and for two of the three
+    /// policies an ambiguity is not something to arbitrate. Under
+    /// <see cref="MultiplicityPolicy.AllDescendants"/> a split is the answer -- every piece is
+    /// wanted, and scoring them to pick one would be solving a problem the feature does not have.
+    /// Under <see cref="MultiplicityPolicy.LargestDescendant"/> the tie-break is stated outright,
+    /// so a resemblance argument has nothing to add and could only disagree with it.
+    /// </para>
+    /// <para>
+    /// Only <see cref="MultiplicityPolicy.ExactlyOne"/> reaches tier two, and it is the case where
+    /// the feature genuinely meant one entity and history has stopped being able to say which.
+    /// </para>
+    /// </remarks>
+    public ResolvedReference Resolve(EntityReference reference, FeatureId consumer)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        NameResolution byHistory = _history.Resolve(reference.Name, consumer);
+
+        if (byHistory.Outcome == NameResolutionOutcome.Ambiguous
+            && reference.Multiplicity != MultiplicityPolicy.ExactlyOne)
+        {
+            return ForSplit(reference, byHistory);
+        }
+
+        NameResolution resolved = reference.Multiplicity == MultiplicityPolicy.ExactlyOne
+            ? Resolve(reference.Name, consumer)
+            : byHistory;
+
+        return new ResolvedReference(
+            resolved.Outcome,
+            resolved.IsResolved ? [resolved.Entity] : [],
+            resolved.Reason,
+            resolved.Ranking);
+    }
+
+    /// <summary>Applies a set-valued policy to what history reported.</summary>
+    private ResolvedReference ForSplit(EntityReference reference, NameResolution byHistory)
+    {
+        if (reference.Multiplicity == MultiplicityPolicy.AllDescendants)
+        {
+            // Not an ambiguity for this feature. The set simply has more members than it did.
+            return new ResolvedReference(
+                NameResolutionOutcome.Resolved, byHistory.Candidates);
+        }
+
+        if (_hintOf is null)
+        {
+            return new ResolvedReference(
+                NameResolutionOutcome.Ambiguous,
+                [],
+                "This reference asks for the largest piece, and there is no way to measure the "
+                + "candidates in this configuration.",
+                byHistory.Ranking);
+        }
+
+        SubEntity largest = SubEntity.None;
+        double best = double.NegativeInfinity;
+        bool tied = false;
+
+        foreach (SubEntity candidate in byHistory.Candidates)
+        {
+            double measure = _hintOf(candidate)?.Measure ?? 0;
+
+            if (measure > best)
+            {
+                (largest, best, tied) = (candidate, measure, false);
+            }
+            else if (measure == best)
+            {
+                tied = true;
+            }
+        }
+
+        if (best <= 0 || tied)
+        {
+            // Two pieces of exactly equal size is a real outcome -- a symmetric split down the
+            // middle -- and "the largest" does not name one of them. Refusing is the only honest
+            // answer, and the alternative would resolve differently depending on which piece the
+            // kernel happened to report first.
+            return new ResolvedReference(
+                NameResolutionOutcome.Ambiguous,
+                [],
+                best <= 0
+                    ? "This reference asks for the largest piece, and none of the candidates could "
+                        + "be measured."
+                    : "This reference asks for the largest piece, and two of them are the same size.",
+                byHistory.Ranking);
+        }
+
+        return new ResolvedReference(NameResolutionOutcome.Resolved, [largest]);
     }
 
     /// <summary>Turns a refusal into something the user can act on.</summary>

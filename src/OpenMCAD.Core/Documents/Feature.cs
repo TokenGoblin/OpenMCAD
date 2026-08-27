@@ -19,6 +19,10 @@ namespace OpenMCAD.Core.Documents;
 /// graph and the reason tree order is not it.
 /// </param>
 /// <param name="Parameters">This feature's own values, such as a depth or a radius.</param>
+/// <param name="References">
+/// The particular faces, edges and vertices this feature was built on, each with the multiplicity
+/// policy its declaration chose (P3-T12).
+/// </param>
 /// <param name="IsSuppressed">Whether the user has switched this feature off.</param>
 /// <remarks>
 /// <para>
@@ -29,11 +33,12 @@ namespace OpenMCAD.Core.Documents;
 /// (§5.4). Deriving the graph from what each feature says it consumes costs nothing and is right.
 /// </para>
 /// <para>
-/// <b>An input is a feature, not yet a face.</b> A real fillet does not consume an extrude — it
-/// consumes four particular edges of what the extrude produced, and identifying those across a
-/// rebuild is the entire topological naming problem (ADR-0005, P3-T08 onwards). Recording the
-/// coarse dependency now is what P3-T03 needs to build and order the graph, and the finer
-/// references attach to these same edges when naming lands rather than replacing them.
+/// <b>Inputs are coarse and references are fine, and both are kept.</b> A fillet does not really
+/// consume an extrude — it consumes four particular edges of what the extrude produced.
+/// <see cref="Inputs"/> records the dependency at feature grain, which is all the graph needs in
+/// order to sequence a rebuild; <see cref="References"/> records which entities, which is what the
+/// operation needs in order to run. The graph reads both, so a feature that declares only
+/// references still gets its edges (P3-T03).
 /// </para>
 /// <para>
 /// <b>Suppression is not error state.</b> This flag is the user's decision to skip a feature.
@@ -48,8 +53,12 @@ public sealed record Feature(
     string FeatureType,
     ImmutableArray<FeatureId> Inputs,
     ImmutableArray<Parameter> Parameters,
+    ImmutableArray<Naming.EntityReference> References = default,
     bool IsSuppressed = false)
 {
+    /// <summary>Gets the entity references, never a default array.</summary>
+    public ImmutableArray<Naming.EntityReference> EntityReferences
+        => References.IsDefault ? [] : References;
     /// <summary>Creates a feature with no inputs and no parameters.</summary>
     /// <param name="id">Its id.</param>
     /// <param name="name">Its display name.</param>
