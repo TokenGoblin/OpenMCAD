@@ -37,6 +37,21 @@ public static class DocumentCodec
     /// <summary>The schema version this build writes.</summary>
     public const int SchemaVersion = 1;
 
+    /// <summary>The tag of a setting holding a dimension.</summary>
+    private const int SettingQuantity = 0;
+
+    /// <summary>The tag of a setting holding a whole number.</summary>
+    private const int SettingNumber = 1;
+
+    /// <summary>The tag of a setting holding a switch.</summary>
+    private const int SettingFlag = 2;
+
+    /// <summary>The tag of a setting holding text.</summary>
+    private const int SettingText = 3;
+
+    /// <summary>The tag of a setting holding one of a set of options.</summary>
+    private const int SettingChoice = 4;
+
     /// <summary>Writes a document.</summary>
     /// <param name="document">The document.</param>
     /// <returns>Its bytes.</returns>
@@ -357,7 +372,7 @@ public static class DocumentCodec
     {
         string owner = UnknownField.Feature(feature.Id.ToStorageString());
 
-        writer.WriteMapHeader(7 + Extra(unknown, owner));
+        writer.WriteMapHeader(8 + Extra(unknown, owner));
 
         writer.Write("id");
         writer.Write(feature.Id.ToStorageString());
@@ -396,7 +411,128 @@ public static class DocumentCodec
         writer.Write("suppressed");
         writer.Write(feature.IsSuppressed);
 
+        writer.Write("settings");
+        WriteSettings(writer, feature.SettingValues);
+
         Preserved(writer, unknown, owner);
+    }
+
+    /// <summary>Writes a feature's settings.</summary>
+    /// <param name="writer">Where to write.</param>
+    /// <param name="settings">What the feature was told.</param>
+    /// <remarks>
+    /// Sorted by name, because a dictionary has no order of its own and the bytes have to be a
+    /// function of the document. Each value carries a tag naming its kind: a schema says what a
+    /// setting ought to be, but the file has to be readable by a build whose schema disagrees, or
+    /// says nothing at all because the feature came from a plugin it does not have.
+    /// </remarks>
+    private static void WriteSettings(
+        MessagePackWriter writer, ImmutableDictionary<string, FeatureValue> settings)
+    {
+        ImmutableArray<KeyValuePair<string, FeatureValue>> sorted =
+            [.. settings.OrderBy(s => s.Key, StringComparer.Ordinal)];
+
+        writer.WriteMapHeader(sorted.Length);
+
+        foreach ((string name, FeatureValue value) in sorted)
+        {
+            writer.Write(name);
+            writer.WriteArrayHeader(2);
+
+            switch (value)
+            {
+                case QuantityValue quantity:
+                    writer.Write(SettingQuantity);
+                    writer.WriteArrayHeader(2);
+                    writer.Write(quantity.Value.Value);
+                    writer.Write((int)quantity.Value.Dimension);
+                    break;
+
+                case NumberValue number:
+                    writer.Write(SettingNumber);
+                    writer.Write(number.Value);
+                    break;
+
+                case FlagValue flag:
+                    writer.Write(SettingFlag);
+                    writer.Write(flag.Value);
+                    break;
+
+                case TextValue text:
+                    writer.Write(SettingText);
+                    writer.Write(text.Value);
+                    break;
+
+                case ChoiceValue choice:
+                    writer.Write(SettingChoice);
+                    writer.Write(choice.Value);
+                    break;
+
+                default:
+                    throw new DocumentFormatException(
+                        $"There is no way to write a {value.GetType().Name}. A kind of value added "
+                        + "without a case here would be dropped on save.");
+            }
+        }
+    }
+
+    /// <summary>Reads a feature's settings.</summary>
+    /// <param name="reader">Where to read from.</param>
+    /// <returns>What the feature was told.</returns>
+    /// <remarks>
+    /// A tag this build does not know is not an error. It came from a newer version or a plugin,
+    /// and the setting is skipped here and kept whole by P3-T20's preservation of the field it sits
+    /// in — refusing the file instead would make one unrecognised switch enough to make a document
+    /// unopenable.
+    /// </remarks>
+    private static ImmutableDictionary<string, FeatureValue> ReadSettings(
+        ref MessagePackReader reader)
+    {
+        int count = reader.ReadMapHeader();
+
+        ImmutableDictionary<string, FeatureValue>.Builder found =
+            ImmutableDictionary.CreateBuilder<string, FeatureValue>(StringComparer.Ordinal);
+
+        for (int i = 0; i < count; ++i)
+        {
+            string name = reader.ReadString();
+
+            reader.ReadArrayHeader();
+            int tag = reader.ReadInt32();
+
+            switch (tag)
+            {
+                case SettingQuantity:
+                    reader.ReadArrayHeader();
+                    double magnitude = reader.ReadDouble();
+                    found[name] = new QuantityValue(
+                        new Quantity(magnitude, (Dimension)reader.ReadInt32()));
+
+                    break;
+
+                case SettingNumber:
+                    found[name] = new NumberValue(reader.ReadInt64());
+                    break;
+
+                case SettingFlag:
+                    found[name] = new FlagValue(reader.ReadBoolean());
+                    break;
+
+                case SettingText:
+                    found[name] = new TextValue(reader.ReadString());
+                    break;
+
+                case SettingChoice:
+                    found[name] = new ChoiceValue(reader.ReadString());
+                    break;
+
+                default:
+                    reader.Skip();
+                    break;
+            }
+        }
+
+        return found.ToImmutable();
     }
 
     private static Feature ReadFeature(ref MessagePackReader reader, List<UnknownField> unknown)
@@ -411,6 +547,7 @@ public static class DocumentCodec
         ImmutableArray<Parameter> parameters = [];
         ImmutableArray<EntityReference> references = [];
         bool suppressed = false;
+        ImmutableDictionary<string, FeatureValue>? settings = null;
 
         for (int i = 0; i < fields; ++i)
         {
@@ -455,6 +592,10 @@ public static class DocumentCodec
                     suppressed = reader.ReadBoolean();
                     break;
 
+                case "settings":
+                    settings = ReadSettings(ref reader);
+                    break;
+
                 default:
                     pending.Add(Keep(ref reader, UnknownField.Root, key));
                     break;
@@ -463,7 +604,7 @@ public static class DocumentCodec
 
         Attribute(unknown, pending, UnknownField.Feature(id.ToStorageString()));
 
-        return new Feature(id, name, type, inputs, parameters, references, suppressed);
+        return new Feature(id, name, type, inputs, parameters, references, suppressed, settings);
     }
 
     private static ImmutableArray<EntityReference> ReadEntityReferences(ref MessagePackReader reader)

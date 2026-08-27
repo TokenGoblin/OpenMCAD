@@ -24,6 +24,7 @@ namespace OpenMCAD.Core.Documents;
 /// policy its declaration chose (P3-T12).
 /// </param>
 /// <param name="IsSuppressed">Whether the user has switched this feature off.</param>
+/// <param name="Settings">What the feature has been told that is not a dimension.</param>
 /// <remarks>
 /// <para>
 /// <b>Inputs are declared, never inferred from tree order.</b> The tree is a sequence a person
@@ -54,11 +55,48 @@ public sealed record Feature(
     ImmutableArray<FeatureId> Inputs,
     ImmutableArray<Parameter> Parameters,
     ImmutableArray<Naming.EntityReference> References = default,
-    bool IsSuppressed = false)
+    bool IsSuppressed = false,
+    ImmutableDictionary<string, FeatureValue>? Settings = null)
 {
     /// <summary>Gets the entity references, never a default array.</summary>
     public ImmutableArray<Naming.EntityReference> EntityReferences
         => References.IsDefault ? [] : References;
+
+    /// <summary>Gets the feature's settings, never null.</summary>
+    /// <remarks>
+    /// <para>
+    /// P3-T21. What a feature is told that is not a dimension and not a selection: which direction,
+    /// how many, which end condition, whether to merge. Dimensions stay in
+    /// <see cref="Parameters"/>, because a dimension can be driven by an expression and takes part
+    /// in the parameter graph, and settings cannot and do not.
+    /// </para>
+    /// <para>
+    /// Held by name against a <see cref="FeatureValue"/> rather than typed per feature, so that the
+    /// codec, the property manager and a script can all work with a feature whose kind they have
+    /// never heard of. What the names mean is the business of that feature's schema, which lives in
+    /// <c>OpenMCAD.Modeling</c> — this layer stores and round-trips them without an opinion.
+    /// </para>
+    /// </remarks>
+    public ImmutableDictionary<string, FeatureValue> SettingValues
+        => Settings ?? ImmutableDictionary<string, FeatureValue>.Empty;
+
+    /// <summary>Finds one of this feature's settings.</summary>
+    /// <param name="name">What it is called.</param>
+    /// <returns>The value, or <see langword="null"/> if this feature has no setting by that name.</returns>
+    public FeatureValue? FindSetting(string name)
+        => SettingValues.TryGetValue(name, out FeatureValue? value) ? value : null;
+
+    /// <summary>Returns this feature with a setting given a value.</summary>
+    /// <param name="name">What it is called.</param>
+    /// <param name="value">What it is now.</param>
+    /// <returns>The new feature.</returns>
+    public Feature WithSetting(string name, FeatureValue value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(value);
+
+        return this with { Settings = SettingValues.SetItem(name, value) };
+    }
     /// <summary>Creates a feature with no inputs and no parameters.</summary>
     /// <param name="id">Its id.</param>
     /// <param name="name">Its display name.</param>
@@ -104,7 +142,8 @@ public sealed record Feature(
             && IsSuppressed == other.IsSuppressed
             && Inputs.SequenceEqual(other.Inputs)
             && Parameters.SequenceEqual(other.Parameters)
-            && EntityReferences.SequenceEqual(other.EntityReferences);
+            && EntityReferences.SequenceEqual(other.EntityReferences)
+            && SameSettings(other);
 
     /// <inheritdoc />
     public override int GetHashCode()
@@ -131,7 +170,33 @@ public sealed record Feature(
             hash.Add(reference);
         }
 
+        hash.Add(SettingValues.Count);
+
         return hash.ToHashCode();
+    }
+
+    /// <summary>Whether two features are told the same things.</summary>
+    /// <remarks>
+    /// By content. An <see cref="ImmutableDictionary{TKey, TValue}"/> compares by reference like
+    /// every other collection a record holds, which is the same trap the arrays above are written
+    /// out by hand to avoid — and the settings are the newest place for it to be sprung.
+    /// </remarks>
+    private bool SameSettings(Feature other)
+    {
+        if (SettingValues.Count != other.SettingValues.Count)
+        {
+            return false;
+        }
+
+        foreach ((string name, FeatureValue value) in SettingValues)
+        {
+            if (other.FindSetting(name) != value)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <inheritdoc />
