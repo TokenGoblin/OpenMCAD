@@ -512,6 +512,177 @@ public sealed class FakeSolverTests
     }
 
     [Fact]
+    public void AContradictionBetweenTwoFixedPointsIsStillFound()
+    {
+        // The constraint acts only on ground, so it belongs to no group of movable geometry. An
+        // earlier version therefore never evaluated it at all and called the sketch fully defined,
+        // which is the worst kind of wrong: a sketch that cannot be satisfied, reported as fine.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchPoint(Entity(2), new Vec2d(5, 0)))
+            .With(Fixed(1, Whole(1)))
+            .With(Fixed(2, Whole(2)))
+            .With(Constraint(3, ConstraintKind.Distance, [Whole(1), Whole(2)], 10));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        result.Diagnosis.Outcome.Should().Be(SolveOutcome.OverConstrained);
+        result.IsUsable.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ADragNamingGeometryThatIsGoneStillSolvesTheSketch()
+    {
+        // What a drag begun before a delete looks like by the time it arrives. The dragged entity
+        // is in no group, exactly as a fixed one is in no group -- and treating those two as the
+        // same thing made a genuinely over-constrained sketch report as healthy for as long as the
+        // user kept dragging.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchLine(Entity(1), Vec2d.Zero, new Vec2d(5, 0)))
+            .With(Fixed(1, Point(1, EntityPoint.Start)))
+            .With(Constraint(2, ConstraintKind.Horizontal, [Whole(1)]))
+            .With(Constraint(3, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 4))
+            .With(Constraint(4, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 9));
+
+        SolveResult result = Solver.Solve(sketch, new DragTarget(Whole(99), new Vec2d(1, 1)));
+
+        result.Diagnosis.Outcome.Should().Be(SolveOutcome.OverConstrained);
+
+        // And the sketch was genuinely solved, not merely diagnosed. Skipping the solve because
+        // the dragged id resolved to nothing would leave the geometry exactly as it arrived.
+        Sketch solvable = Sketch.Empty
+            .With(new SketchLine(Entity(1), Vec2d.Zero, new Vec2d(5, 2)))
+            .With(Fixed(1, Point(1, EntityPoint.Start)))
+            .With(Constraint(2, ConstraintKind.Horizontal, [Whole(1)]));
+
+        SolveResult moved = Solver.Solve(
+            solvable, new DragTarget(Whole(99), new Vec2d(1, 1)));
+
+        (Line(moved, 1).End.Y - Line(moved, 1).Start.Y)
+            .Should().BeApproximately(0, 1e-7, "the sketch still got solved");
+    }
+
+    [Fact]
+    public void DraggingAFixedPointDoesNotMoveIt()
+    {
+        // Seeding it and letting the solve pull it back works only where something else constrains
+        // it. A lone fixed point has no equation to restore it, so the drag would quietly relocate
+        // the one piece of geometry the user had said must not move.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(Fixed(1, Whole(1)));
+
+        SolveResult result = Solver.Solve(sketch, new DragTarget(Whole(1), new Vec2d(7, 7)));
+
+        Where(result, 1).Should().BeApproximately(Vec2d.Zero, 1e-12);
+    }
+
+    [Fact]
+    public void ADragReportsOnTheWholeSketchAndNotJustTheGroupItTouched()
+    {
+        // Solving one group is right; reporting one group's verdict is not. A user dragging a
+        // healthy feature would see the status flip to "fully defined" for as long as the mouse
+        // was down, over a sketch whose other feature contradicts itself.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchLine(Entity(2), Vec2d.Zero, new Vec2d(5, 0)))
+            .With(Fixed(1, Point(2, EntityPoint.Start)))
+            .With(Constraint(2, ConstraintKind.Distance,
+                [Point(2, EntityPoint.Start), Point(2, EntityPoint.End)], 4))
+            .With(Constraint(3, ConstraintKind.Distance,
+                [Point(2, EntityPoint.Start), Point(2, EntityPoint.End)], 9));
+
+        SolveResult result = Solver.Solve(
+            sketch, new DragTarget(Whole(1), new Vec2d(3, 3)), SolverOptions.ForDrag);
+
+        Where(result, 1).Should().BeApproximately(
+            new Vec2d(3, 3), 1e-9, "the dragged point still went where it was put");
+
+        result.Diagnosis.Outcome.Should().Be(
+            SolveOutcome.OverConstrained, "and the sketch is still broken elsewhere");
+    }
+
+    [Fact]
+    public void ATimeBudgetCoversTheWholeSolveAndNotEachGroup()
+    {
+        // A budget spent afresh on each of forty subsystems is forty times the budget, which is
+        // the opposite of what the decomposition exists to achieve.
+        Sketch sketch = Sketch.Empty;
+
+        for (int i = 1; i <= 30; ++i)
+        {
+            sketch = sketch
+                .With(new SketchLine(Entity(i * 2), Vec2d.Zero, new Vec2d(1, i)))
+                .With(new SketchLine(Entity((i * 2) + 1), Vec2d.Zero, new Vec2d(i, 1)))
+                .With(Constraint(i, ConstraintKind.Perpendicular,
+                    [Whole(i * 2), Whole((i * 2) + 1)]));
+        }
+
+        SketchAnalysis.Of(sketch).Subsystems.Should().HaveCount(30, "thirty separate problems");
+
+        System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
+
+        Solver.Solve(
+            sketch,
+            options: new SolverOptions(
+                MaximumIterations: 100_000,
+                Tolerance: 1e-18,
+                TimeBudget: TimeSpan.FromMilliseconds(40)));
+
+        clock.Stop();
+
+        // Generous, because the final diagnosis pass runs whatever the budget said and a loaded
+        // machine is slow. Thirty times forty milliseconds is 1.2 seconds, which this is not.
+        clock.Elapsed.Should().BeLessThan(TimeSpan.FromMilliseconds(600));
+    }
+
+    [Fact]
+    public void ACancelledSolveStopsAtOnceHoweverManyGroupsAreLeft()
+    {
+        using CancellationTokenSource cancelled = new();
+        cancelled.Cancel();
+
+        Sketch sketch = Sketch.Empty;
+
+        for (int i = 1; i <= 10; ++i)
+        {
+            sketch = sketch
+                .With(new SketchLine(Entity(i * 2), Vec2d.Zero, new Vec2d(1, i)))
+                .With(new SketchLine(Entity((i * 2) + 1), Vec2d.Zero, new Vec2d(i, 1)))
+                .With(Constraint(i, ConstraintKind.Perpendicular,
+                    [Whole(i * 2), Whole((i * 2) + 1)]));
+        }
+
+        SolveResult result = Solver.Solve(sketch, cancellationToken: cancelled.Token);
+
+        result.Iterations.Should().Be(0, "not one group was solved");
+    }
+
+    [Fact]
+    public void FreedomIsReportedOnlyWhenTheSketchIsUnderConstrained()
+    {
+        // "Conflicting, four degrees of freedom left" is two answers to two different questions
+        // presented as one, and the field's contract says which one it answers.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchLine(Entity(1), Vec2d.Zero, new Vec2d(5, 0)))
+            .With(new SketchPoint(Entity(2), new Vec2d(9, 9)))
+            .With(Fixed(1, Point(1, EntityPoint.Start)))
+            .With(Constraint(2, ConstraintKind.Horizontal, [Whole(1)]))
+            .With(Constraint(3, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 4))
+            .With(Constraint(4, ConstraintKind.Distance,
+                [Point(1, EntityPoint.Start), Point(1, EntityPoint.End)], 9));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        result.Diagnosis.Outcome.Should().Be(SolveOutcome.OverConstrained);
+        result.Diagnosis.RemainingFreedom.Should().Be(0);
+        result.Diagnosis.Free.Should().BeEmpty();
+    }
+
+    [Fact]
     public void ASolveNeverThrowsForASketchItCannotSolve()
     {
         // The sketcher has to draw the result either way, and a user mid-drag with a momentarily

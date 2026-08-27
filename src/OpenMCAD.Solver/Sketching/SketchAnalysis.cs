@@ -5,7 +5,11 @@ namespace OpenMCAD.Solver.Sketching;
 /// <summary>
 /// A group of geometry that can be solved without reference to the rest of the sketch.
 /// </summary>
-/// <param name="Entities">What is in it, in sketch order.</param>
+/// <param name="Entities">
+/// What is in it, in sketch order. Empty for the group holding constraints that act only on
+/// ground: those have nothing to move, and still have to be checked, because a distance between
+/// two fixed points can be wrong and a group that did not exist would never notice.
+/// </param>
 /// <param name="Constraints">The constraints acting within it, in the order they were made.</param>
 /// <param name="Freedom">How many numbers place its geometry.</param>
 /// <param name="Removes">How many of those the constraints take away.</param>
@@ -80,6 +84,13 @@ public sealed class SketchAnalysis
         Subsystems = subsystems;
     }
 
+    /// <summary>Gets the sketch this describes.</summary>
+    /// <remarks>
+    /// Held so a caller that built an analysis from a modified sketch — a drag seeds one before
+    /// anything is solved — does not have to carry both and risk passing the wrong one.
+    /// </remarks>
+    public Sketch Sketch => _sketch;
+
     /// <summary>Gets the sketch laid out as a vector.</summary>
     public SketchParameters Parameters { get; }
 
@@ -115,7 +126,7 @@ public sealed class SketchAnalysis
 
         SketchParameters parameters = SketchParameters.Of(sketch);
 
-        ImmutableArray<int> frozen = FrozenIn(sketch, parameters);
+        ImmutableArray<int> frozen = FrozenBy(sketch, parameters);
         ImmutableArray<SketchEntityId> ground = GroundIn(sketch, parameters, frozen);
 
         (ImmutableDictionary<SketchEntityId, int> cluster, ImmutableArray<Subsystem> subsystems) =
@@ -143,6 +154,9 @@ public sealed class SketchAnalysis
         ArgumentNullException.ThrowIfNull(subsystem);
 
         HashSet<SketchEntityId> wanted = [.. subsystem.Entities];
+
+        // A group with no entities still names geometry through its constraints: that is the whole
+        // of what it is. Collecting the operands below is what brings that ground in.
 
         foreach (SketchConstraintId id in subsystem.Constraints)
         {
@@ -179,34 +193,21 @@ public sealed class SketchAnalysis
         return part;
     }
 
-    /// <summary>Puts a solved group back into the whole sketch.</summary>
-    /// <param name="solved">The group, after solving.</param>
-    /// <returns>The sketch, with that group's geometry updated and everything else untouched.</returns>
-    public Sketch Merge(Sketch solved)
-    {
-        ArgumentNullException.ThrowIfNull(solved);
-
-        Sketch whole = _sketch;
-
-        foreach (SketchEntity entity in solved.Entities.Ordered)
-        {
-            whole = whole.With(entity);
-        }
-
-        return whole;
-    }
-
     /// <inheritdoc/>
     public override string ToString()
         => $"{Subsystems.Length} subsystems, {Ground.Length} entities fixed";
 
     /// <summary>Which parameters are pinned by a fix constraint.</summary>
+    /// <param name="sketch">The sketch.</param>
+    /// <param name="parameters">Its layout.</param>
+    /// <returns>The indices, ascending.</returns>
     /// <remarks>
-    /// Shared rather than left to each solver. A solver that worked out "fixed" for itself would be
-    /// a second opinion about which numbers may move, and the decomposition below depends on the
-    /// same answer — two answers would put an entity in a cluster the solver then held still.
+    /// Shared rather than left to each solver, and public so a solver can ask it of a sub-sketch
+    /// without paying for a whole decomposition. A solver that worked out "fixed" for itself would
+    /// be a second opinion about which numbers may move, and the decomposition depends on the same
+    /// answer — two answers would put an entity in a cluster the solver then held still.
     /// </remarks>
-    private static ImmutableArray<int> FrozenIn(Sketch sketch, SketchParameters parameters)
+    public static ImmutableArray<int> FrozenBy(Sketch sketch, SketchParameters parameters)
     {
         HashSet<int> frozen = [];
 
@@ -235,7 +236,7 @@ public sealed class SketchAnalysis
         foreach (SketchEntity entity in sketch.Entities.Ordered)
         {
             int at = parameters.OffsetOf(entity.Id);
-            int width = WidthOf(sketch, entity);
+            int width = SketchParameters.WidthOf(entity);
 
             if (width > 0 && Enumerable.Range(at, width).All(frozen.Contains))
             {
@@ -317,6 +318,20 @@ public sealed class SketchAnalysis
 
         List<Subsystem> subsystems = [];
 
+        // Constraints that act only on ground have no group of their own to fall into, and
+        // dropping them would mean a distance between two fixed points -- which can perfectly well
+        // be wrong -- was never evaluated by anybody. They get a group with no entities: nothing to
+        // move, everything still checked.
+        ImmutableArray<SketchConstraintId> onGroundAlone =
+        [
+            .. sketch.Constraints.Ordered
+                .Where(c => c.IsDriving
+                    && c.Kind != ConstraintKind.Fix
+                    && c.On.Length > 0
+                    && c.On.All(o => !parent.ContainsKey(o.Entity)))
+                .Select(c => c.Id),
+        ];
+
         foreach (List<SketchEntityId> members in groups.Values)
         {
             HashSet<SketchEntityId> inside = [.. members];
@@ -329,7 +344,7 @@ public sealed class SketchAnalysis
             ];
 
             int freedom = members.Sum(
-                id => sketch.Entities.Find(id) is { } entity ? WidthOf(sketch, entity) : 0);
+                id => sketch.Entities.Find(id) is { } entity ? SketchParameters.WidthOf(entity) : 0);
 
             int removes = constraints.Sum(
                 id => sketch.Constraints.Find(id)?.Removes ?? 0);
@@ -338,11 +353,16 @@ public sealed class SketchAnalysis
                 [.. members.OrderBy(id => order.IndexOf(id))], constraints, freedom, removes));
         }
 
+        if (!onGroundAlone.IsEmpty)
+        {
+            subsystems.Add(new Subsystem([], onGroundAlone, 0, 0));
+        }
+
         ImmutableArray<Subsystem> ordered =
         [
             .. subsystems
                 .OrderByDescending(s => s.Entities.Length)
-                .ThenBy(s => order.IndexOf(s.Entities[0])),
+                .ThenBy(s => s.Entities.IsEmpty ? int.MaxValue : order.IndexOf(s.Entities[0])),
         ];
 
         ImmutableDictionary<SketchEntityId, int>.Builder cluster =
@@ -357,16 +377,6 @@ public sealed class SketchAnalysis
         }
 
         return (cluster.ToImmutable(), ordered);
-    }
-
-    /// <summary>How many numbers an entity occupies in the vector.</summary>
-    private static int WidthOf(Sketch sketch, SketchEntity entity)
-    {
-        SketchParameters alone = SketchParameters.Of(SketchEntitySet.Of([entity]));
-
-        _ = sketch;
-
-        return alone.Count;
     }
 
     private static SketchEntityId Root(

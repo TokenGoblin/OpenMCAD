@@ -166,6 +166,24 @@ public sealed class SketchParameters
         };
     }
 
+    /// <summary>How many numbers it takes to place one entity.</summary>
+    /// <param name="entity">The entity.</param>
+    /// <returns>How many of the vector's numbers are its.</returns>
+    /// <remarks>
+    /// The one table. <see cref="Sketch.Freedom"/> is the sum of this over the sketch, and a second
+    /// table written out beside it would agree on the day it was written and drift the first time
+    /// an entity kind gained a parameter — which is a number the user is shown.
+    /// </remarks>
+    public static int WidthOf(SketchEntity entity)
+    {
+        ArgumentNullException.ThrowIfNull(entity);
+
+        ImmutableArray<double>.Builder values = ImmutableArray.CreateBuilder<double>();
+        Flatten(entity, values);
+
+        return values.Count;
+    }
+
     /// <inheritdoc/>
     public override string ToString() => $"{Count} parameters over {_entities.Length} entities";
 

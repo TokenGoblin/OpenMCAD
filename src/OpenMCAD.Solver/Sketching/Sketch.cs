@@ -93,21 +93,11 @@ public sealed record Sketch(SketchEntitySet Entities, ConstraintSet Constraints)
             + $"{RemainingFreedom} degrees of freedom remaining";
 
     /// <summary>How many numbers it takes to place one entity.</summary>
-    private static int FreedomOf(SketchEntity entity) => entity switch
-    {
-        SketchPoint => 2,
-        SketchLine => 4,
-        SketchCircle => 3,
-        SketchArc => 5,
-        SketchEllipse => 5,
-        SketchEllipticalArc => 7,
-        SketchParabola => 6,
-        SketchHyperbola => 7,
-
-        // Two per pole plus one weight each. The knots are not free: moving one is a change to the
-        // curve's parameterisation rather than to its placement, and no constraint acts on them.
-        SketchBSpline spline => spline.ControlPoints.Length * 3,
-
-        _ => 0,
-    };
+    /// <remarks>
+    /// Asked of <see cref="SketchParameters"/> rather than written out here. The two are the same
+    /// table, and a copy would agree on the day it was written and drift the first time an entity
+    /// kind gained a parameter — leaving the degree-of-freedom count a user is shown disagreeing
+    /// with the vector a solver actually works on.
+    /// </remarks>
+    private static int FreedomOf(SketchEntity entity) => SketchParameters.WidthOf(entity);
 }

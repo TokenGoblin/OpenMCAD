@@ -207,6 +207,44 @@ public sealed class SketchAnalysisTests
             .Should().Be(2, "out of eighty");
     }
 
+    [Theory]
+    [InlineData("point", 2)]
+    [InlineData("line", 4)]
+    [InlineData("circle", 3)]
+    [InlineData("arc", 5)]
+    [InlineData("ellipse", 5)]
+    [InlineData("elliptical arc", 7)]
+    [InlineData("parabola", 6)]
+    [InlineData("hyperbola", 7)]
+    [InlineData("spline", 9)]
+    public void EveryKindOfGeometryContributesTheFreedomItActuallyHas(string kind, int expected)
+    {
+        // The count a user is shown has to be the size of the vector a solver works on. Two tables
+        // would agree on the day they were written and drift the first time an entity kind gained
+        // a parameter -- and only the kinds a test happened to use would notice.
+        SketchEntity entity = kind switch
+        {
+            "point" => new SketchPoint(Entity(1), Vec2d.Zero),
+            "line" => new SketchLine(Entity(1), Vec2d.Zero, Vec2d.One),
+            "circle" => new SketchCircle(Entity(1), Vec2d.Zero, 1),
+            "arc" => new SketchArc(Entity(1), Vec2d.Zero, 1, 0, 1),
+            "ellipse" => new SketchEllipse(Entity(1), Vec2d.Zero, 2, 1),
+            "elliptical arc" => new SketchEllipticalArc(Entity(1), Vec2d.Zero, 2, 1, 0, 0, 1),
+            "parabola" => new SketchParabola(Entity(1), Vec2d.Zero, new Vec2d(0, 1), -1, 1),
+            "hyperbola" => new SketchHyperbola(Entity(1), Vec2d.Zero, 2, 1, 0, -1, 1),
+
+            // Three poles: two coordinates and a weight each.
+            _ => SketchBSpline.Through(
+                Entity(1), 2, [Vec2d.Zero, new Vec2d(1, 1), new Vec2d(2, 0)]),
+        };
+
+        Sketch sketch = Sketch.Empty.With(entity);
+
+        sketch.Freedom.Should().Be(expected);
+        SketchParameters.Of(sketch).Count.Should().Be(
+            expected, "the freedom count and the parameter vector are the same table");
+    }
+
     [Fact]
     public void AnEmptySketchHasNoGroups()
     {

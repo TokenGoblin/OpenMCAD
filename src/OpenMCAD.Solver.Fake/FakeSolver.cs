@@ -59,9 +59,10 @@ public sealed class FakeSolver : ISketchSolver
     /// is the difference between a drag that keeps up and one that does not.
     /// </para>
     /// <para>
-    /// A drag goes further and solves only the group holding what is being dragged. Nothing outside
-    /// it can have moved, by the definition of a subsystem, so there is nothing for the rest of the
-    /// sketch to be re-solved to.
+    /// A drag solves only the group holding what is dragged, because nothing outside it can have
+    /// moved. It is still diagnosed as a whole sketch: the saving is in the iteration, which is the
+    /// expensive part, and a drag that reported only its own group would flip the status to "fully
+    /// defined" while the user held the mouse down over a sketch that was nothing of the kind.
     /// </para>
     /// </remarks>
     public SolveResult Solve(
@@ -74,63 +75,108 @@ public sealed class FakeSolver : ISketchSolver
 
         SolverOptions settings = options ?? SolverOptions.Default;
 
-        Sketch working = drag is null ? sketch : Dragged(sketch, drag);
-        SketchAnalysis analysis = SketchAnalysis.Of(working);
+        // One clock for the whole solve, not one per group. A budget spent afresh on each of forty
+        // subsystems is forty times the budget, which is the opposite of what §5.6 asks for.
+        //
+        // No test distinguishes the two, and honestly: making one would need forty groups that
+        // each exhaust their own budget, and the groups a sketch is actually made of converge in a
+        // handful of iterations. The shared clock is right on the reasoning, not on a measurement.
+        Stopwatch clock = Stopwatch.StartNew();
 
-        ImmutableArray<Subsystem> wanted = drag is null
-            ? analysis.Subsystems
-            : analysis.Containing(drag.Point.Entity) is { } touched ? [touched] : [];
+        SketchAnalysis analysis = SketchAnalysis.Of(drag is null ? sketch : Dragged(sketch, drag));
+        Sketch working = analysis.Sketch;
 
-        if (wanted.IsEmpty)
-        {
-            // Every entity is ground, or the drag is on geometry that is. The sketch still comes
-            // back, because the caller has to draw something either way.
-            return new SolveResult(
-                working,
-                new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Nothing can move."));
-        }
-
-        Sketch solved = working;
-        List<SolveDiagnosis> verdicts = [];
+        ImmutableArray<Subsystem> wanted = Wanted(analysis, drag);
 
         int iterations = 0;
-        double residual = 0;
 
         foreach (Subsystem subsystem in wanted)
         {
-            (Sketch moved, SolveDiagnosis verdict, int steps, double left) =
-                SolveOne(analysis.Restrict(subsystem), settings, cancellationToken);
+            // Both are also checked inside the sub-solve, so this saves the call rather than the
+            // work, and no test can tell it from its absence. It stays because "stop when you have
+            // been told to stop" belongs at the loop that would otherwise keep going.
+            if (cancellationToken.IsCancellationRequested || OutOfTime(settings, clock))
+            {
+                break;
+            }
+
+            (Sketch moved, int steps) =
+                SolveOne(analysis.Restrict(subsystem), settings, clock, cancellationToken);
 
             // Only what this group owns is written back. The ground it borrowed belongs to the
             // whole sketch and was never the sub-solve's to move -- though today that is a
             // statement of intent rather than a load-bearing check, because ground is frozen in
-            // the sub-solve too and writing it back would write the same numbers. Sabotaging this
-            // to copy everything fails no test, and the loop stays because "a sub-solve owns its
-            // own geometry" is the property, not "it happens to come out the same".
+            // the sub-solve too and writing it back would write the same numbers.
             foreach (SketchEntityId id in subsystem.Entities)
             {
                 if (moved.Entities.Find(id) is { } entity)
                 {
-                    solved = solved.With(entity);
+                    working = working.With(entity);
                 }
             }
 
-            verdicts.Add(verdict);
             iterations += steps;
+        }
+
+        // Diagnosed after everything has moved, and over every group rather than only the ones
+        // solved: a verdict about a sketch has to be about the sketch. A drag that reported only
+        // its own group would flip the status to "fully defined" while the user held the mouse
+        // down over a sketch that was nothing of the kind.
+        SketchAnalysis after = SketchAnalysis.Of(working);
+
+        HashSet<SketchEntityId> solvedHere = [.. wanted.SelectMany(w => w.Entities)];
+
+        List<SolveDiagnosis> verdicts = [];
+        double residual = 0;
+
+        foreach (Subsystem subsystem in after.Subsystems)
+        {
+            Sketch part = after.Restrict(subsystem);
+
+            bool touched = subsystem.Entities.IsEmpty
+                || subsystem.Entities.Any(solvedHere.Contains);
+
+            (SolveDiagnosis verdict, double left) = touched
+                ? Diagnose(part, settings)
+                : Unchanged(part, subsystem, settings);
+
+            verdicts.Add(verdict);
             residual = System.Math.Max(residual, left);
         }
 
-        return new SolveResult(solved, Combined(verdicts), iterations, residual);
+        return new SolveResult(working, Combined(verdicts), iterations, residual);
     }
+
+    /// <summary>Which groups this solve is going to touch.</summary>
+    /// <remarks>
+    /// A drag narrows it to the group holding the dragged point — unless there is no such group,
+    /// which happens for two quite different reasons. The point may be ground, in which case
+    /// nothing about it can move; or the id may name geometry that is not in the sketch at all,
+    /// which is what a drag begun before a delete looks like by the time it arrives. Neither is a
+    /// reason to skip the solve, and treating them as one silently turned a broken sketch into a
+    /// healthy-looking one.
+    /// </remarks>
+    private static ImmutableArray<Subsystem> Wanted(SketchAnalysis analysis, DragTarget? drag)
+        => drag is not null && analysis.Containing(drag.Point.Entity) is { } touched
+            ? [touched]
+            : analysis.Subsystems;
+
+    private static bool OutOfTime(SolverOptions settings, Stopwatch clock)
+        => settings.TimeBudget is { } budget && clock.Elapsed > budget;
 
     /// <summary>Rolls several groups' verdicts into one for the sketch.</summary>
     /// <remarks>
-    /// The worst outcome wins and the freedom adds up. A sketch with one contradicting group is a
-    /// contradicting sketch however well the others solved, because the user cannot proceed — and
-    /// reporting the best of them would say "fully defined" about a sketch that is not.
+    /// The worst outcome wins. A sketch with one contradicting group is a contradicting sketch
+    /// however well the others solved, because the user cannot proceed — and reporting the best of
+    /// them would say "fully defined" about a sketch that is not.
     /// </remarks>
     private static SolveDiagnosis Combined(List<SolveDiagnosis> verdicts)
     {
+        if (verdicts.Count == 0)
+        {
+            return new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Nothing can move.");
+        }
+
         if (verdicts.Count == 1)
         {
             return verdicts[0];
@@ -138,10 +184,15 @@ public sealed class FakeSolver : ISketchSolver
 
         SolveOutcome worst = verdicts.Select(v => v.Outcome).OrderByDescending(Severity).First();
 
+        // Freedom and the free-entity list belong to the under-constrained case and are reported
+        // only there. "Conflicting, four degrees of freedom left" is two answers to two different
+        // questions presented as one, and the field's own contract says which one it answers.
+        bool loose = worst == SolveOutcome.UnderConstrained;
+
         return new SolveDiagnosis(
             worst,
-            verdicts.Sum(v => v.RemainingFreedom),
-            [.. verdicts.SelectMany(v => v.Free).Distinct()],
+            loose ? verdicts.Sum(v => v.RemainingFreedom) : 0,
+            loose ? [.. verdicts.SelectMany(v => v.Free).Distinct()] : [],
             [.. verdicts.SelectMany(v => v.Conflicts).Distinct()],
             [.. verdicts.SelectMany(v => v.Surplus).Distinct()],
             verdicts.First(v => v.Outcome == worst).Message);
@@ -157,17 +208,17 @@ public sealed class FakeSolver : ISketchSolver
     };
 
     /// <summary>Solves one group, which is one subsystem plus whatever ground it refers to.</summary>
-    private static (Sketch Sketch, SolveDiagnosis Diagnosis, int Iterations, double Residual) SolveOne(
-        Sketch working, SolverOptions settings, CancellationToken cancellationToken)
+    private static (Sketch Sketch, int Iterations) SolveOne(
+        Sketch working,
+        SolverOptions settings,
+        Stopwatch clock,
+        CancellationToken cancellationToken)
     {
-        SketchAnalysis analysis = SketchAnalysis.Of(working);
-
-        SketchParameters layout = analysis.Parameters;
-        ImmutableArray<int> frozen = analysis.FrozenParameters;
+        SketchParameters layout = SketchParameters.Of(working);
+        ImmutableArray<int> frozen = SketchAnalysis.FrozenBy(working, layout);
 
         double[] values = [.. layout.Values];
 
-        Stopwatch clock = Stopwatch.StartNew();
         double damping = 1e-3;
         int iteration = 0;
 
@@ -175,13 +226,9 @@ public sealed class FakeSolver : ISketchSolver
 
         while (iteration < settings.MaximumIterations
             && residual > settings.Tolerance
-            && !cancellationToken.IsCancellationRequested)
+            && !cancellationToken.IsCancellationRequested
+            && !OutOfTime(settings, clock))
         {
-            if (settings.TimeBudget is { } budget && clock.Elapsed > budget)
-            {
-                break;
-            }
-
             ++iteration;
 
             if (!Step(working, layout, values, frozen, ref damping, ref residual))
@@ -190,9 +237,7 @@ public sealed class FakeSolver : ISketchSolver
             }
         }
 
-        Sketch moved = layout.Scatter(working, [.. values]);
-
-        return (moved, Diagnose(moved, layout, frozen, residual, settings), iteration, residual);
+        return (layout.Scatter(working, [.. values]), iteration);
     }
 
     /// <summary>Moves the dragged point to where the pointer is, as the starting guess.</summary>
@@ -205,6 +250,12 @@ public sealed class FakeSolver : ISketchSolver
     /// the test noticed.
     /// </para>
     /// <para>
+    /// A point that is fixed is not moved at all. Seeding it and letting the solve pull it back
+    /// would work only where something else constrained it; a lone fixed point has no equation to
+    /// restore it, so the drag would quietly relocate the one piece of geometry the user had said
+    /// must not move.
+    /// </para>
+    /// <para>
     /// Because a least-squares step starts from where the pointer is, the answer it walks to is
     /// usually the nearest one, which is roughly the minimal-motion objective §5.6 asks for. Only
     /// roughly: nothing here weights the movement of everything else, so a badly under-constrained
@@ -215,6 +266,16 @@ public sealed class FakeSolver : ISketchSolver
     private static Sketch Dragged(Sketch sketch, DragTarget drag)
     {
         if (sketch.Entities.Find(drag.Point.Entity) is not { } entity)
+        {
+            return sketch;
+        }
+
+        SketchParameters layout = SketchParameters.Of(sketch);
+        ImmutableArray<int> frozen = SketchAnalysis.FrozenBy(sketch, layout);
+
+        if (layout.IndexOf(drag.Point) is { } at
+            && frozen.Contains(at.X)
+            && frozen.Contains(at.Y))
         {
             return sketch;
         }
@@ -371,6 +432,57 @@ public sealed class FakeSolver : ISketchSolver
         }
 
         return jacobian;
+    }
+
+    /// <summary>Judges a group this solve did not touch, without paying for a Jacobian.</summary>
+    /// <param name="part">The group, as a sketch that can stand on its own.</param>
+    /// <param name="subsystem">What the analysis already worked out about it.</param>
+    /// <param name="settings">How hard the solve was told to try.</param>
+    /// <returns>The verdict, and how far from satisfied the group is.</returns>
+    /// <remarks>
+    /// <para>
+    /// A drag has to report on the whole sketch and cannot afford to re-analyse it: the rank of a
+    /// Jacobian costs one residual evaluation per free parameter, and paying that for every group
+    /// on every frame is exactly the cost the decomposition exists to avoid. Nothing about an
+    /// untouched group has moved, so its residual answers the question that matters — a group that
+    /// cannot be satisfied has one, and gets the full analysis; a group that is satisfied does not,
+    /// and its freedom is already known.
+    /// </para>
+    /// <para>
+    /// What this gives up: a redundancy in an untouched group is not re-detected mid-drag, because
+    /// a redundant group is satisfied and looks like any other satisfied group from the residual
+    /// alone. It was reported when that group was last solved and nothing has happened to it since.
+    /// </para>
+    /// </remarks>
+    private static (SolveDiagnosis Diagnosis, double Residual) Unchanged(
+        Sketch part, Subsystem subsystem, SolverOptions settings)
+    {
+        double residual = Norm(ConstraintResiduals.Of(part).Values);
+
+        if (residual > System.Math.Max(settings.Tolerance, 1e-7))
+        {
+            return Diagnose(part, settings);
+        }
+
+        return subsystem.RemainingFreedom > 0
+            ? (Under(part, subsystem.RemainingFreedom), residual)
+            : (new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Fully defined."),
+                residual);
+    }
+
+    /// <summary>Works out which of the four situations one group is in.</summary>
+    /// <param name="part">The group, as a sketch that can stand on its own.</param>
+    /// <param name="settings">How hard the solve was told to try.</param>
+    /// <returns>The verdict, and how far from satisfied the group ended up.</returns>
+    private static (SolveDiagnosis Diagnosis, double Residual) Diagnose(
+        Sketch part, SolverOptions settings)
+    {
+        SketchParameters layout = SketchParameters.Of(part);
+        ImmutableArray<int> frozen = SketchAnalysis.FrozenBy(part, layout);
+
+        double residual = Norm(ConstraintResiduals.Of(part).Values);
+
+        return (Diagnose(part, layout, frozen, residual, settings), residual);
     }
 
     /// <summary>Works out which of the four situations the sketch is in.</summary>
