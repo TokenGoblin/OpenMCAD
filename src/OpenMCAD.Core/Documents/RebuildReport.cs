@@ -4,10 +4,10 @@ namespace OpenMCAD.Core.Documents;
 
 /// <summary>How a feature stands after the last rebuild.</summary>
 /// <remarks>
-/// Seven states rather than "built" and "didn't", because the difference between them is the only
-/// thing the user actually needs. One of these is a problem they have to solve, three are
-/// consequences of it or of their own choices, and telling them apart is the difference between a
-/// tree that explains itself and twenty red marks with one cause.
+/// Eight states rather than "built" and "didn't", because the difference between them is the only
+/// thing the user actually needs. Three are problems they have to solve, two are consequences of
+/// those, and two are what they asked for. Telling them apart is the difference between a tree
+/// that explains itself and twenty red marks with one cause.
 /// </remarks>
 public enum FeatureState
 {
@@ -42,6 +42,18 @@ public enum FeatureState
     /// </remarks>
     Blocked,
 
+    /// <summary>
+    /// One of the entities it was built on could not be found in the rebuilt model.
+    /// </summary>
+    /// <remarks>
+    /// Tier three of §5.3. Kept apart from <see cref="MissingInput"/> because the two break at
+    /// different grain and are repaired differently: a missing input is a whole feature that is
+    /// gone and the fix is to re-point or remove this one, whereas this is a particular face or
+    /// edge that can no longer be identified and the fix is to reselect it. The
+    /// <see cref="FeatureDiagnostic.Repair"/> attached says which, and offers what was considered.
+    /// </remarks>
+    UnresolvedReference,
+
     /// <summary>It declares an input that the document does not contain.</summary>
     /// <remarks>
     /// What P3-T03 reports as a dangling reference. Normally the result of deleting a feature that
@@ -63,14 +75,24 @@ public enum FeatureState
 /// feature responsible. This is what lets the tree say "fix this one" rather than marking a dozen
 /// features and leaving the user to work out which is the cause and which are the symptoms.
 /// </param>
+/// <param name="Repair">
+/// For <see cref="FeatureState.UnresolvedReference"/>, what the user has to do about it and what
+/// they might do it with. Carried rather than rebuilt on demand because the information exists
+/// only at the moment resolution fails: which candidates were considered, and how closely each
+/// one fitted, cannot be recovered afterwards.
+/// </param>
 public sealed record FeatureDiagnostic(
     FeatureId Feature,
     FeatureState State,
     string? Message = null,
-    FeatureId Cause = default)
+    FeatureId Cause = default,
+    Naming.ReferenceRepair? Repair = null)
 {
     /// <summary>Gets whether this represents something the user has to fix.</summary>
-    public bool IsError => State is FeatureState.Failed or FeatureState.MissingInput;
+    public bool IsError => State
+        is FeatureState.Failed
+        or FeatureState.MissingInput
+        or FeatureState.UnresolvedReference;
 
     /// <inheritdoc />
     public override string ToString()
@@ -108,10 +130,21 @@ public sealed class RebuildReport
     /// <summary>Gets every diagnostic, in no particular order.</summary>
     public IReadOnlyCollection<FeatureDiagnostic> Diagnostics => _byFeature.Values.ToImmutableArray();
 
+    /// <summary>Gets the repairs the user is being offered, if any.</summary>
+    /// <remarks>
+    /// What a repair UI binds to (Phase 6). Separate from <see cref="Errors"/> because not every
+    /// error is repairable this way — a feature whose operation simply failed has no reference to
+    /// re-point — and a list that mixed the two would offer a "reselect" button for something with
+    /// nothing to reselect.
+    /// </remarks>
+    public ImmutableArray<Naming.ReferenceRepair> Repairs
+        => [.. _byFeature.Values.Select(d => d.Repair).OfType<Naming.ReferenceRepair>()];
+
     /// <summary>Gets the features the user has to do something about.</summary>
     /// <remarks>
-    /// Failures and missing inputs only. The features that could not be attempted as a consequence
-    /// are deliberately absent: they are the same problem counted again.
+    /// Failures, missing inputs and unresolved references only. The features that could not be
+    /// attempted as a consequence of one of those are deliberately absent: they are the same
+    /// problem counted again.
     /// </remarks>
     public ImmutableArray<FeatureDiagnostic> Errors
         => [.. _byFeature.Values.Where(d => d.IsError)];
