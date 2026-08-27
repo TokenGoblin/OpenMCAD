@@ -201,6 +201,16 @@ internal sealed class DocumentTransaction : IDocumentTransaction
     {
         EnsureOpen();
 
+        // Parameters are brought up to date here, and cycles are rejected here, because §5.5 says
+        // commit is where both belong. Doing it earlier would mean recomputing on every keystroke
+        // of a multi-step edit; doing it later would let a document exist, briefly, whose stored
+        // values disagree with its own formulas.
+        //
+        // Deliberately before the transaction is marked finished: a cycle means this commit does
+        // not happen, and the caller is left holding an open transaction they can correct rather
+        // than a spent one and a document they cannot fix.
+        Reevaluate();
+
         // Marked finished before the session is told, not after. If the commit throws, this
         // transaction is spent either way, and one that could be retried after a failed commit
         // would be applying its edits to a document that had moved on.
@@ -215,6 +225,40 @@ internal sealed class DocumentTransaction : IDocumentTransaction
         // A transaction that changed nothing still has to return something describing that. The
         // alternative is a null return that every caller has to check, for a case that is normal.
         return change ?? new DocumentChange(Name, _working, _working, [], []);
+    }
+
+    /// <summary>Recomputes every value that comes from a formula, and seeds what moved.</summary>
+    /// <exception cref="ParameterCycleException">Parameters are defined in a loop.</exception>
+    private void Reevaluate()
+    {
+        if (_touchedParameters.Count == 0 && _touchedFeatures.Count == 0)
+        {
+            // Nothing that could change a computed value was touched. Re-parsing every formula to
+            // discover that would cost the same whether or not anything happened.
+            return;
+        }
+
+        ParameterEvaluation evaluated = ParameterGraph.Reevaluate(_working);
+
+        _working = evaluated.Document;
+
+        foreach (string name in evaluated.Changed)
+        {
+            _touchedParameters.Add(name);
+        }
+
+        // A feature is seeded when one of its own values came out different, and only then. That
+        // is what §5.5 means by the parameter graph being part of the rebuild DAG: a feature whose
+        // depth is Thickness * 2 is as dirty when Thickness moves as if the user had edited it.
+        //
+        // Seeding every feature that merely *names* a changed parameter would be a superset, and
+        // a wasteful one: a depth of min(Thickness, 5mm) does not move when Thickness goes from 8
+        // to 9, the feature's inputs to the kernel are identical, and rebuilding it computes the
+        // same solid again.
+        foreach (FeatureId id in evaluated.ChangedFeatures)
+        {
+            _touchedFeatures.Add(id);
+        }
     }
 
     /// <inheritdoc />
