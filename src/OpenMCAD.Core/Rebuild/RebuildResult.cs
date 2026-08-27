@@ -40,14 +40,24 @@ public enum RebuildOutcome
 /// were suppressed. Reported separately from <paramref name="Failed"/> because the distinction
 /// matters to the user: one of these is a problem to fix, the rest are consequences of it.
 /// </param>
+/// <param name="FromCache">
+/// The features whose results were remembered rather than recomputed. A subset of
+/// <paramref name="Rebuilt"/>: from the document point of view they were rebuilt, and the
+/// distinction is about what it cost -- which is what makes this the instrumentation Phase 3 second
+/// exit criterion asks for.
+/// </param>
 /// <param name="Document">The document as it stood when the rebuild finished.</param>
 public sealed record RebuildResult(
     RebuildOutcome Outcome,
     ImmutableArray<FeatureId> Rebuilt,
     ImmutableArray<FeatureId> Failed,
     ImmutableArray<FeatureId> Skipped,
+    ImmutableArray<FeatureId> FromCache,
     Document Document)
 {
+    /// <summary>Gets how many features actually reached the kernel.</summary>
+    public int Evaluated => Rebuilt.Length - FromCache.Length;
+
     /// <summary>Gets whether every feature that was attempted succeeded.</summary>
     public bool IsClean => Outcome is RebuildOutcome.Completed or RebuildOutcome.NothingToDo
         && Failed.IsEmpty
@@ -55,5 +65,6 @@ public sealed record RebuildResult(
 
     /// <inheritdoc />
     public override string ToString()
-        => $"{Outcome}: {Rebuilt.Length} rebuilt, {Failed.Length} failed, {Skipped.Length} skipped";
+        => $"{Outcome}: {Rebuilt.Length} rebuilt ({FromCache.Length} cached), "
+            + $"{Failed.Length} failed, {Skipped.Length} skipped";
 }

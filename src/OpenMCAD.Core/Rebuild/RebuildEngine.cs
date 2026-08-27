@@ -35,6 +35,7 @@ public sealed class RebuildEngine : IDisposable
     private readonly DocumentSession _session;
     private readonly KernelDispatcher _dispatcher;
     private readonly IFeatureEvaluator _evaluator;
+    private readonly IGeometryCache _cache;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
     private readonly Lock _gate = new();
 
@@ -46,8 +47,15 @@ public sealed class RebuildEngine : IDisposable
     /// <param name="session">The document to rebuild.</param>
     /// <param name="dispatcher">The kernel thread every evaluation runs on.</param>
     /// <param name="evaluator">What knows how to evaluate a feature.</param>
+    /// <param name="cache">
+    /// Where results are remembered. Pass <see cref="NullGeometryCache.Instance"/> for
+    /// <c>--no-cache</c>, which runs this same code with a cache that never hits.
+    /// </param>
     public RebuildEngine(
-        DocumentSession session, KernelDispatcher dispatcher, IFeatureEvaluator evaluator)
+        DocumentSession session,
+        KernelDispatcher dispatcher,
+        IFeatureEvaluator evaluator,
+        IGeometryCache? cache = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -56,7 +64,11 @@ public sealed class RebuildEngine : IDisposable
         _session = session;
         _dispatcher = dispatcher;
         _evaluator = evaluator;
+        _cache = cache ?? new GeometryCache();
     }
+
+    /// <summary>Gets where results are remembered.</summary>
+    public IGeometryCache Cache => _cache;
 
     /// <summary>Raised when a rebuild finishes, however it finished.</summary>
     public event Action<RebuildResult>? Finished;
@@ -198,7 +210,7 @@ public sealed class RebuildEngine : IDisposable
 
         if (order.IsEmpty)
         {
-            return new RebuildResult(RebuildOutcome.NothingToDo, [], [], [], start);
+            return new RebuildResult(RebuildOutcome.NothingToDo, [], [], [], [], start);
         }
 
         Document working = start;
@@ -206,8 +218,18 @@ public sealed class RebuildEngine : IDisposable
         ImmutableArray<FeatureId>.Builder rebuilt = ImmutableArray.CreateBuilder<FeatureId>();
         ImmutableArray<FeatureId>.Builder failed = ImmutableArray.CreateBuilder<FeatureId>();
         ImmutableArray<FeatureId>.Builder skipped = ImmutableArray.CreateBuilder<FeatureId>();
+        ImmutableArray<FeatureId>.Builder hits = ImmutableArray.CreateBuilder<FeatureId>();
 
         HashSet<FeatureId> unusable = [];
+
+        // Keys are chained: a feature key folds in the keys of what it consumes, so they have to be
+        // computed in evaluation order -- which is the order this loop already runs in.
+        //
+        // Seeded with the keys of everything *not* being rebuilt, so a partial rebuild produces the
+        // same keys a full one would. Without that, rebuilding a subgraph would compute different
+        // keys for its features than rebuilding the whole document did, and nothing downstream of
+        // an untouched feature would ever hit.
+        Dictionary<FeatureId, RebuildKey> keys = KeysFor(graph, working, order);
 
         foreach (FeatureId id in order)
         {
@@ -223,6 +245,7 @@ public sealed class RebuildEngine : IDisposable
                     rebuilt.ToImmutable(),
                     failed.ToImmutable(),
                     skipped.ToImmutable(),
+                    hits.ToImmutable(),
                     start);
             }
 
@@ -246,6 +269,22 @@ public sealed class RebuildEngine : IDisposable
             }
 
             ImmutableArray<Body> inputs = InputsFor(graph, working, id);
+            RebuildKey key = RebuildKey.For(feature, InputKeys(graph, keys, id));
+
+            keys[id] = key;
+
+            if (_cache.TryGet(key, out FeatureOutput cached))
+            {
+                // The whole point: an identical situation skips the kernel entirely. Undo and
+                // rollback-bar scrubbing return the document to states it has already been in, so
+                // every key is one already computed and every feature takes this branch.
+                working = Apply(working, id, cached);
+
+                rebuilt.Add(id);
+                hits.Add(id);
+
+                continue;
+            }
 
             try
             {
@@ -256,6 +295,8 @@ public sealed class RebuildEngine : IDisposable
                     () => _evaluator.Evaluate(evaluation, token),
                     priority,
                     token).ConfigureAwait(false);
+
+                _cache.Store(key, output);
 
                 working = Apply(working, id, output);
                 rebuilt.Add(id);
@@ -269,6 +310,7 @@ public sealed class RebuildEngine : IDisposable
                     rebuilt.ToImmutable(),
                     failed.ToImmutable(),
                     skipped.ToImmutable(),
+                    hits.ToImmutable(),
                     start);
             }
 #pragma warning disable CA1031 // A failing feature must not take the rebuild with it.
@@ -291,6 +333,7 @@ public sealed class RebuildEngine : IDisposable
             rebuilt.ToImmutable(),
             failed.ToImmutable(),
             skipped.ToImmutable(),
+            hits.ToImmutable(),
             published);
     }
 
@@ -364,6 +407,52 @@ public sealed class RebuildEngine : IDisposable
         }
 
         return document;
+    }
+
+    /// <summary>Computes the keys of every feature the rebuild will not visit.</summary>
+    /// <remarks>
+    /// A key folds in the keys of what a feature consumes, so a feature being rebuilt needs the
+    /// keys of its inputs even when those inputs are not themselves being rebuilt. Walking the full
+    /// evaluation order and filling in everything ahead of the affected set is what makes a partial
+    /// rebuild produce the same keys a complete one would -- and identical keys are the only reason
+    /// a cache entry written by one rebuild is ever found by another.
+    /// </remarks>
+    private static Dictionary<FeatureId, RebuildKey> KeysFor(
+        FeatureGraph graph, Document document, ImmutableArray<FeatureId> affected)
+    {
+        Dictionary<FeatureId, RebuildKey> keys = [];
+        HashSet<FeatureId> pending = [.. affected];
+
+        foreach (FeatureId id in graph.EvaluationOrder)
+        {
+            if (pending.Contains(id))
+            {
+                continue;
+            }
+
+            if (document.FindFeature(id) is { } feature)
+            {
+                keys[id] = RebuildKey.For(feature, InputKeys(graph, keys, id));
+            }
+        }
+
+        return keys;
+    }
+
+    private static ImmutableArray<RebuildKey> InputKeys(
+        FeatureGraph graph, Dictionary<FeatureId, RebuildKey> keys, FeatureId id)
+    {
+        ImmutableArray<RebuildKey>.Builder inputs = ImmutableArray.CreateBuilder<RebuildKey>();
+
+        foreach (FeatureId dependency in graph.DependenciesOf(id))
+        {
+            // A dependency with no key is one that was suppressed, failed, or has been removed.
+            // Folding in None rather than skipping it keeps the arity of the key stable, so a
+            // feature with one broken input does not key the same as one with no inputs at all.
+            inputs.Add(keys.TryGetValue(dependency, out RebuildKey key) ? key : RebuildKey.None);
+        }
+
+        return inputs.ToImmutable();
     }
 
     private static bool DependsOnSomethingUnusable(

@@ -21,7 +21,7 @@ public sealed class RebuildEngineTests
     [Fact]
     public async Task OnlyTheDirtySubgraphIsRebuilt()
     {
-        using Harness harness = new();
+        using Harness harness = new(NullGeometryCache.Instance);
 
         FeatureId sketch = harness.Add("Sketch1");
         FeatureId extrude = harness.Add("Extrude1", sketch);
@@ -91,7 +91,11 @@ public sealed class RebuildEngineTests
     [Fact]
     public async Task AFeatureThatNowProducesFewerBodiesLeavesNoneBehind()
     {
-        using Harness harness = new();
+        // Without a cache, because the change being made here is to how the evaluator behaves
+        // rather than to the feature. Nothing about the feature differs between the two rebuilds,
+        // so its key does not either, and a cache would correctly return the first answer -- which
+        // would be testing the cache rather than the removal of stale bodies.
+        using Harness harness = new(NullGeometryCache.Instance);
 
         FeatureId id = harness.Add("Splitter");
 
@@ -327,15 +331,116 @@ public sealed class RebuildEngineTests
         finishes.Should().Be(1, "the rebuild's own commit must not start a second rebuild");
     }
 
+    [Fact]
+    public async Task RebuildingAnUnchangedDocumentReachesTheKernelOnce()
+    {
+        using Harness harness = new();
+
+        harness.Add("Sketch1");
+        harness.Add("Extrude1");
+
+        RebuildResult first = await harness.Engine.RebuildAllAsync();
+        RebuildResult second = await harness.Engine.RebuildAllAsync();
+
+        first.FromCache.Should().BeEmpty("nothing was remembered yet");
+        first.Evaluated.Should().Be(2);
+
+        // The second rebuild still reports both features as rebuilt -- from the document's point of
+        // view they were -- but neither reached the kernel. This is the instrumentation Phase 3's
+        // second exit criterion asks for.
+        second.Rebuilt.Should().HaveCount(2);
+        second.FromCache.Should().HaveCount(2);
+        second.Evaluated.Should().Be(0);
+
+        harness.Evaluator.Evaluated.Should().HaveCount(2, "the second rebuild called nothing");
+    }
+
+    [Fact]
+    public async Task ChangingAParameterMissesForThatFeatureAndEverythingBelowIt()
+    {
+        using Harness harness = new();
+
+        FeatureId sketch = harness.Add("Sketch1");
+        FeatureId extrude = harness.Add("Extrude1", sketch);
+        FeatureId fillet = harness.Add("Fillet1", extrude);
+
+        await harness.Engine.RebuildAllAsync();
+
+        harness.SetParameter(extrude, new Parameter("Depth", Quantity.Metres(0.02)));
+
+        RebuildResult result = await harness.Engine.RebuildAllAsync();
+
+        // The sketch is untouched and hits. The extrude changed, so it misses -- and the fillet
+        // misses too, without anything having changed about the fillet itself, because its key
+        // folds in what the extrude produced. That chaining is the whole reason the key is a
+        // Merkle chain rather than a hash of the feature alone.
+        result.FromCache.Should().Equal([sketch]);
+        result.Evaluated.Should().Be(2);
+
+        harness.Evaluator.Evaluated.Should().Equal(
+            [sketch, extrude, fillet, extrude, fillet],
+            "three the first time, then the two that depend on the change");
+    }
+
+    [Fact]
+    public async Task UndoingAChangeCostsNothing()
+    {
+        // What the cache is for. Undo returns the document to a state it has already been in, so
+        // every key is one already computed and every feature hits -- which is why undo is instant
+        // rather than a full rebuild in reverse.
+        using Harness harness = new();
+
+        FeatureId extrude = harness.Add("Extrude1");
+
+        harness.SetParameter(extrude, new Parameter("Depth", Quantity.Metres(0.01)));
+        await harness.Engine.RebuildAllAsync();
+
+        harness.SetParameter(extrude, new Parameter("Depth", Quantity.Metres(0.02)));
+        await harness.Engine.RebuildAllAsync();
+
+        harness.SetParameter(extrude, new Parameter("Depth", Quantity.Metres(0.01)));
+        RebuildResult undone = await harness.Engine.RebuildAllAsync();
+
+        undone.FromCache.Should().Equal([extrude]);
+        undone.Evaluated.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task WithoutACacheEveryRebuildReachesTheKernel()
+    {
+        // Phase 3's fifth exit criterion is that --no-cache produces identical results. The mode is
+        // the same engine with a cache that never hits, so that the comparison is evidence about
+        // the ordinary path rather than about a second implementation of it.
+        using Harness harness = new(NullGeometryCache.Instance);
+
+        harness.Add("Sketch1");
+        harness.Add("Extrude1");
+
+        await harness.Engine.RebuildAllAsync();
+        RebuildResult second = await harness.Engine.RebuildAllAsync();
+
+        second.FromCache.Should().BeEmpty();
+        second.Evaluated.Should().Be(2);
+        harness.Evaluator.Evaluated.Should().HaveCount(4);
+    }
+
     /// <summary>A session, a real dispatcher and a recording evaluator.</summary>
     private sealed class Harness : IDisposable
     {
-        public Harness()
+        /// <summary>Creates the harness.</summary>
+        /// <param name="cache">
+        /// Where results are remembered. Several tests below pass the null cache, and not to keep
+        /// things simple: they assert on what the evaluator was asked to do, and a cache hit means
+        /// it is asked to do nothing. Those tests are about ordering and propagation, so they run
+        /// the engine in the mode where every feature reaches the evaluator -- which is also the
+        /// mode P3-T05 has to provide anyway.
+        /// </param>
+        public Harness(IGeometryCache? cache = null)
         {
             Dispatcher = new KernelDispatcher("rebuild test kernel");
             Session = new DocumentSession();
             Evaluator = new RecordingEvaluator();
-            Engine = new RebuildEngine(Session, Dispatcher, Evaluator);
+            Engine = new RebuildEngine(Session, Dispatcher, Evaluator, cache ?? new GeometryCache());
         }
 
         public DocumentSession Session { get; }
@@ -361,6 +466,16 @@ public sealed class RebuildEngineTests
             transaction.Commit();
 
             return id;
+        }
+
+        public void SetParameter(FeatureId id, Parameter parameter)
+        {
+            using IDocumentTransaction transaction = Session.BeginTransaction("Set parameter");
+
+            transaction.ReplaceFeature(
+                Session.Current.FindFeature(id)! with { Parameters = [parameter] });
+
+            transaction.Commit();
         }
 
         public void Suppress(FeatureId id)
