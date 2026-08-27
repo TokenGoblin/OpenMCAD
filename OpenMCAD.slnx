@@ -41,6 +41,7 @@
     <Project Path="tests/unit/OpenMCAD.Modeling.Tests/OpenMCAD.Modeling.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Api.Tests/OpenMCAD.Api.Tests.csproj" />
     <Project Path="tests/unit/OpenMCAD.Render.Tests/OpenMCAD.Render.Tests.csproj" />
+    <Project Path="tests/unit/OpenMCAD.Solver.Tests/OpenMCAD.Solver.Tests.csproj" />
     <Project Path="tests/perf/OpenMCAD.Kernel.Benchmarks/OpenMCAD.Kernel.Benchmarks.csproj" />
     <Project Path="tests/perf/OpenMCAD.Render.Perf/OpenMCAD.Render.Perf.csproj" />
   </Folder>
