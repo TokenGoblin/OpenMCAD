@@ -176,6 +176,18 @@ internal sealed class DocumentTransaction : IDocumentTransaction
     }
 
     /// <inheritdoc />
+    public void SetReport(RebuildReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        EnsureOpen();
+
+        _working = _working.WithReport(report);
+
+        // Not a dirty seed, for the same reason a body is not: this records what a rebuild found,
+        // and treating it as a change would have every rebuild dirty what it had just finished.
+    }
+
+    /// <inheritdoc />
     public void SetMetadata(DocumentMetadata metadata)
     {
         ArgumentNullException.ThrowIfNull(metadata);

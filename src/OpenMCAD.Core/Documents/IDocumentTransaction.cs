@@ -95,6 +95,16 @@ public interface IDocumentTransaction : IDisposable
     /// </exception>
     void SetRollbackPosition(int? position);
 
+    /// <summary>Records how every feature stood after a rebuild.</summary>
+    /// <param name="report">The report.</param>
+    /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
+    /// <remarks>
+    /// Written by the rebuild engine. It is on this interface because the report is document state
+    /// like any other, and because a document built programmatically -- by a test, an importer, the
+    /// headless API -- has to be able to carry one. It is not something an editing caller needs.
+    /// </remarks>
+    void SetReport(RebuildReport report);
+
     /// <summary>Replaces the document's properties.</summary>
     /// <param name="metadata">The new properties.</param>
     /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>

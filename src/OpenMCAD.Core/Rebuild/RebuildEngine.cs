@@ -220,7 +220,28 @@ public sealed class RebuildEngine : IDisposable
         ImmutableArray<FeatureId>.Builder skipped = ImmutableArray.CreateBuilder<FeatureId>();
         ImmutableArray<FeatureId>.Builder hits = ImmutableArray.CreateBuilder<FeatureId>();
 
-        HashSet<FeatureId> unusable = [];
+        // Why each feature could not be built, rather than merely that it could not. The whole
+        // point of error containment is that one of these is a problem to fix and the rest are its
+        // consequences, and a set of ids cannot tell them apart.
+        Dictionary<FeatureId, FeatureDiagnostic> blocked = [];
+
+        RebuildReport.Builder report = new();
+
+        // Everything outside this rebuild keeps whatever was said about it last time. A partial
+        // rebuild says nothing about features outside its dirty subgraph, and "nothing" is not the
+        // same as "fine" -- dropping them would clear the error marks off still-broken features
+        // every time the user edited something unrelated.
+        HashSet<FeatureId> visiting = [.. order];
+
+        foreach (Feature untouched in start.Features)
+        {
+            if (!visiting.Contains(untouched.Id))
+            {
+                report.CarryForward(start.Report, untouched.Id);
+            }
+        }
+
+        ImmutableArray<DanglingInput> dangling = graph.Dangling;
 
         // Keys are chained: a feature key folds in the keys of what it consumes, so they have to be
         // computed in evaluation order -- which is the order this loop already runs in.
@@ -258,21 +279,19 @@ public sealed class RebuildEngine : IDisposable
                 continue;
             }
 
-            if (!working.IsActive(id)
-                || feature.IsSuppressed
-                || DependsOnSomethingUnusable(graph, id, unusable))
+            if (WhyNot(working, graph, dangling, blocked, feature) is { } reason)
             {
-                // Rollback needed no machinery of its own. Being behind the bar is simply another
-                // reason a feature is not evaluated, alongside being suppressed and depending on
-                // something that failed -- and the propagation, ordering and skipping were already
-                // here. §5.4 said this would fall out of the design if it was not special-cased,
-                // and it did.
+                // Rollback and suppression needed no machinery of their own. Each is one more
+                // reason a feature is not evaluated, alongside depending on something that failed,
+                // and the propagation, ordering and skipping were already here. §5.4 said rollback
+                // would fall out of the design if it was not special-cased, and it did.
                 //
-                // Its geometry goes with it. A feature that is not evaluated must not leave last
+                // Geometry goes with it. A feature that is not evaluated must not leave last
                 // time's bodies on screen: dragging the bar up the tree is how the user looks at
                 // the part half-built, and a rolled-back extrude still showing its solid would
                 // make that gesture show them nothing.
-                unusable.Add(id);
+                blocked[id] = reason;
+                report.Add(reason);
                 skipped.Add(id);
 
                 working = Discard(working, id);
@@ -295,6 +314,8 @@ public sealed class RebuildEngine : IDisposable
                 rebuilt.Add(id);
                 hits.Add(id);
 
+                report.Add(new FeatureDiagnostic(id, FeatureState.Ok));
+
                 continue;
             }
 
@@ -312,6 +333,8 @@ public sealed class RebuildEngine : IDisposable
 
                 working = Apply(working, id, output);
                 rebuilt.Add(id);
+
+                report.Add(new FeatureDiagnostic(id, FeatureState.Ok));
             }
             catch (OperationCanceledException)
             {
@@ -326,17 +349,26 @@ public sealed class RebuildEngine : IDisposable
                     start);
             }
 #pragma warning disable CA1031 // A failing feature must not take the rebuild with it.
-            catch (Exception)
+            catch (Exception exception)
 #pragma warning restore CA1031
             {
                 // Deliberately every exception. A feature is arbitrary code -- a plugin's, in the
                 // general case -- and the one thing that must not happen is one badly written
-                // operation making the whole document unrebuildable. P3-T07 records what went
-                // wrong and shows it; this only guarantees the rebuild survives it.
-                unusable.Add(id);
+                // operation making the whole document unrebuildable.
+                FeatureDiagnostic diagnostic = new(id, FeatureState.Failed, exception.Message);
+
+                blocked[id] = diagnostic;
+                report.Add(diagnostic);
                 failed.Add(id);
+
+                // Its geometry goes too. Leaving the previous rebuild's bodies behind would show
+                // the user a solid that the current parameters do not produce, marked with an
+                // error they may well not look at.
+                working = Discard(working, id);
             }
         }
+
+        working = working.WithReport(report.Build());
 
         Document published = Publish(start, working, out bool superseded);
 
@@ -392,10 +424,74 @@ public sealed class RebuildEngine : IDisposable
             }
         }
 
+        transaction.SetReport(working.Report);
         transaction.Commit();
 
         superseded = false;
         return _session.Current;
+    }
+
+    /// <summary>Why a feature cannot be evaluated, or null if it can.</summary>
+    /// <remarks>
+    /// Ordered from the most specific cause to the least. A feature that is both rolled back and
+    /// downstream of a failure reports as rolled back, because that is what the user did most
+    /// recently and the failure may well not be one once the bar moves back.
+    /// </remarks>
+    private static FeatureDiagnostic? WhyNot(
+        Document document,
+        FeatureGraph graph,
+        ImmutableArray<DanglingInput> dangling,
+        Dictionary<FeatureId, FeatureDiagnostic> blocked,
+        Feature feature)
+    {
+        FeatureId id = feature.Id;
+
+        foreach (DanglingInput missing in dangling)
+        {
+            if (missing.Feature == id)
+            {
+                return new FeatureDiagnostic(
+                    id,
+                    FeatureState.MissingInput,
+                    "This feature refers to something that is no longer in the document. It has to "
+                    + "be pointed at something else, or removed.");
+            }
+        }
+
+        if (!document.IsActive(id))
+        {
+            return new FeatureDiagnostic(id, FeatureState.RolledBack);
+        }
+
+        if (feature.IsSuppressed)
+        {
+            return new FeatureDiagnostic(id, FeatureState.Suppressed);
+        }
+
+        foreach (FeatureId input in graph.DependenciesOf(id))
+        {
+            if (!blocked.TryGetValue(input, out FeatureDiagnostic? upstream))
+            {
+                continue;
+            }
+
+            // A failure propagates as a failure consequence; a deliberate absence propagates as a
+            // consequence of that choice. Both stop this feature building, and only one of them is
+            // something to go and fix -- which is the entire distinction this task exists for.
+            FeatureState state = upstream.State is FeatureState.Failed
+                or FeatureState.SuppressedByError
+                or FeatureState.MissingInput
+                ? FeatureState.SuppressedByError
+                : FeatureState.Blocked;
+
+            // The cause is carried through rather than restated, so a chain ten features long
+            // still names the one feature at the top of it that has to be fixed.
+            FeatureId cause = upstream.Cause.IsValid ? upstream.Cause : input;
+
+            return new FeatureDiagnostic(id, state, Cause: cause);
+        }
+
+        return null;
     }
 
     /// <summary>Takes away the geometry of a feature that is no longer evaluated.</summary>
@@ -476,20 +572,6 @@ public sealed class RebuildEngine : IDisposable
         }
 
         return inputs.ToImmutable();
-    }
-
-    private static bool DependsOnSomethingUnusable(
-        FeatureGraph graph, FeatureId id, HashSet<FeatureId> unusable)
-    {
-        foreach (FeatureId input in graph.DependenciesOf(id))
-        {
-            if (unusable.Contains(input))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static ImmutableArray<Body> InputsFor(

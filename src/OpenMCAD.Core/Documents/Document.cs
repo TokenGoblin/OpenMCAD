@@ -44,9 +44,11 @@ public sealed class Document
         ImmutableArray<ReferenceGeometry> references,
         DocumentMetadata metadata,
         int? rollbackPosition,
+        RebuildReport report,
         long version)
     {
         RollbackPosition = rollbackPosition;
+        Report = report;
         Features = features;
         _featuresById = featuresById;
         _bodiesById = bodiesById;
@@ -93,6 +95,16 @@ public sealed class Document
     /// <summary>Gets the document's properties.</summary>
     public DocumentMetadata Metadata { get; }
 
+    /// <summary>Gets how every feature stood after the last rebuild.</summary>
+    /// <remarks>
+    /// Derived state, held here rather than returned from the rebuild that produced it, because the
+    /// tree has to keep showing which features are in error long after that rebuild's caller has
+    /// finished with its result. Keeping it on the document also means undo restores the report
+    /// belonging to the state it restored, instead of leaving error marks from a version of the
+    /// model that no longer exists.
+    /// </remarks>
+    public RebuildReport Report { get; }
+
     /// <summary>
     /// Gets which version of this document's history this is. Increases with every change.
     /// </summary>
@@ -120,6 +132,7 @@ public sealed class Document
         [.. ReferenceGeometry.StandardDatums()],
         DocumentMetadata.Empty,
         rollbackPosition: null,
+        report: RebuildReport.Empty,
         version: 0);
 
     /// <summary>Gets whether a feature is evaluated, or is behind the rollback bar.</summary>
@@ -349,6 +362,16 @@ public sealed class Document
         return With(metadata: metadata);
     }
 
+    /// <summary>Records how every feature stood after a rebuild.</summary>
+    /// <param name="report">The report.</param>
+    /// <returns>The new document.</returns>
+    internal Document WithReport(RebuildReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        return With(report: report);
+    }
+
     /// <summary>Moves the rollback bar.</summary>
     /// <param name="position">
     /// How many features from the top stay active, or null to roll forward to the end.
@@ -394,7 +417,8 @@ public sealed class Document
         ImmutableArray<ReferenceGeometry>? references = null,
         DocumentMetadata? metadata = null,
         int? rollbackPosition = null,
-        bool clearRollback = false)
+        bool clearRollback = false,
+        RebuildReport? report = null)
         => new(
             features ?? Features,
             featuresById ?? _featuresById,
@@ -403,6 +427,7 @@ public sealed class Document
             references ?? References,
             metadata ?? Metadata,
             clearRollback ? null : rollbackPosition ?? RollbackPosition,
+            report ?? Report,
             Version + 1);
 
     /// <inheritdoc />
