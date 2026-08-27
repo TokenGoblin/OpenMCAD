@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Core.Naming;
 using OpenMCAD.Kernel;
 
 namespace OpenMCAD.Core.Rebuild;
@@ -16,10 +17,25 @@ namespace OpenMCAD.Core.Rebuild;
 /// <param name="Inputs">
 /// The bodies produced by the features this one consumes, in the order those inputs were declared.
 /// </param>
+/// <param name="References">
+/// The entities this feature's declared references resolved to, in declaration order.
+/// </param>
 public sealed record FeatureEvaluation(
     Document Document,
     Feature Feature,
-    ImmutableArray<Body> Inputs);
+    ImmutableArray<Body> Inputs,
+    ImmutableArray<ResolvedReference> References = default)
+{
+    /// <summary>Gets the resolved references, never a default array.</summary>
+    /// <remarks>
+    /// Already resolved when the evaluator is called, and resolved by the core rather than by each
+    /// operation. Every feature type would otherwise reimplement the three tiers of §5.3, and they
+    /// would disagree -- which is the same as having no policy at all. A reference that could not
+    /// be resolved never reaches here: the feature is marked and skipped instead.
+    /// </remarks>
+    public ImmutableArray<ResolvedReference> Resolved
+        => References.IsDefault ? [] : References;
+}
 
 /// <summary>
 /// What a feature produced.

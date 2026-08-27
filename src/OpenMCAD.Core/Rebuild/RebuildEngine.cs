@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 
 using OpenMCAD.Core.Documents;
 using OpenMCAD.Core.Naming;
+using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Threading;
 
 namespace OpenMCAD.Core.Rebuild;
@@ -37,6 +38,7 @@ public sealed class RebuildEngine : IDisposable
     private readonly KernelDispatcher _dispatcher;
     private readonly IFeatureEvaluator _evaluator;
     private readonly IGeometryCache _cache;
+    private readonly Func<SubEntity, GeoHint?>? _measure;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
     private readonly Lock _gate = new();
 
@@ -52,11 +54,17 @@ public sealed class RebuildEngine : IDisposable
     /// Where results are remembered. Pass <see cref="NullGeometryCache.Instance"/> for
     /// <c>--no-cache</c>, which runs this same code with a cache that never hits.
     /// </param>
+    /// <param name="measure">
+    /// How to measure an entity of the rebuilt model, for the geometric tier of name resolution
+    /// (P3-T10). Null runs history alone, which resolves the overwhelming majority of references
+    /// and refuses the rest rather than guessing.
+    /// </param>
     public RebuildEngine(
         DocumentSession session,
         KernelDispatcher dispatcher,
         IFeatureEvaluator evaluator,
-        IGeometryCache? cache = null)
+        IGeometryCache? cache = null,
+        Func<SubEntity, GeoHint?>? measure = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -66,6 +74,7 @@ public sealed class RebuildEngine : IDisposable
         _dispatcher = dispatcher;
         _evaluator = evaluator;
         _cache = cache ?? new GeometryCache();
+        _measure = measure;
     }
 
     /// <summary>Gets where results are remembered.</summary>
@@ -309,6 +318,23 @@ public sealed class RebuildEngine : IDisposable
             }
 
             ImmutableArray<Body> inputs = InputsFor(graph, working, id);
+
+            // Resolved before the cache is consulted, and before the operation runs. A reference
+            // that has broken makes this feature unbuildable whatever the cache holds, and finding
+            // that out afterwards would mean serving geometry for a reference that no longer
+            // points anywhere.
+            if (Resolve(history, feature, out ImmutableArray<ResolvedReference> references)
+                is { } broken)
+            {
+                blocked[id] = broken;
+                report.Add(broken);
+                skipped.Add(id);
+
+                working = Discard(working, id);
+
+                continue;
+            }
+
             RebuildKey key = RebuildKey.For(feature, InputKeys(graph, keys, id));
 
             keys[id] = key;
@@ -331,7 +357,7 @@ public sealed class RebuildEngine : IDisposable
 
             try
             {
-                FeatureEvaluation evaluation = new(working, feature, inputs);
+                FeatureEvaluation evaluation = new(working, feature, inputs, references);
 
                 FeatureOutput output = await _dispatcher.RunAsync(
                     $"rebuild {feature.FeatureType} '{feature.Name}'",
@@ -442,6 +468,53 @@ public sealed class RebuildEngine : IDisposable
 
         superseded = false;
         return _session.Current;
+    }
+
+    /// <summary>Resolves a feature's entity references, or says which one broke.</summary>
+    /// <returns>
+    /// A diagnostic when a reference could not be resolved, or null when every one of them was.
+    /// </returns>
+    /// <remarks>
+    /// The first failure stops the rest. A feature with three broken references has one problem
+    /// from the user's point of view -- whatever they did to the geometry underneath it -- and
+    /// three repair prompts for one mistake is a worse answer than one.
+    /// </remarks>
+    private FeatureDiagnostic? Resolve(
+        RebuildHistory.Builder history, Feature feature, out ImmutableArray<ResolvedReference> resolved)
+    {
+        resolved = [];
+
+        if (feature.EntityReferences.IsEmpty)
+        {
+            return null;
+        }
+
+        NameResolver resolver = new(history.Build(), _measure);
+
+        ImmutableArray<ResolvedReference>.Builder found =
+            ImmutableArray.CreateBuilder<ResolvedReference>(feature.EntityReferences.Length);
+
+        foreach (EntityReference reference in feature.EntityReferences)
+        {
+            ResolvedReference one = resolver.Resolve(reference, feature.Id);
+
+            if (!one.IsResolved)
+            {
+                NameResolution asResolution = new(
+                    one.Outcome, SubEntity.None, one.Entities, one.Reason, one.Ranking);
+
+                ReferenceRepair repair = ReferenceRepair.For(
+                    feature.Id, reference.Name, asResolution, _ => feature.Name);
+
+                return new FeatureDiagnostic(
+                    feature.Id, FeatureState.UnresolvedReference, repair.Problem, Repair: repair);
+            }
+
+            found.Add(one);
+        }
+
+        resolved = found.ToImmutable();
+        return null;
     }
 
     /// <summary>Why a feature cannot be evaluated, or null if it can.</summary>
