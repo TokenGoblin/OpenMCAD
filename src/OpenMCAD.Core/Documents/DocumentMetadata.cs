@@ -43,6 +43,48 @@ public sealed record DocumentMetadata(
     public ImmutableDictionary<string, string> Properties
         => CustomProperties ?? ImmutableDictionary<string, string>.Empty;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// By hand, for the same reason as <see cref="Feature"/>: a record compares an
+    /// <see cref="ImmutableDictionary{TKey, TValue}"/> by reference, so two blocks carrying the
+    /// same custom properties would be unequal unless they happened to share the instance.
+    /// </remarks>
+    public bool Equals(DocumentMetadata? other)
+        => other is not null
+            && Title == other.Title
+            && PartNumber == other.PartNumber
+            && Revision == other.Revision
+            && Material == other.Material
+            && Description == other.Description
+            && Properties.Count == other.Properties.Count
+            && Properties.All(p =>
+                other.Properties.TryGetValue(p.Key, out string? value) && value == p.Value);
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        HashCode hash = default;
+
+        hash.Add(Title);
+        hash.Add(PartNumber);
+        hash.Add(Revision);
+        hash.Add(Material);
+        hash.Add(Description);
+
+        // Order-independent, because a dictionary has none to rely on: two blocks holding the
+        // same pairs must hash alike however they were built up.
+        int properties = 0;
+
+        foreach ((string key, string value) in Properties)
+        {
+            properties ^= HashCode.Combine(key, value);
+        }
+
+        hash.Add(properties);
+
+        return hash.ToHashCode();
+    }
+
     /// <summary>The same metadata with one custom property set.</summary>
     /// <param name="name">The property name.</param>
     /// <param name="value">Its value.</param>

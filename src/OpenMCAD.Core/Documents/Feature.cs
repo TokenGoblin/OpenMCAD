@@ -89,6 +89,52 @@ public sealed record Feature(
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Written by hand because a record compares an <see cref="ImmutableArray{T}"/> by its
+    /// underlying array reference rather than element by element, and this holds three of them.
+    /// Two features built the same way from separate arrays would otherwise be unequal — which
+    /// nothing notices until something compares documents, and then it reports every document as
+    /// different from itself.
+    /// </remarks>
+    public bool Equals(Feature? other)
+        => other is not null
+            && Id == other.Id
+            && Name == other.Name
+            && FeatureType == other.FeatureType
+            && IsSuppressed == other.IsSuppressed
+            && Inputs.SequenceEqual(other.Inputs)
+            && Parameters.SequenceEqual(other.Parameters)
+            && EntityReferences.SequenceEqual(other.EntityReferences);
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        HashCode hash = default;
+
+        hash.Add(Id);
+        hash.Add(Name);
+        hash.Add(FeatureType);
+        hash.Add(IsSuppressed);
+
+        foreach (FeatureId input in Inputs)
+        {
+            hash.Add(input);
+        }
+
+        foreach (Parameter parameter in Parameters)
+        {
+            hash.Add(parameter);
+        }
+
+        foreach (Naming.EntityReference reference in EntityReferences)
+        {
+            hash.Add(reference);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <inheritdoc />
     public override string ToString()
         => IsSuppressed ? $"{FeatureType} '{Name}' (suppressed)" : $"{FeatureType} '{Name}'";
 }

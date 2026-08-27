@@ -128,6 +128,62 @@ public sealed class DocumentSession
         }
     }
 
+    /// <summary>Puts the session back to a document it held before.</summary>
+    /// <param name="document">The document to restore.</param>
+    /// <param name="name">What to call the change, for anyone listening.</param>
+    /// <returns>What changed, or null if that document is already current.</returns>
+    /// <remarks>
+    /// <para>
+    /// The one way in that is not a transaction, and it is not an exception to the rule so much as
+    /// the rule not applying: the document being restored was produced by a transaction and
+    /// validated then. Re-validating it would be asking whether a state the document has already
+    /// been in is allowed.
+    /// </para>
+    /// <para>
+    /// Internal, so that undo is the only thing that can do this. A caller able to set the document
+    /// to anything at all would be able to set it to something that never passed a commit.
+    /// </para>
+    /// </remarks>
+    internal DocumentChange? Restore(Document document, string name)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+
+        DocumentChange change;
+
+        lock (_gate)
+        {
+            if (_open is not null)
+            {
+                throw new InvalidOperationException(
+                    $"A transaction ('{_open.Name}') is open on this document, so it cannot be "
+                    + "put back to an earlier state underneath it.");
+            }
+
+            if (ReferenceEquals(_current, document))
+            {
+                return null;
+            }
+
+            // Every feature is a seed. Undo can change anything -- a parameter, the tree, the
+            // rollback bar -- and working out precisely what moved would mean diffing two
+            // documents, which is the guessing P3-T02 avoids by recording edits as they happen.
+            // There is nothing to record here, so the honest answer is to mark everything and let
+            // the geometry cache make it cheap, which after an undo it always can.
+            change = new DocumentChange(
+                name,
+                _current,
+                document,
+                [.. document.Features.Select(f => f.Id)],
+                [.. document.Parameters.Select(p => p.Name)]);
+
+            _current = document;
+        }
+
+        Committed?.Invoke(change);
+
+        return change;
+    }
+
     /// <summary>Replaces the current document, from a committing transaction.</summary>
     /// <returns>What changed, or null if the transaction changed nothing.</returns>
     /// <remarks>

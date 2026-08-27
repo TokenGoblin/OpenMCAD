@@ -135,6 +135,82 @@ public sealed class Document
         report: RebuildReport.Empty,
         version: 0);
 
+    /// <summary>Whether this document describes the same model as another.</summary>
+    /// <param name="other">The document to compare with.</param>
+    /// <returns>Whether the two are the same in every respect that matters.</returns>
+    /// <remarks>
+    /// <para>
+    /// Deep, and deliberately not <see cref="object.Equals(object)"/>. Two documents that are the
+    /// same model are still two different points in one editing history, and a session that
+    /// treated them as interchangeable would lose the distinction undo depends on.
+    /// </para>
+    /// <para>
+    /// <see cref="Version"/> is excluded, because it counts edits rather than describing the
+    /// model: undoing three changes and redoing them returns the same model at a higher version,
+    /// and that is not a difference anybody means. Everything else is compared, including the
+    /// order of the features, the rollback bar, and the report — Phase 3's fourth exit criterion
+    /// asks for an identical state after a hundred operations, and a comparison that skipped a
+    /// field would be unable to see the one thing that had gone wrong.
+    /// </para>
+    /// </remarks>
+    public bool Matches(Document? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        if (other is null
+            || !Features.SequenceEqual(other.Features)
+            || !References.SequenceEqual(other.References)
+            || !Metadata.Equals(other.Metadata)
+            || ActiveFeatureCount != other.ActiveFeatureCount
+            || _parametersByName.Count != other._parametersByName.Count
+            || _bodiesById.Count != other._bodiesById.Count)
+        {
+            return false;
+        }
+
+        foreach (Parameter parameter in _parametersByName.Values)
+        {
+            if (other.FindParameter(parameter.Name) != parameter)
+            {
+                return false;
+            }
+        }
+
+        foreach (Body body in _bodiesById.Values)
+        {
+            if (other.FindBody(body.Id) != body)
+            {
+                return false;
+            }
+        }
+
+        return MatchesReport(other.Report);
+    }
+
+    /// <summary>Whether the two reports say the same about the same features.</summary>
+    private bool MatchesReport(RebuildReport other)
+    {
+        if (Report.Count != other.Count)
+        {
+            return false;
+        }
+
+        foreach (FeatureDiagnostic diagnostic in Report.Diagnostics)
+        {
+            if (other.For(diagnostic.Feature) is not { } theirs
+                || theirs.State != diagnostic.State
+                || theirs.Cause != diagnostic.Cause)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>Gets whether a feature is evaluated, or is behind the rollback bar.</summary>
     /// <param name="id">Which feature.</param>
     /// <returns>Whether it is active. A feature that is not in this document is not.</returns>
