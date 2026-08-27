@@ -1,5 +1,7 @@
 using System.Collections.Immutable;
 
+using OpenMCAD.Core.Serialization;
+
 namespace OpenMCAD.Core.Documents;
 
 /// <summary>
@@ -45,8 +47,10 @@ public sealed class Document
         DocumentMetadata metadata,
         int? rollbackPosition,
         RebuildReport report,
-        long version)
+        long version,
+        ImmutableArray<UnknownField> unknownFields = default)
     {
+        UnknownFields = unknownFields.IsDefault ? [] : unknownFields;
         RollbackPosition = rollbackPosition;
         Report = report;
         Features = features;
@@ -60,6 +64,15 @@ public sealed class Document
 
     /// <summary>Gets the features, in the order the user arranged them.</summary>
     public ImmutableArray<Feature> Features { get; }
+
+    /// <summary>Gets the fields of the file this document came from that this build cannot read.</summary>
+    /// <remarks>
+    /// P3-T20. Carried on the document rather than handed back beside it, because it has to survive
+    /// editing: someone who opens a colleague's file from a newer build, changes one parameter and
+    /// saves must not thereby delete everything that build had added. Anything held at the file
+    /// boundary would be dropped by the first edit, which is the case that matters.
+    /// </remarks>
+    internal ImmutableArray<UnknownField> UnknownFields { get; }
 
     /// <summary>
     /// Gets how many features from the top of the tree are active, or null when all of them are.
@@ -161,6 +174,7 @@ public sealed class Document
         }
 
         if (other is null
+            || !UnknownFields.SequenceEqual(other.UnknownFields)
             || !Features.SequenceEqual(other.Features)
             || !References.SequenceEqual(other.References)
             || !Metadata.Equals(other.Metadata)
@@ -445,6 +459,7 @@ public sealed class Document
     /// <param name="references">The reference geometry.</param>
     /// <param name="metadata">The properties.</param>
     /// <param name="rollbackPosition">Where the rollback bar sits.</param>
+    /// <param name="unknownFields">Fields of the file this build could not read.</param>
     /// <returns>The document.</returns>
     /// <remarks>
     /// For a reader, which knows everything before it builds anything. Adding features one at a
@@ -459,7 +474,8 @@ public sealed class Document
         IEnumerable<Body> bodies,
         ImmutableArray<ReferenceGeometry> references,
         DocumentMetadata metadata,
-        int? rollbackPosition)
+        int? rollbackPosition,
+        ImmutableArray<UnknownField> unknownFields = default)
     {
         ImmutableDictionary<FeatureId, Feature>.Builder featuresById =
             ImmutableDictionary.CreateBuilder<FeatureId, Feature>();
@@ -517,7 +533,8 @@ public sealed class Document
             metadata,
             rollbackPosition,
             RebuildReport.Empty,
-            version: 0);
+            version: 0,
+            unknownFields);
     }
 
     /// <summary>Drops the reference geometry, so a reader can supply the file's own.</summary>
@@ -595,7 +612,12 @@ public sealed class Document
             metadata ?? Metadata,
             clearRollback ? null : rollbackPosition ?? RollbackPosition,
             report ?? Report,
-            Version + 1);
+            Version + 1,
+
+            // Never dropped by an edit. A field nothing here understands is not made irrelevant by
+            // the user moving a rollback bar, and the one thing that must not happen is for it to
+            // survive being opened and then quietly vanish on the first change.
+            UnknownFields);
 
     /// <inheritdoc />
     public override string ToString()

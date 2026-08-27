@@ -46,7 +46,10 @@ public static class DocumentCodec
 
         MessagePackWriter writer = new(4096);
 
-        writer.WriteMapHeader(7);
+        ILookup<string, UnknownField> unknown =
+            document.UnknownFields.ToLookup(f => f.Owner, StringComparer.Ordinal);
+
+        writer.WriteMapHeader(7 + Extra(unknown, UnknownField.Root));
 
         writer.Write("schema");
         writer.Write(SchemaVersion);
@@ -56,11 +59,15 @@ public static class DocumentCodec
 
         foreach (Feature feature in document.Features)
         {
-            WriteFeature(writer, feature);
+            WriteFeature(writer, feature, unknown);
         }
 
         writer.Write("parameters");
-        WriteParameters(writer, [.. document.Parameters.OrderBy(p => p.Name, StringComparer.Ordinal)]);
+        WriteParameters(
+            writer,
+            [.. document.Parameters.OrderBy(p => p.Name, StringComparer.Ordinal)],
+            unknown,
+            UnknownField.Root);
 
         writer.Write("bodies");
 
@@ -71,7 +78,7 @@ public static class DocumentCodec
 
         foreach (Body body in bodies)
         {
-            WriteBody(writer, body);
+            WriteBody(writer, body, unknown);
         }
 
         writer.Write("references");
@@ -79,11 +86,11 @@ public static class DocumentCodec
 
         foreach (ReferenceGeometry reference in document.References)
         {
-            WriteReferenceGeometry(writer, reference);
+            WriteReferenceGeometry(writer, reference, unknown);
         }
 
         writer.Write("metadata");
-        WriteMetadata(writer, document.Metadata);
+        WriteMetadata(writer, document.Metadata, unknown);
 
         writer.Write("rollback");
 
@@ -96,7 +103,44 @@ public static class DocumentCodec
             writer.WriteNil();
         }
 
+        Preserved(writer, unknown, UnknownField.Root);
+
         return writer.ToArray();
+    }
+
+    /// <summary>How many fields an owner carries that this build cannot read.</summary>
+    /// <param name="unknown">Everything being preserved, by owner.</param>
+    /// <param name="owner">Whose fields to count.</param>
+    /// <returns>The count, to add to a map header.</returns>
+    private static int Extra(ILookup<string, UnknownField> unknown, string owner)
+        => unknown[owner].Count();
+
+    /// <summary>Writes back the fields of an owner that this build cannot read.</summary>
+    /// <param name="writer">Where to write.</param>
+    /// <param name="unknown">Everything being preserved, by owner.</param>
+    /// <param name="owner">Whose fields to write.</param>
+    /// <remarks>
+    /// <para>
+    /// After the known fields, in the order they were read. Their original position among the known
+    /// ones is not kept: doing so would mean recording an index that stops meaning anything the
+    /// moment the schema gains or loses a field of its own, and a map has no defined order anyway.
+    /// What is kept is the content, exactly, and the order the unknown fields had relative to each
+    /// other -- which is enough for the file to survive a round trip through a build that cannot
+    /// read it, and enough to be deterministic.
+    /// </para>
+    /// <para>
+    /// The bytes go out verbatim. Re-encoding a value whose meaning is by definition unavailable is
+    /// how a preserving reader corrupts what it set out to preserve.
+    /// </para>
+    /// </remarks>
+    private static void Preserved(
+        MessagePackWriter writer, ILookup<string, UnknownField> unknown, string owner)
+    {
+        foreach (UnknownField field in unknown[owner])
+        {
+            writer.Write(field.Field);
+            writer.WriteRaw(field.Value.AsSpan());
+        }
     }
 
     /// <summary>Reads a document back.</summary>
@@ -188,10 +232,13 @@ public static class DocumentCodec
         ImmutableArray<ReferenceGeometry>? references = null;
         DocumentMetadata metadata = DocumentMetadata.Empty;
         int? rollback = null;
+        List<UnknownField> unknown = [];
 
         for (int i = 0; i < fields; ++i)
         {
-            switch (reader.ReadString())
+            string key = reader.ReadString();
+
+            switch (key)
             {
                 case "schema":
                     int version = reader.ReadInt32();
@@ -213,14 +260,14 @@ public static class DocumentCodec
 
                     for (int f = 0; f < count; ++f)
                     {
-                        read.Add(ReadFeature(ref reader));
+                        read.Add(ReadFeature(ref reader, unknown));
                     }
 
                     features = read.ToImmutable();
                     break;
 
                 case "parameters":
-                    parameters = ReadParameters(ref reader);
+                    parameters = ReadParameters(ref reader, unknown, UnknownField.Root);
                     break;
 
                 case "bodies":
@@ -230,7 +277,7 @@ public static class DocumentCodec
 
                     for (int b = 0; b < bodyCount; ++b)
                     {
-                        found.Add(ReadBody(ref reader));
+                        found.Add(ReadBody(ref reader, unknown));
                     }
 
                     bodies = found.ToImmutable();
@@ -243,14 +290,14 @@ public static class DocumentCodec
 
                     for (int r = 0; r < referenceCount; ++r)
                     {
-                        geometry.Add(ReadReferenceGeometry(ref reader));
+                        geometry.Add(ReadReferenceGeometry(ref reader, unknown));
                     }
 
                     references = geometry.ToImmutable();
                     break;
 
                 case "metadata":
-                    metadata = ReadMetadata(ref reader);
+                    metadata = ReadMetadata(ref reader, unknown);
                     break;
 
                 case "rollback":
@@ -258,9 +305,10 @@ public static class DocumentCodec
                     break;
 
                 default:
-                    // P3-T20 will keep these. Skipping is recursive and handles the extension
-                    // family, so the reader lands exactly after the value whatever shape it was.
-                    reader.Skip();
+                    // Kept, not skipped (P3-T20). A field this build has no name for was put there
+                    // by something that did, and a reader that dropped it would make opening a
+                    // colleague's file and saving out of habit into silent data loss.
+                    unknown.Add(Keep(ref reader, UnknownField.Root, key));
                     break;
             }
         }
@@ -274,12 +322,42 @@ public static class DocumentCodec
             bodies,
             references ?? [.. ReferenceGeometry.StandardDatums()],
             metadata,
-            rollback);
+            rollback,
+            [.. unknown]);
     }
 
-    private static void WriteFeature(MessagePackWriter writer, Feature feature)
+    /// <summary>Takes the value of a field this build has no name for, exactly as it is.</summary>
+    /// <param name="reader">Where to read from, positioned at the value.</param>
+    /// <param name="owner">What the field belongs to.</param>
+    /// <param name="field">Its key.</param>
+    /// <returns>The field, kept.</returns>
+    private static UnknownField Keep(ref MessagePackReader reader, string owner, string field)
+        => new(owner, field, [.. reader.ReadRaw()]);
+
+    /// <summary>Files away fields collected before their owner had a name.</summary>
+    /// <param name="into">Where the document's kept fields are being gathered.</param>
+    /// <param name="pending">What was collected while reading, with owners relative to this one.</param>
+    /// <param name="owner">What they all belong to, now that it is known.</param>
+    /// <remarks>
+    /// A map has no defined order, so a parameter's unknown field can be read before the parameter's
+    /// name and a feature's before its id. Collecting relative and prefixing afterwards is what
+    /// makes preservation independent of the order the writer happened to choose.
+    /// </remarks>
+    private static void Attribute(
+        List<UnknownField> into, List<UnknownField> pending, string owner)
     {
-        writer.WriteMapHeader(7);
+        foreach (UnknownField field in pending)
+        {
+            into.Add(field with { Owner = UnknownField.Nest(owner, field.Owner) });
+        }
+    }
+
+    private static void WriteFeature(
+        MessagePackWriter writer, Feature feature, ILookup<string, UnknownField> unknown)
+    {
+        string owner = UnknownField.Feature(feature.Id.ToStorageString());
+
+        writer.WriteMapHeader(7 + Extra(unknown, owner));
 
         writer.Write("id");
         writer.Write(feature.Id.ToStorageString());
@@ -299,7 +377,7 @@ public static class DocumentCodec
         }
 
         writer.Write("parameters");
-        WriteParameters(writer, feature.Parameters);
+        WriteParameters(writer, feature.Parameters, unknown, owner);
 
         writer.Write("refs");
         writer.WriteArrayHeader(feature.EntityReferences.Length);
@@ -317,12 +395,15 @@ public static class DocumentCodec
 
         writer.Write("suppressed");
         writer.Write(feature.IsSuppressed);
+
+        Preserved(writer, unknown, owner);
     }
 
-    private static Feature ReadFeature(ref MessagePackReader reader)
+    private static Feature ReadFeature(ref MessagePackReader reader, List<UnknownField> unknown)
     {
         int fields = reader.ReadMapHeader();
 
+        List<UnknownField> pending = [];
         FeatureId id = default;
         string name = string.Empty;
         string type = string.Empty;
@@ -333,7 +414,9 @@ public static class DocumentCodec
 
         for (int i = 0; i < fields; ++i)
         {
-            switch (reader.ReadString())
+            string key = reader.ReadString();
+
+            switch (key)
             {
                 case "id":
                     id = FeatureId.Parse(reader.ReadString());
@@ -361,7 +444,7 @@ public static class DocumentCodec
                     break;
 
                 case "parameters":
-                    parameters = ReadParameters(ref reader);
+                    parameters = ReadParameters(ref reader, pending, UnknownField.Root);
                     break;
 
                 case "refs":
@@ -373,10 +456,12 @@ public static class DocumentCodec
                     break;
 
                 default:
-                    reader.Skip();
+                    pending.Add(Keep(ref reader, UnknownField.Root, key));
                     break;
             }
         }
+
+        Attribute(unknown, pending, UnknownField.Feature(id.ToStorageString()));
 
         return new Feature(id, name, type, inputs, parameters, references, suppressed);
     }
@@ -425,13 +510,19 @@ public static class DocumentCodec
         return found.ToImmutable();
     }
 
-    private static void WriteParameters(MessagePackWriter writer, ImmutableArray<Parameter> parameters)
+    private static void WriteParameters(
+        MessagePackWriter writer,
+        ImmutableArray<Parameter> parameters,
+        ILookup<string, UnknownField> unknown,
+        string within)
     {
         writer.WriteArrayHeader(parameters.Length);
 
         foreach (Parameter parameter in parameters)
         {
-            writer.WriteMapHeader(4);
+            string owner = UnknownField.Nest(within, UnknownField.Parameter(parameter.Name));
+
+            writer.WriteMapHeader(4 + Extra(unknown, owner));
 
             writer.Write("name");
             writer.Write(parameter.Name);
@@ -446,10 +537,13 @@ public static class DocumentCodec
 
             writer.Write("desc");
             WriteOptional(writer, parameter.Description);
+
+            Preserved(writer, unknown, owner);
         }
     }
 
-    private static ImmutableArray<Parameter> ReadParameters(ref MessagePackReader reader)
+    private static ImmutableArray<Parameter> ReadParameters(
+        ref MessagePackReader reader, List<UnknownField> unknown, string within)
     {
         int count = reader.ReadArrayHeader();
 
@@ -459,6 +553,7 @@ public static class DocumentCodec
         {
             int fields = reader.ReadMapHeader();
 
+            List<UnknownField> pending = [];
             string name = string.Empty;
             Quantity value = Quantity.Zero;
             string? expression = null;
@@ -466,7 +561,9 @@ public static class DocumentCodec
 
             for (int f = 0; f < fields; ++f)
             {
-                switch (reader.ReadString())
+                string key = reader.ReadString();
+
+                switch (key)
                 {
                     case "name":
                         name = reader.ReadString();
@@ -487,10 +584,13 @@ public static class DocumentCodec
                         break;
 
                     default:
-                        reader.Skip();
+                        pending.Add(Keep(ref reader, UnknownField.Root, key));
                         break;
                 }
             }
+
+            Attribute(
+                unknown, pending, UnknownField.Nest(within, UnknownField.Parameter(name)));
 
             found.Add(new Parameter(name, value, expression, description));
         }
@@ -498,9 +598,12 @@ public static class DocumentCodec
         return found.ToImmutable();
     }
 
-    private static void WriteBody(MessagePackWriter writer, Body body)
+    private static void WriteBody(
+        MessagePackWriter writer, Body body, ILookup<string, UnknownField> unknown)
     {
-        writer.WriteMapHeader(4);
+        string owner = UnknownField.Body(body.Id.ToStorageString());
+
+        writer.WriteMapHeader(4 + Extra(unknown, owner));
 
         writer.Write("id");
         writer.Write(body.Id.ToStorageString());
@@ -513,12 +616,15 @@ public static class DocumentCodec
 
         writer.Write("name");
         WriteOptional(writer, body.Name);
+
+        Preserved(writer, unknown, owner);
     }
 
-    private static Body ReadBody(ref MessagePackReader reader)
+    private static Body ReadBody(ref MessagePackReader reader, List<UnknownField> unknown)
     {
         int fields = reader.ReadMapHeader();
 
+        List<UnknownField> pending = [];
         BodyId id = default;
         FeatureId owner = default;
         BodyKind kind = BodyKind.Solid;
@@ -526,7 +632,9 @@ public static class DocumentCodec
 
         for (int i = 0; i < fields; ++i)
         {
-            switch (reader.ReadString())
+            string key = reader.ReadString();
+
+            switch (key)
             {
                 case "id":
                     id = BodyId.Parse(reader.ReadString());
@@ -545,19 +653,24 @@ public static class DocumentCodec
                     break;
 
                 default:
-                    reader.Skip();
+                    pending.Add(Keep(ref reader, UnknownField.Root, key));
                     break;
             }
         }
+
+        Attribute(unknown, pending, UnknownField.Body(id.ToStorageString()));
 
         // No shape. It is a handle into a kernel that is not running any more, and the body gets
         // its geometry back when the document is rebuilt.
         return new Body(id, owner, kind, KernelShape.None, name);
     }
 
-    private static void WriteReferenceGeometry(MessagePackWriter writer, ReferenceGeometry geometry)
+    private static void WriteReferenceGeometry(
+        MessagePackWriter writer, ReferenceGeometry geometry, ILookup<string, UnknownField> unknown)
     {
-        writer.WriteMapHeader(4);
+        string owner = UnknownField.Reference(geometry.Name);
+
+        writer.WriteMapHeader(4 + Extra(unknown, owner));
 
         writer.Write("kind");
         writer.Write(KindOf(geometry));
@@ -601,12 +714,16 @@ public static class DocumentCodec
                     $"There is no way to write a {geometry.GetType().Name}. A kind added without a "
                     + "case here would be dropped on save.");
         }
+
+        Preserved(writer, unknown, owner);
     }
 
-    private static ReferenceGeometry ReadReferenceGeometry(ref MessagePackReader reader)
+    private static ReferenceGeometry ReadReferenceGeometry(
+        ref MessagePackReader reader, List<UnknownField> unknown)
     {
         int fields = reader.ReadMapHeader();
 
+        List<UnknownField> pending = [];
         int kind = 0;
         FeatureId owner = default;
         string name = string.Empty;
@@ -614,7 +731,9 @@ public static class DocumentCodec
 
         for (int i = 0; i < fields; ++i)
         {
-            switch (reader.ReadString())
+            string key = reader.ReadString();
+
+            switch (key)
             {
                 case "kind":
                     kind = reader.ReadInt32();
@@ -640,10 +759,12 @@ public static class DocumentCodec
                     break;
 
                 default:
-                    reader.Skip();
+                    pending.Add(Keep(ref reader, UnknownField.Root, key));
                     break;
             }
         }
+
+        Attribute(unknown, pending, UnknownField.Reference(name));
 
         return kind switch
         {
@@ -674,9 +795,10 @@ public static class DocumentCodec
         _ => -1,
     };
 
-    private static void WriteMetadata(MessagePackWriter writer, DocumentMetadata metadata)
+    private static void WriteMetadata(
+        MessagePackWriter writer, DocumentMetadata metadata, ILookup<string, UnknownField> unknown)
     {
-        writer.WriteMapHeader(6);
+        writer.WriteMapHeader(6 + Extra(unknown, UnknownField.Metadata));
 
         writer.Write("title");
         WriteOptional(writer, metadata.Title);
@@ -705,9 +827,12 @@ public static class DocumentCodec
             writer.Write(key);
             writer.Write(value);
         }
+
+        Preserved(writer, unknown, UnknownField.Metadata);
     }
 
-    private static DocumentMetadata ReadMetadata(ref MessagePackReader reader)
+    private static DocumentMetadata ReadMetadata(
+        ref MessagePackReader reader, List<UnknownField> unknown)
     {
         int fields = reader.ReadMapHeader();
 
@@ -715,7 +840,9 @@ public static class DocumentCodec
 
         for (int i = 0; i < fields; ++i)
         {
-            switch (reader.ReadString())
+            string key = reader.ReadString();
+
+            switch (key)
             {
                 case "title":
                     metadata = metadata with { Title = ReadOptional(ref reader) };
@@ -748,7 +875,7 @@ public static class DocumentCodec
                     break;
 
                 default:
-                    reader.Skip();
+                    unknown.Add(Keep(ref reader, UnknownField.Metadata, key));
                     break;
             }
         }
