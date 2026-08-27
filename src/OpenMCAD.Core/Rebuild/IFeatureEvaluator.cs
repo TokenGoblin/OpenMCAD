@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Kernel;
 
 namespace OpenMCAD.Core.Rebuild;
 
@@ -28,17 +29,26 @@ public sealed record FeatureEvaluation(
 /// that used to produce two bodies and now produces one leaves nothing behind.
 /// </param>
 /// <param name="References">Any reference geometry it created, such as a datum plane.</param>
+/// <param name="History">
+/// Which of the operation's outputs came from which of its inputs.
+/// </param>
 public sealed record FeatureOutput(
     ImmutableArray<Body> Bodies,
-    ImmutableArray<ReferenceGeometry> References)
+    ImmutableArray<ReferenceGeometry> References,
+    HistoryMap History)
 {
     /// <summary>Gets an output with nothing in it, for a feature that produces no geometry.</summary>
-    public static FeatureOutput None { get; } = new([], []);
+    public static FeatureOutput None { get; } = new([], [], HistoryMap.Empty);
 
-    /// <summary>An output of just bodies.</summary>
+    /// <summary>An output of just bodies, with no history recorded.</summary>
     /// <param name="bodies">The bodies.</param>
     /// <returns>The output.</returns>
-    public static FeatureOutput Of(params Body[] bodies) => new([.. bodies], []);
+    /// <remarks>
+    /// For features that produce geometry nothing can point into, and for tests. A real modelling
+    /// operation that used this would compile and would quietly make every reference into its
+    /// result unresolvable, so it is worth being deliberate about.
+    /// </remarks>
+    public static FeatureOutput Of(params Body[] bodies) => new([.. bodies], [], HistoryMap.Empty);
 }
 
 /// <summary>
@@ -68,6 +78,12 @@ public interface IFeatureEvaluator
     /// Cancels a long operation. Honouring it is optional but strongly wanted: a rebuild superseded
     /// by a newer edit can only stop at a boundary the evaluator gives it.
     /// </param>
-    /// <returns>What the feature produced.</returns>
+    /// <returns>
+    /// What the feature produced, including the <see cref="HistoryMap"/> relating its outputs to
+    /// its inputs. That map is the only record of which output came from which input, it exists
+    /// only while the operation runs, and it cannot be asked for afterwards (ADR-0002, §5.1) —
+    /// an implementation that returns an empty one has destroyed the information every reference
+    /// into its result depends on.
+    /// </returns>
     FeatureOutput Evaluate(FeatureEvaluation evaluation, CancellationToken cancellationToken);
 }

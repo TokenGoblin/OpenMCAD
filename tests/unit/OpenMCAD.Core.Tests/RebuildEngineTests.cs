@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using FluentAssertions;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Core.Naming;
 using OpenMCAD.Core.Rebuild;
 using OpenMCAD.Kernel;
 using OpenMCAD.Kernel.Threading;
@@ -424,6 +425,26 @@ public sealed class RebuildEngineTests
         harness.Evaluator.Evaluated.Should().HaveCount(4);
     }
 
+    [Fact]
+    public async Task TheRebuildCollectsWhatEachFeatureDidToItsInputs()
+    {
+        // What P3-T09 replays. Gathered in evaluation order as the rebuild goes, because applying
+        // operations in any other sequence follows a chain of correspondences that never happened.
+        using Harness harness = new(NullGeometryCache.Instance);
+
+        FeatureId sketch = harness.Add("Sketch1");
+        FeatureId extrude = harness.Add("Extrude1", sketch);
+
+        RebuildResult result = await harness.Engine.RebuildAllAsync();
+
+        result.History.Order.Should().Equal([sketch, extrude]);
+        result.History.For(extrude).Should().NotBeNull();
+        result.History.PositionOf(extrude).Should().Be(1);
+
+        result.History.For(FeatureId.New()).Should().BeNull(
+            "a feature that did not run is not the same as one that ran and touched nothing");
+    }
+
     /// <summary>A session, a real dispatcher and a recording evaluator.</summary>
     private sealed class Harness : IDisposable
     {
@@ -557,7 +578,8 @@ public sealed class RebuildEngineTests
             return new FeatureOutput(
                 [.. Enumerable.Range(0, count).Select(
                     i => new Body(BodyId.New(), id, BodyKind.Solid, new KernelShape((ulong)(i + 1))))],
-                []);
+                [],
+                HistoryMap.Empty);
         }
     }
 }

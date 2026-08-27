@@ -299,5 +299,6 @@ public sealed class GeometryCacheTests
 
     private static FeatureOutput Output() => new(
         [new Body(BodyId.New(), FeatureId.New(), BodyKind.Solid, new KernelShape(1))],
-        []);
+        [],
+        HistoryMap.Empty);
 }

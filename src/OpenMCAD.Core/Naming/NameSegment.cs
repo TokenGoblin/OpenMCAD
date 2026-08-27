@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Kernel;
 using OpenMCAD.Math;
 
 namespace OpenMCAD.Core.Naming;
@@ -66,6 +67,18 @@ public readonly record struct EntityRole(string Value)
 
     /// <summary>Gets the role of the second piece of something split in two.</summary>
     public static EntityRole SplitRight => new("SplitRight");
+
+    /// <summary>The role matching what the kernel called an output.</summary>
+    /// <param name="role">The kernel's role.</param>
+    /// <returns>The naming layer's role.</returns>
+    /// <remarks>
+    /// By name rather than by a table of pairs. The kernel's <see cref="OperationRole"/> is a
+    /// closed enum and this is an open set, so every kernel role has a role here but not the other
+    /// way round; matching on the name means a role the kernel gains later needs no change here,
+    /// and a role a plugin invents simply never matches anything this kernel reports — which is
+    /// correct, because it did not come from this kernel.
+    /// </remarks>
+    public static EntityRole From(OperationRole role) => new(role.ToString());
 
     /// <inheritdoc />
     public override string ToString() => Value;

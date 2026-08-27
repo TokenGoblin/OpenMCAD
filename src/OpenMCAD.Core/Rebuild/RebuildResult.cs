@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Core.Naming;
 
 namespace OpenMCAD.Core.Rebuild;
 
@@ -47,13 +48,18 @@ public enum RebuildOutcome
 /// exit criterion asks for.
 /// </param>
 /// <param name="Document">The document as it stood when the rebuild finished.</param>
+/// <param name="History">
+/// What each feature did to its inputs, in evaluation order. What P3-T09 replays to find the
+/// entity a <c>PersistentName</c> refers to.
+/// </param>
 public sealed record RebuildResult(
     RebuildOutcome Outcome,
     ImmutableArray<FeatureId> Rebuilt,
     ImmutableArray<FeatureId> Failed,
     ImmutableArray<FeatureId> Skipped,
     ImmutableArray<FeatureId> FromCache,
-    Document Document)
+    Document Document,
+    RebuildHistory History)
 {
     /// <summary>Gets how many features actually reached the kernel.</summary>
     public int Evaluated => Rebuilt.Length - FromCache.Length;

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Core.Naming;
 using OpenMCAD.Kernel.Threading;
 
 namespace OpenMCAD.Core.Rebuild;
@@ -210,7 +211,8 @@ public sealed class RebuildEngine : IDisposable
 
         if (order.IsEmpty)
         {
-            return new RebuildResult(RebuildOutcome.NothingToDo, [], [], [], [], start);
+            return new RebuildResult(
+                RebuildOutcome.NothingToDo, [], [], [], [], start, RebuildHistory.Empty);
         }
 
         Document working = start;
@@ -226,6 +228,12 @@ public sealed class RebuildEngine : IDisposable
         Dictionary<FeatureId, FeatureDiagnostic> blocked = [];
 
         RebuildReport.Builder report = new();
+
+        // Collected as the rebuild goes, in evaluation order, because that is the order name
+        // resolution has to replay them in (P3-T09). Gathering them afterwards from the cache
+        // would lose the order, and applying operations in any other sequence follows a chain of
+        // correspondences that never happened.
+        RebuildHistory.Builder history = new();
 
         // Everything outside this rebuild keeps whatever was said about it last time. A partial
         // rebuild says nothing about features outside its dirty subgraph, and "nothing" is not the
@@ -267,7 +275,8 @@ public sealed class RebuildEngine : IDisposable
                     failed.ToImmutable(),
                     skipped.ToImmutable(),
                     hits.ToImmutable(),
-                    start);
+                    start,
+                    history.Build());
             }
 
             Feature? feature = working.FindFeature(id);
@@ -314,6 +323,7 @@ public sealed class RebuildEngine : IDisposable
                 rebuilt.Add(id);
                 hits.Add(id);
 
+                history.Add(id, cached.History);
                 report.Add(new FeatureDiagnostic(id, FeatureState.Ok));
 
                 continue;
@@ -334,6 +344,7 @@ public sealed class RebuildEngine : IDisposable
                 working = Apply(working, id, output);
                 rebuilt.Add(id);
 
+                history.Add(id, output.History);
                 report.Add(new FeatureDiagnostic(id, FeatureState.Ok));
             }
             catch (OperationCanceledException)
@@ -346,7 +357,8 @@ public sealed class RebuildEngine : IDisposable
                     failed.ToImmutable(),
                     skipped.ToImmutable(),
                     hits.ToImmutable(),
-                    start);
+                    start,
+                    history.Build());
             }
 #pragma warning disable CA1031 // A failing feature must not take the rebuild with it.
             catch (Exception exception)
@@ -378,7 +390,8 @@ public sealed class RebuildEngine : IDisposable
             failed.ToImmutable(),
             skipped.ToImmutable(),
             hits.ToImmutable(),
-            published);
+            published,
+            history.Build());
     }
 
     /// <summary>Writes the results back, unless the document has moved on.</summary>
