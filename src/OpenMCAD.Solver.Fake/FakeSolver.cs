@@ -144,7 +144,8 @@ public sealed class FakeSolver : ISketchSolver
             residual = System.Math.Max(residual, left);
         }
 
-        return new SolveResult(working, Combined(verdicts), iterations, residual);
+        return new SolveResult(
+            working, SolveDiagnostics.Combine(verdicts), iterations, residual);
     }
 
     /// <summary>Which groups this solve is going to touch.</summary>
@@ -163,49 +164,6 @@ public sealed class FakeSolver : ISketchSolver
 
     private static bool OutOfTime(SolverOptions settings, Stopwatch clock)
         => settings.TimeBudget is { } budget && clock.Elapsed > budget;
-
-    /// <summary>Rolls several groups' verdicts into one for the sketch.</summary>
-    /// <remarks>
-    /// The worst outcome wins. A sketch with one contradicting group is a contradicting sketch
-    /// however well the others solved, because the user cannot proceed — and reporting the best of
-    /// them would say "fully defined" about a sketch that is not.
-    /// </remarks>
-    private static SolveDiagnosis Combined(List<SolveDiagnosis> verdicts)
-    {
-        if (verdicts.Count == 0)
-        {
-            return new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Nothing can move.");
-        }
-
-        if (verdicts.Count == 1)
-        {
-            return verdicts[0];
-        }
-
-        SolveOutcome worst = verdicts.Select(v => v.Outcome).OrderByDescending(Severity).First();
-
-        // Freedom and the free-entity list belong to the under-constrained case and are reported
-        // only there. "Conflicting, four degrees of freedom left" is two answers to two different
-        // questions presented as one, and the field's own contract says which one it answers.
-        bool loose = worst == SolveOutcome.UnderConstrained;
-
-        return new SolveDiagnosis(
-            worst,
-            loose ? verdicts.Sum(v => v.RemainingFreedom) : 0,
-            loose ? [.. verdicts.SelectMany(v => v.Free).Distinct()] : [],
-            [.. verdicts.SelectMany(v => v.Conflicts).Distinct()],
-            [.. verdicts.SelectMany(v => v.Surplus).Distinct()],
-            verdicts.First(v => v.Outcome == worst).Message);
-    }
-
-    private static int Severity(SolveOutcome outcome) => outcome switch
-    {
-        SolveOutcome.OverConstrained => 4,
-        SolveOutcome.Failed => 3,
-        SolveOutcome.Redundant => 2,
-        SolveOutcome.UnderConstrained => 1,
-        _ => 0,
-    };
 
     /// <summary>Solves one group, which is one subsystem plus whatever ground it refers to.</summary>
     private static (Sketch Sketch, int Iterations) SolveOne(
@@ -459,15 +417,24 @@ public sealed class FakeSolver : ISketchSolver
     {
         double residual = Norm(ConstraintResiduals.Of(part).Values);
 
-        if (residual > System.Math.Max(settings.Tolerance, 1e-7))
+        if (residual > System.Math.Max(settings.Tolerance, SolveDiagnostics.SolvedWithin))
         {
             return Diagnose(part, settings);
         }
 
-        return subsystem.RemainingFreedom > 0
-            ? (Under(part, subsystem.RemainingFreedom), residual)
-            : (new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Fully defined."),
-                residual);
+        // Satisfied, so the only question left is how much of it can still move -- which the
+        // analysis already counted. Expressed as evidence rather than as a diagnosis built by
+        // hand, so this path and the expensive one cannot word the same situation differently.
+        return (
+            SolveDiagnostics.From(new SolveEvidence(
+                residual,
+                Rank: 0,
+                Equations: 0,
+                subsystem.RemainingFreedom,
+                [],
+                [.. part.Entities.Ordered.Select(e => e.Id)],
+                settings.Tolerance)),
+            residual);
     }
 
     /// <summary>Works out which of the four situations one group is in.</summary>
@@ -485,18 +452,19 @@ public sealed class FakeSolver : ISketchSolver
         return (Diagnose(part, layout, frozen, residual, settings), residual);
     }
 
-    /// <summary>Works out which of the four situations the sketch is in.</summary>
+    /// <summary>Measures what a diagnosis is made of, and leaves the judging to P4-T06.</summary>
     /// <remarks>
     /// <para>
-    /// From the rank of the Jacobian, which is the only thing that can tell the cases apart.
-    /// Counting equations against unknowns says a sketch with two identical constraints is fully
-    /// determined when it is not, and says nothing at all about which constraints are at fault.
+    /// This solver's job here is the rank of its own Jacobian and which rows turned out to be
+    /// implied by earlier ones. What those numbers <em>mean</em> — which of the five situations the
+    /// sketch is in — is <see cref="SolveDiagnostics"/>'s, because it is a statement about sketches
+    /// rather than about numerical methods, and two solvers deciding it separately would give a
+    /// user two different diagnoses of one drawing.
     /// </para>
     /// <para>
-    /// A rank below the number of equations means some constraint is implied by the others. Whether
-    /// that is harmless duplication or a contradiction depends on whether the residual came down:
-    /// two constraints saying the same true thing solve, and two saying different things about the
-    /// same freedom do not.
+    /// The rank is what makes any of it possible. Counting equations against unknowns says a sketch
+    /// with two identical constraints is fully determined when it is not, and says nothing at all
+    /// about which constraints are at fault.
     /// </para>
     /// </remarks>
     private static SolveDiagnosis Diagnose(
@@ -511,13 +479,13 @@ public sealed class FakeSolver : ISketchSolver
 
         int[] free = [.. Enumerable.Range(0, layout.Count).Where(i => !frozen.Contains(i))];
 
-        bool solved = residual <= System.Math.Max(options.Tolerance, 1e-7);
+        ImmutableArray<SketchEntityId> movable =
+            [.. sketch.Entities.Ordered.Select(e => e.Id)];
 
         if (values.IsEmpty)
         {
-            return free.Length == 0
-                ? new SolveDiagnosis(SolveOutcome.WellConstrained, Message: "Nothing can move.")
-                : Under(sketch, free.Length);
+            return SolveDiagnostics.From(new SolveEvidence(
+                residual, 0, 0, free.Length, [], movable, options.Tolerance));
         }
 
         double[] parameters = [.. layout.Values];
@@ -525,47 +493,15 @@ public sealed class FakeSolver : ISketchSolver
 
         (int rank, ImmutableArray<int> dependent) = Dense.Rank(jacobian, RankTolerance);
 
-        ImmutableArray<SketchConstraintId> implied =
-            [.. dependent.Select(row => from[row]).Distinct()];
-
-        if (rank < values.Length)
-        {
-            // Some equation adds nothing. Whether that is a duplicate or a contradiction is
-            // decided by whether the sketch actually came out solved.
-            return solved
-                ? new SolveDiagnosis(
-                    SolveOutcome.Redundant,
-                    System.Math.Max(0, free.Length - rank),
-                    Redundant: implied,
-                    Message: implied.Length == 1
-                        ? "One constraint says what the others already said."
-                        : $"{implied.Length} constraints say what the others already said.")
-                : new SolveDiagnosis(
-                    SolveOutcome.OverConstrained,
-                    Conflicting: implied,
-                    Message: "These constraints contradict each other, so no arrangement of the "
-                        + "geometry satisfies them all.");
-        }
-
-        if (!solved)
-        {
-            return new SolveDiagnosis(
-                SolveOutcome.Failed,
-                Message: "The constraints do not contradict each other and the solve did not "
-                    + "converge. Moving the geometry nearer to where it should be usually helps.");
-        }
-
-        return free.Length > rank ? Under(sketch, free.Length - rank) : new SolveDiagnosis(
-            SolveOutcome.WellConstrained, Message: "Fully defined.");
+        return SolveDiagnostics.From(new SolveEvidence(
+            residual,
+            rank,
+            values.Length,
+            free.Length,
+            [.. dependent.Select(row => from[row]).Distinct()],
+            movable,
+            options.Tolerance));
     }
-
-    private static SolveDiagnosis Under(Sketch sketch, int remaining) => new(
-        SolveOutcome.UnderConstrained,
-        remaining,
-        [.. sketch.Entities.Ordered.Select(e => e.Id)],
-        Message: remaining == 1
-            ? "One degree of freedom is left."
-            : $"{remaining} degrees of freedom are left.");
 
     private static double Norm(ImmutableArray<double> values)
     {
