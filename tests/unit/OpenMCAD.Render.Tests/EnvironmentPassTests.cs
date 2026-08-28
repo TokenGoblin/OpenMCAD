@@ -21,7 +21,6 @@ public sealed class EnvironmentPassTests
 {
     private const int Size = 192;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     private static Bounds3d Metre =>
         new(new Vec3d(-0.5, -0.5, -0.5), new Vec3d(0.5, 0.5, 0.5));
@@ -289,7 +288,7 @@ public sealed class EnvironmentPassTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
                 pass = new EnvironmentPass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
                 faces = new FacePass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);

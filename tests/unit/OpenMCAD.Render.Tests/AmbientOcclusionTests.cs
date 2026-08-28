@@ -37,7 +37,6 @@ namespace OpenMCAD.Render.Tests;
 /// </remarks>
 public sealed class AmbientOcclusionTests
 {
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     [Fact]
     public void AConcaveCornerIsDarkened()
@@ -435,7 +434,7 @@ public sealed class AmbientOcclusionTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
 
                 msaa = new MsaaTarget(

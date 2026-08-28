@@ -27,14 +27,12 @@ namespace OpenMCAD.Render.Tests;
 /// </remarks>
 public sealed partial class SwapChainTests
 {
-    private static RenderDeviceOptions Software
-        => new(EnableDebugLayer: true, ForceSoftware: true);
 
     [Fact]
     public void ASwapChainCanBeCreatedForAWindow()
     {
         using OffscreenWindow window = new(800, 600);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 800, 600);
 
         target.Width.Should().Be(800);
@@ -46,7 +44,7 @@ public sealed partial class SwapChainTests
     public void EveryBackBufferHasItsOwnRenderTargetView()
     {
         using OffscreenWindow window = new(320, 240);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 320, 240);
 
         HashSet<nuint> handles = [];
@@ -62,7 +60,7 @@ public sealed partial class SwapChainTests
     public void ResizingRebuildsTheBuffersAtTheNewSize()
     {
         using OffscreenWindow window = new(400, 300);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 400, 300);
 
         target.Resize(640, 480);
@@ -83,7 +81,7 @@ public sealed partial class SwapChainTests
     public void ResizingToTheSameSizeDoesNothing()
     {
         using OffscreenWindow window = new(400, 300);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 400, 300);
 
         // WM_SIZE arrives for moves between monitors and for restores, not only for real resizes.
@@ -98,7 +96,7 @@ public sealed partial class SwapChainTests
     public void MinimisingIsIgnoredRatherThanFailing()
     {
         using OffscreenWindow window = new(400, 300);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 400, 300);
 
         // A minimised window reports a client area of zero. DXGI refuses to resize to it, and it
@@ -113,7 +111,7 @@ public sealed partial class SwapChainTests
     public void PresentingRotatesTheBackBuffer()
     {
         using OffscreenWindow window = new(256, 256);
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using SwapChainTarget target = new(device, window.Handle, 256, 256);
 
         // Presenting needs somewhere for the frame to go. A build agent has no display and
@@ -158,7 +156,7 @@ public sealed partial class SwapChainTests
     [Fact]
     public void ASwapChainNeedsAWindow()
     {
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
 
         FluentActions.Invoking(() => new SwapChainTarget(device, 0, 100, 100))
             .Should().Throw<ArgumentException>();

@@ -28,7 +28,6 @@ public sealed class EdgePassTests
 {
     private const int Size = 200;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     [Fact]
     public void TheEdgeShaderIsEmbeddedAndCompiles()
@@ -441,7 +440,7 @@ public sealed class EdgePassTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
                 faces = new FacePass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
                 EdgePass edges = new(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);

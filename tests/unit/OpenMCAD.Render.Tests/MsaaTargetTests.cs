@@ -21,7 +21,6 @@ public sealed class MsaaTargetTests
 {
     private const int Size = 160;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     private static Color4 Clear => new(0.05f, 0.05f, 0.08f, 1.0f);
 
@@ -285,7 +284,7 @@ public sealed class MsaaTargetTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 target = new MsaaTarget(device.Device, Clear, requestedSamples);
 
                 if (size > 0)

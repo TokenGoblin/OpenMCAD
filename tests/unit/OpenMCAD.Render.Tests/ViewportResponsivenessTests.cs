@@ -41,7 +41,6 @@ namespace OpenMCAD.Render.Tests;
 /// </remarks>
 public sealed class ViewportResponsivenessTests
 {
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     /// <summary>How many frames each measurement averages over.</summary>
     private const int Frames = 30;
@@ -297,7 +296,7 @@ public sealed class ViewportResponsivenessTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
 
                 pass = new FacePass(

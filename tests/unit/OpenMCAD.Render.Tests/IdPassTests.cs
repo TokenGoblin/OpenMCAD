@@ -29,7 +29,6 @@ public sealed class IdPassTests
 {
     private const int Size = 128;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     /// <summary>Both segments of the three-point polyline, then the two-point one.</summary>
     private static readonly uint[] ExpectedSharedIds = [41u, 41u, 42u];
@@ -425,7 +424,7 @@ public sealed class IdPassTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 colour = new OffscreenSurface(device, size, size);
                 ids = new IdOffscreen(device, size, size);
                 faces = new FacePass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);

@@ -39,7 +39,6 @@ public sealed class DeviceLossTests
 {
     private const int Size = 64;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     /// <summary>Kills a device the way a driver update would.</summary>
     /// <returns>Whether the device could be removed on this machine.</returns>
@@ -61,7 +60,7 @@ public sealed class DeviceLossTests
     [Fact]
     public void ARemovedDeviceReportsAReason()
     {
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
 
         device.Device.DeviceRemovedReason.Success.Should().BeTrue("the device starts healthy");
 
@@ -79,7 +78,7 @@ public sealed class DeviceLossTests
     [Fact]
     public void WorkSubmittedToARemovedDeviceSucceedsWithoutDoingAnything()
     {
-        using D3D12RenderDevice device = new(Software);
+        using D3D12RenderDevice device = new(TestDevices.Software);
         using OffscreenSurface surface = new(device, Size, Size);
 
         // Healthy first, so anything observed below is attributable to the removal rather than to
@@ -118,7 +117,7 @@ public sealed class DeviceLossTests
 
         try
         {
-            first = new D3D12RenderDevice(Software);
+            first = new D3D12RenderDevice(TestDevices.Software);
             firstSurface = new OffscreenSurface(first, Size, Size);
             firstSurface.Render(new Color4(0.2f, 0.3f, 0.4f, 1.0f), _ => { });
 
@@ -150,7 +149,7 @@ public sealed class DeviceLossTests
             }
         }
 
-        using D3D12RenderDevice second = new(Software);
+        using D3D12RenderDevice second = new(TestDevices.Software);
         using OffscreenSurface secondSurface = new(second, Size, Size);
         using FacePass faces = new(
             second.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);

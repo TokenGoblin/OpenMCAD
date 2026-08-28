@@ -36,7 +36,6 @@ public sealed class FacePassTests
 {
     private const int Size = 160;
 
-    private static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
 
     // --- The shader itself --------------------------------------------------------------------
 
@@ -463,7 +462,7 @@ public sealed class FacePassTests
 
             try
             {
-                device = new D3D12RenderDevice(Software);
+                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
                 FacePass pass = new(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
 
