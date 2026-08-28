@@ -39,6 +39,52 @@ public sealed class FakeSolver : ISketchSolver
     /// </remarks>
     private const double Nudge = 1.49e-8;
 
+    /// <summary>How much a step of the minimal-motion pass must respect the constraints.</summary>
+    /// <remarks>
+    /// <para>
+    /// The minimal-motion objective §5.6 asks for is a second pass, run once the constraints are
+    /// already satisfied. It looks for the movement that most nearly takes the geometry to where it
+    /// would rather be, out of the movements that leave the constraints alone — solving
+    /// <c>(w·J'J + I)δ = d</c>, which for a large <c>w</c> is the projection of the wish <c>d</c>
+    /// onto the directions the constraints do not pin.
+    /// </para>
+    /// <para>
+    /// A second pass rather than extra rows in the first one. Weighting an objective against the
+    /// constraints inside the same least-squares problem makes it bend them: the term's pull grows
+    /// with how far the pointer is from where the geometry can reach, so a dimension of four came
+    /// out as 4.0036 when the cursor was thirty units away. There is no weight that both breaks
+    /// ties and never bends anything — a constraint is not a preference, and the two do not belong
+    /// in one sum.
+    /// </para>
+    /// </remarks>
+    private const double RespectConstraints = 1e6;
+
+    /// <summary>How much the rest of the sketch matters while the pointer is being followed.</summary>
+    /// <remarks>
+    /// <para>
+    /// Almost nothing, and not zero. The two wishes of a drag are ordered rather than weighed: get
+    /// the point under the pointer, and <em>then</em> move as little else as possible. A single
+    /// weighted sum cannot express that — a point tied to another by a coincidence came to rest at
+    /// <c>(8·target + 1·origin)/9</c>, the exact compromise the weights asked for, which is a
+    /// sketch that lags behind the cursor by an amount nobody chose.
+    /// </para>
+    /// <para>
+    /// So the pointer is followed first with the rest of the sketch carrying this, which is enough
+    /// to make the system solvable and to pick the smallest of the movements that follow the
+    /// pointer equally well, and no more than that. What the rest of the sketch actually wants is
+    /// asked separately, afterwards, once the pointer has what it came for.
+    /// </para>
+    /// <para>
+    /// Small enough that what it costs is invisible. It holds the pointer back by roughly its own
+    /// size times how far the pointer moved — at a millionth that was three microns on a three-unit
+    /// drag, which a test at a part in a million could see.
+    /// </para>
+    /// </remarks>
+    private const double BarelyMatters = 1e-9;
+
+    /// <summary>How small a movement counts as having settled.</summary>
+    private const double Settled = 1e-10;
+
     /// <summary>How small a pivot counts as zero when finding the rank.</summary>
     /// <remarks>
     /// The line between "these constraints say something new" and "this one is implied by the
@@ -100,8 +146,8 @@ public sealed class FakeSolver : ISketchSolver
                 break;
             }
 
-            (Sketch moved, int steps) =
-                SolveOne(analysis.Restrict(subsystem), settings, clock, cancellationToken);
+            (Sketch moved, int steps) = SolveOne(
+                analysis.Restrict(subsystem), sketch, drag, settings, clock, cancellationToken);
 
             // Only what this group owns is written back. The ground it borrowed belongs to the
             // whole sketch and was never the sub-solve's to move -- though today that is a
@@ -166,14 +212,33 @@ public sealed class FakeSolver : ISketchSolver
         => settings.TimeBudget is { } budget && clock.Elapsed > budget;
 
     /// <summary>Solves one group, which is one subsystem plus whatever ground it refers to.</summary>
+    /// <param name="working">The group, with the drag's seed already applied.</param>
+    /// <param name="before">
+    /// The sketch as it was when the drag began. The minimal-motion objective measures from here
+    /// rather than from the seeded state, or the drag would be asked to stay where it had just
+    /// been put and would never move at all.
+    /// </param>
+    /// <param name="drag">What is being dragged, or null when this is not a drag.</param>
+    /// <param name="settings">How hard to try.</param>
+    /// <param name="clock">The whole solve's clock.</param>
+    /// <param name="cancellationToken">Abandons the solve.</param>
     private static (Sketch Sketch, int Iterations) SolveOne(
         Sketch working,
+        Sketch before,
+        DragTarget? drag,
         SolverOptions settings,
         Stopwatch clock,
         CancellationToken cancellationToken)
     {
         SketchParameters layout = SketchParameters.Of(working);
         ImmutableArray<int> frozen = SketchAnalysis.FrozenBy(working, layout);
+
+        // Built from the seeded layout, which is the same numbers as before the drag but for the
+        // held point -- and the held point's anchor is the pointer, not where it was. Restoring
+        // the sketch first to measure from it was code that could not change an answer.
+        _ = before;
+
+        DragAnchor? anchor = drag is null ? null : DragAnchor.For(working, layout, drag);
 
         double[] values = [.. layout.Values];
 
@@ -195,7 +260,146 @@ public sealed class FakeSolver : ISketchSolver
             }
         }
 
+        // Only once the constraints hold. An objective applied on top of a state the solve could
+        // not fix would move geometry to suit a preference against a sketch that is already wrong.
+        // No test tells this from its absence: the pass that follows leaves the constraints as it
+        // found them, so on a sketch that never solved it moves things a preference asked for and
+        // nothing contradicts it. The guard is about what the solver is entitled to assume.
+        if (anchor is { } pull && residual <= System.Math.Max(settings.Tolerance, 1e-7))
+        {
+            // First the pointer, then everything else. Two passes because the two wishes are
+            // ordered and not weighed: see BarelyMatters.
+            iteration += Settle(
+                working, layout, values, frozen,
+                pull.Towards,
+                p => pull.Held.Contains(p) ? 1 : BarelyMatters,
+                settings, clock, cancellationToken, ref damping, ref residual);
+
+            iteration += Settle(
+                working, layout, values, [.. frozen, .. pull.Held],
+                pull.Before,
+                _ => 1,
+                settings, clock, cancellationToken, ref damping, ref residual);
+        }
+
         return (layout.Scatter(working, [.. values]), iteration);
+    }
+
+    /// <summary>Moves the geometry as near to where it would rather be as the constraints allow.</summary>
+    /// <param name="sketch">The group being solved.</param>
+    /// <param name="layout">How it lays out as a vector.</param>
+    /// <param name="values">The numbers, moved in place.</param>
+    /// <param name="frozen">What may not move.</param>
+    /// <param name="towards">Where each parameter would rather be.</param>
+    /// <param name="weightOf">How much each parameter's wish counts.</param>
+    /// <param name="settings">How hard to try.</param>
+    /// <param name="clock">The whole solve's clock.</param>
+    /// <param name="cancellationToken">Abandons the pass.</param>
+    /// <param name="damping">The Levenberg-Marquardt damping, carried between passes.</param>
+    /// <param name="residual">How wrong the constraints are, updated as it goes.</param>
+    /// <returns>How many rounds it took.</returns>
+    /// <remarks>
+    /// <para>
+    /// The minimal-motion objective (P4-T07, §5.6), run only once the constraints are satisfied so
+    /// that it can never be traded against them. Each round asks for the movement nearest the wish
+    /// that the constraints barely notice — <c>(w·J'J + W)δ = W·d</c> with a large <c>w</c>, which
+    /// is the projection of <c>d</c> onto the null space of the Jacobian — and then lets the
+    /// ordinary solve clean up whatever second-order drift the step introduced.
+    /// </para>
+    /// <para>
+    /// Where the constraints pin everything, the projection is nothing and this does nothing, which
+    /// is right: a fully defined sketch has one answer and a drag cannot ask for another.
+    /// </para>
+    /// </remarks>
+    private static int Settle(
+        Sketch sketch,
+        SketchParameters layout,
+        double[] values,
+        ImmutableArray<int> frozen,
+        ImmutableArray<double> towards,
+        Func<int, double> weightOf,
+        SolverOptions settings,
+        Stopwatch clock,
+        CancellationToken cancellationToken,
+        ref double damping,
+        ref double residual)
+    {
+        int[] free = [.. Enumerable.Range(0, values.Length).Where(i => !frozen.Contains(i))];
+
+        if (free.Length == 0)
+        {
+            return 0;
+        }
+
+        int rounds = 0;
+
+        for (; rounds < 12; ++rounds)
+        {
+            if (cancellationToken.IsCancellationRequested || OutOfTime(settings, clock))
+            {
+                break;
+            }
+
+            ImmutableArray<double> at = Residuals(sketch, layout, values).Values;
+            double[,] jacobian = Jacobian(sketch, layout, values, free, at);
+
+            double[,] normal = new double[free.Length, free.Length];
+            double[] wish = new double[free.Length];
+
+            for (int i = 0; i < free.Length; ++i)
+            {
+                for (int j = 0; j < free.Length; ++j)
+                {
+                    double sum = 0;
+
+                    for (int k = 0; k < at.Length; ++k)
+                    {
+                        sum += jacobian[k, i] * jacobian[k, j];
+                    }
+
+                    normal[i, j] = sum * RespectConstraints;
+                }
+
+                // The weight goes on the diagonal and on the right-hand side alike, because it
+                // is the weight of a squared term: putting it on one and not the other scales the
+                // answer by it, so a point pulled eight times harder moved eight times too far and
+                // the next round did it again.
+                double weight = weightOf(free[i]);
+
+                normal[i, i] += weight;
+                wish[i] = weight * (towards[free[i]] - values[free[i]]);
+            }
+
+            if (Dense.Solve(normal, wish) is not { } delta)
+            {
+                break;
+            }
+
+            double moved = 0;
+
+            for (int i = 0; i < free.Length; ++i)
+            {
+                values[free[i]] += delta[i];
+                moved += delta[i] * delta[i];
+            }
+
+            residual = Norm(Residuals(sketch, layout, values).Values);
+
+            // Second-order drift: the projection is exact only for an infinitesimal step, so the
+            // ordinary solve is let back in to put the constraints right before the next round
+            // measures from a state that is slightly wrong.
+            while (residual > System.Math.Max(settings.Tolerance, 1e-9)
+                && Step(sketch, layout, values, frozen, ref damping, ref residual))
+            {
+            }
+
+            if (System.Math.Sqrt(moved) <= Settled)
+            {
+                break;
+            }
+        }
+
+        return rounds;
     }
 
     /// <summary>Moves the dragged point to where the pointer is, as the starting guess.</summary>
