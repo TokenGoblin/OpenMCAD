@@ -13,8 +13,10 @@ endif()
 # the manifest pins it (native/vcpkg.json) but the timeboxed OCCT spike required by PLAN.md 14
 # has not run, so nothing here should depend on assumptions the spike has not verified.
 #
-# Turn OPENMCAD_WITH_OCCT on in Phase 1 (P1-T06), once the spike has confirmed the version,
-# the build flags, and the behaviour we are about to design around.
+# OPENMCAD_WITH_OCCT is still OFF, and P1-T06 is done. The spike confirmed the version and the
+# flags (docs/notes/occt-spike.md) and both kernels are runnable, so what remains is the decision
+# to switch it on and absorb a cold build measured in hours -- see docs/notes/open-decisions.md.
+# Nothing in Phase 5 can produce real geometry until it is on.
 
 project(openmcad_native
     VERSION 0.1.0
