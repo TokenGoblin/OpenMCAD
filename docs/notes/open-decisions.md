@@ -11,6 +11,22 @@ to. This file is a queue, not a record.
 
 ---
 
+## Summary, for whoever is deciding
+
+Three decisions below (1–3), and the first two are really one call: planegcs needs Boost.Graph, so
+adding it only makes sense together with bringing planegcs in at all.
+
+| # | Decision | Recommendation |
+|---|---|---|
+| 1 | How planegcs gets into the tree | **Vendor** a pinned copy under `native/third_party/planegcs/`. |
+| 2 | Boost.Graph as a native dependency | **Yes, add it** — only if (1) is "vendor"; it is planegcs's own dependency, not a free-standing choice. |
+| 3 | Turning `OPENMCAD_WITH_OCCT` on | **Yes, turn it on now.** The spike already validated the pin and flags; every consequence (the long cold build, the licence-notices closure) is already known and bounded, not a new risk waiting to be discovered — and Phase 5 cannot start without it. |
+
+The write-ups below are the reasoning behind each; this table is just so a reviewer does not have
+to reconstruct the recommendation from the prose.
+
+---
+
 ## 1. How planegcs gets into the tree
 
 **Blocks:** P4-T01, and therefore the rest of P4-T02, and the Phase 4 exit criterion about a
@@ -68,6 +84,13 @@ the version and flags. What is left is the decision to switch it on and absorb t
 a much longer cold build (the nightly workflow already carries a note putting it around 660
 minutes from cold), a real dependency closure for the licence-notices step, and the corpus
 starting to run against `OcctKernel` as well as the fake.
+
+**Recommendation: turn it on.** Nothing about the spike suggests waiting longer teaches us
+anything new — the pin and the flags are already confirmed, and the only things left to absorb are
+a slower CI (a known, bounded cost, not an open question) and the licence-notices closure that
+`OPENMCAD_WITH_PLANEGCS` will need doing anyway the moment decision 1 lands. Every task from Phase
+5 onward is blocked on this, so the cost of turning it on late is paid by every one of them, not
+just this one.
 
 ---
 
