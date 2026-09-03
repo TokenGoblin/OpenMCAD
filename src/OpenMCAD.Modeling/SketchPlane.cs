@@ -97,11 +97,21 @@ public sealed record SketchPlane(Vec3d Origin, Vec3d XAxis, Vec3d YAxis, Vec3d N
     /// the plane — a point off it is silently projected first, since local coordinates have nowhere
     /// to record a distance out of plane.
     /// </returns>
-    public Vec2d ToLocal(Vec3d world)
-    {
-        Vec3d offset = world - Origin;
-        return new Vec2d(Vec3d.Dot(offset, XAxis), Vec3d.Dot(offset, YAxis));
-    }
+    public Vec2d ToLocal(Vec3d world) => ToLocalDirection(world - Origin);
+
+    /// <summary>
+    /// Maps a world <em>direction</em> (not a point) onto the sketch's local coordinates, dropping
+    /// its component along <see cref="Normal"/>.
+    /// </summary>
+    /// <param name="worldDirection">The direction.</param>
+    /// <returns>
+    /// Its local components. Unlike <see cref="ToLocal"/> this takes no origin — a direction has no
+    /// position to be relative to — which is what makes it the right tool for carrying a curve's own
+    /// in-plane reference direction (<c>WorldCurve.Circle.XDirection</c>) into the sketch's frame
+    /// without also, incorrectly, subtracting the sketch's origin from it.
+    /// </returns>
+    public Vec2d ToLocalDirection(Vec3d worldDirection)
+        => new(Vec3d.Dot(worldDirection, XAxis), Vec3d.Dot(worldDirection, YAxis));
 
     /// <summary>
     /// Returns <see langword="true"/> when this sketch plane is geometrically the same as
