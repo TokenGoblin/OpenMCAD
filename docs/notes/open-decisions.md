@@ -89,3 +89,11 @@ exit criterion is unmet until it does.
 **P2-T04, LOD.** Everything else in the tessellation pipeline is done. The measurements say
 nothing is triangle-throughput-bound, so this is speculative optimisation with no evidence behind
 it. It may be right to strike it rather than build it.
+
+**`docs/specs/sketch.md` does not exist.** `docs/specs/README.md` lists it as "written in P4" and
+P4 is six tasks into being done (T03–T09, T10). Keeping a subsystem spec current is PLAN.md 8.5's
+definition of done, not a chore for the end of the phase, and this has been silently skipped every
+time so far. Writing it retroactively is a task on its own — it has to cover the entity model, the
+constraint model, the solver contract and diagnosis mapping, drag behaviour, inference, snapping,
+profile detection, and now the plane reference — and picking a moment to stop and write it before
+it grows further is worth doing before Phase 4 closes, not after.

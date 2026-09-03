@@ -287,4 +287,50 @@ public sealed class DocumentTests
         frame.YAxis.Should().Be(Math.Vec3d.Cross(Math.Vec3d.UnitZ, Math.Vec3d.UnitX));
         frame.YAxis.Should().Be(Math.Vec3d.UnitY);
     }
+
+    [Fact]
+    public void FindReference_FindsAStandardDatumByName()
+    {
+        Document document = Document.Empty();
+
+        document.FindReference(FeatureId.None, "Top").Should().Be(
+            new ReferenceGeometry.Plane(FeatureId.None, "Top", Math.Vec3d.Zero, Math.Vec3d.UnitZ));
+    }
+
+    [Fact]
+    public void FindReference_ReturnsNullForAnUnknownName()
+        => Document.Empty().FindReference(FeatureId.None, "NoSuchPlane").Should().BeNull();
+
+    [Fact]
+    public void FindReference_DistinguishesTwoReferencesWithTheSameNameByOwner()
+    {
+        // P4-T10 addresses a datum plane by (owner, name), not by name alone -- a sketch feature
+        // could otherwise resolve to a same-named plane a different feature made, which is exactly
+        // the silent wrong answer §5.3 exists to prevent one layer up.
+        FeatureId first = FeatureId.New();
+        FeatureId second = FeatureId.New();
+
+        Document document = Document.Empty()
+            .WithReference(new ReferenceGeometry.Plane(first, "Plane1", Math.Vec3d.Zero, Math.Vec3d.UnitX))
+            .WithReference(new ReferenceGeometry.Plane(second, "Plane1", Math.Vec3d.One, Math.Vec3d.UnitY));
+
+        document.FindReference(first, "Plane1")!.Owner.Should().Be(first);
+        document.FindReference(second, "Plane1")!.Owner.Should().Be(second);
+
+        ((ReferenceGeometry.Plane)document.FindReference(first, "Plane1")!).Normal
+            .Should().Be(Math.Vec3d.UnitX);
+        ((ReferenceGeometry.Plane)document.FindReference(second, "Plane1")!).Normal
+            .Should().Be(Math.Vec3d.UnitY);
+    }
+
+    [Fact]
+    public void FindReference_DoesNotMatchAcrossOwnersEvenWhenOnlyOneReferenceExists()
+    {
+        Document document = Document.Empty()
+            .WithReference(new ReferenceGeometry.Plane(
+                FeatureId.New(), "Plane1", Math.Vec3d.Zero, Math.Vec3d.UnitX));
+
+        document.FindReference(FeatureId.New(), "Plane1").Should().BeNull(
+            "a different feature asking for 'Plane1' does not mean the same plane");
+    }
 }

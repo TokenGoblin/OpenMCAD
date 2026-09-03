@@ -265,6 +265,32 @@ public sealed class Document
         return _parametersByName.TryGetValue(name, out Parameter? parameter) ? parameter : null;
     }
 
+    /// <summary>Finds reference geometry by its owner and name.</summary>
+    /// <param name="owner">
+    /// Which feature created it, or <see cref="FeatureId.None"/> for the standard datums.
+    /// </param>
+    /// <param name="name">What it is called.</param>
+    /// <returns>The geometry, or <see langword="null"/> if this document has no such reference.</returns>
+    /// <remarks>
+    /// A linear scan rather than a dictionary: a document's reference geometry numbers in the tens,
+    /// not the thousands, and paying for an index rebuilt on every edit would cost more than it saves.
+    /// </remarks>
+    public ReferenceGeometry? FindReference(FeatureId owner, string name)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+
+        foreach (ReferenceGeometry reference in References)
+        {
+            if (reference.Owner == owner
+                && string.Equals(reference.Name, name, StringComparison.Ordinal))
+            {
+                return reference;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>Gets the bodies a given feature produced.</summary>
     /// <param name="owner">Which feature.</param>
     /// <returns>Its bodies, in no particular order.</returns>
