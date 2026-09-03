@@ -1,0 +1,5 @@
+{
+  "description": "The same two points as diagnosis-under-constrained, but held apart by two Distance constraints that disagree -- five units and seven. No configuration satisfies both, and the elimination that finds that runs in the order the constraints were made without row pivoting (P4-T02), so the one named as the contradiction is the later of the pair, not whichever the solver happened to try first.",
+  "outcome": "OverConstrained",
+  "conflicting": [ "00000000-0000-0000-0000-000000001003" ]
+}

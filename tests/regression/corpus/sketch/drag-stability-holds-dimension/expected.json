@@ -1,0 +1,17 @@
+{
+  "description": "A line with its start fixed and its length dimensioned to four units, dragged by the free end a long way off to the side. §5.6's whole point about a drag: the dimension has to hold however far the pointer goes, not merely at the moment the drag begins.",
+  "drag": {
+    "entity": "00000000-0000-0000-0000-000000000001",
+    "point": "End",
+    "to": [0, 40]
+  },
+  "outcome": "UnderConstrained",
+  "distances": [
+    {
+      "from": { "entity": "00000000-0000-0000-0000-000000000001", "point": "Start" },
+      "to": { "entity": "00000000-0000-0000-0000-000000000001", "point": "End" },
+      "expected": 4,
+      "tolerance": 1e-6
+    }
+  ]
+}

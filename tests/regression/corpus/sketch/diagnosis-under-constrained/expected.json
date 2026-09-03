@@ -1,0 +1,9 @@
+{
+  "description": "One point fixed, a second point held five units from it by a Distance constraint and nothing else. The second point can still slide anywhere on the circle that Distance describes, which is one degree of freedom left over. FreeEntities names both points, including the fixed one: it lists every entity in the under-constrained group (P4-T05), not only the ones with individual freedom left -- RemainingFreedom is where the actual count of one lives.",
+  "outcome": "UnderConstrained",
+  "remainingFreedom": 1,
+  "freeEntities": [
+    "00000000-0000-0000-0000-000000000001",
+    "00000000-0000-0000-0000-000000000002"
+  ]
+}

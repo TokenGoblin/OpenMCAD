@@ -1,0 +1,4 @@
+{
+  "description": "A circle drawn with zero radius -- a degenerate input caught by validation before anything is solved (P4-T03/P4-T04), not by the solver. Nothing here asks for a solve at all.",
+  "problemContains": "no radius"
+}

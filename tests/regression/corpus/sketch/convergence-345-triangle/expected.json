@@ -1,0 +1,13 @@
+{
+  "description": "A 3-4-5 right triangle, closed by three coincidences, one corner fixed, two sides given a direction and a length. The third side is left undimensioned -- its shape falls out of the other two closing the loop, and this is the fixture that proves it converges to the exact 3-4-5 triangle from a badly perturbed starting guess rather than merely reporting well-constrained without actually solving anything.",
+  "outcome": "WellConstrained",
+  "remainingFreedom": 0,
+  "positions": [
+    { "entity": "00000000-0000-0000-0000-000000000001", "point": "Start", "expected": [0, 0] },
+    { "entity": "00000000-0000-0000-0000-000000000001", "point": "End", "expected": [4, 0] },
+    { "entity": "00000000-0000-0000-0000-000000000002", "point": "Start", "expected": [4, 0] },
+    { "entity": "00000000-0000-0000-0000-000000000002", "point": "End", "expected": [4, 3] },
+    { "entity": "00000000-0000-0000-0000-000000000003", "point": "Start", "expected": [4, 3] },
+    { "entity": "00000000-0000-0000-0000-000000000003", "point": "End", "expected": [0, 0] }
+  ]
+}

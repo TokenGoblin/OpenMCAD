@@ -1,0 +1,5 @@
+{
+  "description": "A perfectly ordinary, satisfiable sketch -- one fixed point, one held five units away -- solved with a maximum of zero iterations, so nothing moves and the initial residual (the second point starts one unit away, not five) never comes down. Failed means the numbers did not converge, not that the constraints contradict each other, and this is what forces that specific outcome deterministically rather than needing a genuinely pathological configuration nobody could reason about by hand.",
+  "options": { "maxIterations": 0 },
+  "outcome": "Failed"
+}

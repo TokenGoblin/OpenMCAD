@@ -1,0 +1,5 @@
+{
+  "description": "The same two Distance constraints as diagnosis-over-constrained, but agreeing this time -- both say five. The sketch solves; the second constraint removes no freedom the first had not already removed, and it is named as redundant rather than as a contradiction, which is the entire difference between this fixture and its neighbour.",
+  "outcome": "Redundant",
+  "redundant": [ "00000000-0000-0000-0000-000000001003" ]
+}
