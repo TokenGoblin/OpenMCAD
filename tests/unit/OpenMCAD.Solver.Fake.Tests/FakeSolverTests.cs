@@ -61,6 +61,61 @@ public sealed class FakeSolverTests
     }
 
     [Fact]
+    public void HorizontalDistanceLeavesTheVerticalSeparationFree()
+    {
+        // P4-T12's "linear" dimension: unlike Distance, this touches only X. Point 2 starts
+        // already seven units above point 1 and at the target X -- if the equation secretly pulled
+        // in the hypotenuse the way Distance does, Y would have to move to compensate; if it is
+        // genuinely axis-only, nothing gives the solver a reason to touch Y at all.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchPoint(Entity(2), new Vec2d(3, 7)))
+            .With(Fixed(1, Whole(1)))
+            .With(Constraint(2, ConstraintKind.HorizontalDistance, [Whole(1), Whole(2)], 3));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        Where(result, 2).X.Should().BeApproximately(3, 1e-7);
+        Where(result, 2).Y.Should().BeApproximately(
+            7, 1e-7, "nothing constrains Y, so a solve that touched it would be wrong");
+    }
+
+    [Fact]
+    public void VerticalDistanceLeavesTheHorizontalSeparationFree()
+    {
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchPoint(Entity(2), new Vec2d(7, 3)))
+            .With(Fixed(1, Whole(1)))
+            .With(Constraint(2, ConstraintKind.VerticalDistance, [Whole(1), Whole(2)], 3));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        Where(result, 2).Y.Should().BeApproximately(3, 1e-7);
+        Where(result, 2).X.Should().BeApproximately(
+            7, 1e-7, "nothing constrains X, so a solve that touched it would be wrong");
+    }
+
+    [Fact]
+    public void HorizontalAndVerticalDistanceTogetherPinBothAxesIndependently()
+    {
+        // A single Distance of 5 between these points is also satisfied by (4, 3), by (5, 0), or
+        // by (-3, 4) -- the hypotenuse alone does not say which. Horizontal and vertical distance
+        // pin each axis on its own, which is what makes them able to place a point exactly rather
+        // than just somewhere on a circle.
+        Sketch sketch = Sketch.Empty
+            .With(new SketchPoint(Entity(1), Vec2d.Zero))
+            .With(new SketchPoint(Entity(2), new Vec2d(3, 4)))
+            .With(Fixed(1, Whole(1)))
+            .With(Constraint(2, ConstraintKind.HorizontalDistance, [Whole(1), Whole(2)], 3))
+            .With(Constraint(3, ConstraintKind.VerticalDistance, [Whole(1), Whole(2)], 4));
+
+        SolveResult result = Solver.Solve(sketch);
+
+        Where(result, 2).Should().BeApproximately(new Vec2d(3, 4), 1e-6);
+    }
+
+    [Fact]
     public void AHorizontalLineEndsUpHorizontal()
     {
         Sketch sketch = Sketch.Empty

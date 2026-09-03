@@ -42,6 +42,8 @@ public sealed class ConstraintTests
     [Theory]
     [InlineData(ConstraintKind.Coincident, 2)]
     [InlineData(ConstraintKind.Distance, 1)]
+    [InlineData(ConstraintKind.HorizontalDistance, 1)]
+    [InlineData(ConstraintKind.VerticalDistance, 1)]
     [InlineData(ConstraintKind.Concentric, 2)]
     [InlineData(ConstraintKind.Midpoint, 2)]
     [InlineData(ConstraintKind.Symmetric, 2)]

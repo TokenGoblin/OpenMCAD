@@ -18,6 +18,20 @@ public enum ConstraintKind
     /// <summary>Two points are a given distance apart.</summary>
     Distance,
 
+    /// <summary>Two points are a given horizontal distance apart, ignoring their difference in Y.</summary>
+    /// <remarks>
+    /// P4-T12's "linear" dimension, told apart from an aligned <see cref="Distance"/>: a linear
+    /// dimension measures one axis regardless of which way the two points actually lie from one
+    /// another, which is a different number from the direct distance between them whenever they are
+    /// not already horizontal. It is also what an ordinate dimension measures — §5.6 lists ordinate
+    /// as a separate dimension type, but the number it displays against a shared baseline is exactly
+    /// this or <see cref="VerticalDistance"/>; only the display differs, not the equation.
+    /// </remarks>
+    HorizontalDistance,
+
+    /// <summary>Two points are a given vertical distance apart, ignoring their difference in X.</summary>
+    VerticalDistance,
+
     /// <summary>A line, or the line between two points, is horizontal.</summary>
     Horizontal,
 

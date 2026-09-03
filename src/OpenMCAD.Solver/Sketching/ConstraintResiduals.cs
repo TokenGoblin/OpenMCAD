@@ -86,6 +86,8 @@ public static class ConstraintResiduals
             ConstraintKind.Midpoint => Midpoint(constraint, entities),
             ConstraintKind.Symmetric => Symmetric(constraint, entities),
             ConstraintKind.Distance => Distance(constraint, entities),
+            ConstraintKind.HorizontalDistance => AxisDistance(constraint, entities, vertical: false),
+            ConstraintKind.VerticalDistance => AxisDistance(constraint, entities, vertical: true),
             ConstraintKind.Horizontal => Aligned(constraint, entities, vertical: false),
             ConstraintKind.Vertical => Aligned(constraint, entities, vertical: true),
             ConstraintKind.Parallel => Parallel(constraint, entities),
@@ -195,6 +197,20 @@ public static class ConstraintResiduals
         return Pair(constraint, entities) is not ({ } a, { } b)
             ? []
             : [(a - b).Length - wanted];
+    }
+
+    private static ImmutableArray<double> AxisDistance(
+        SketchConstraint constraint, SketchEntitySet entities, bool vertical)
+    {
+        double wanted = constraint.Value ?? 0;
+
+        // Unsigned, the same convention Distance uses and for the same reason: which point is
+        // first is an accident of drawing order, not a claim about which side of the other it sits
+        // on, and a signed residual would make the constraint satisfiable by only one of the two
+        // arrangements that measure the same linear dimension.
+        return Pair(constraint, entities) is not ({ } a, { } b)
+            ? []
+            : [System.Math.Abs(vertical ? b.Y - a.Y : b.X - a.X) - wanted];
     }
 
     private static ImmutableArray<double> Aligned(

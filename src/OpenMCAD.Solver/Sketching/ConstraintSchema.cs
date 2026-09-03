@@ -172,6 +172,12 @@ public sealed record ConstraintSchema(
                 [OperandKind.Point, OperandKind.Point], ConstraintValueKind.Length, 1,
                 [[OperandKind.Point, OperandKind.Line]]),
 
+            new(ConstraintKind.HorizontalDistance, "Horizontal distance",
+                [OperandKind.Point, OperandKind.Point], ConstraintValueKind.Length, 1),
+
+            new(ConstraintKind.VerticalDistance, "Vertical distance",
+                [OperandKind.Point, OperandKind.Point], ConstraintValueKind.Length, 1),
+
             // One line or two points. Both say the same thing to a user, and both remove one
             // freedom: the difference in Y is zero.
             new(ConstraintKind.Horizontal, "Horizontal",
