@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/OpenMCAD.ViewModels/OpenMCAD.ViewModels.csproj" />
+    <ProjectReference Include="../../../src/OpenMCAD.Solver.Fake/OpenMCAD.Solver.Fake.csproj" />
+  </ItemGroup>
+
+</Project>

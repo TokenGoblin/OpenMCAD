@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="../OpenMCAD.App/OpenMCAD.App.csproj" />
     <ProjectReference Include="../OpenMCAD.Interaction/OpenMCAD.Interaction.csproj" />
+    <ProjectReference Include="../OpenMCAD.Solver/OpenMCAD.Solver.csproj" />
   </ItemGroup>
 
 </Project>
