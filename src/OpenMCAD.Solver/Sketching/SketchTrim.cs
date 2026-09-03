@@ -216,7 +216,8 @@ public static class SketchTrim
     }
 
     /// <summary>How far a point sits from an arc's own start, anticlockwise, in radians.</summary>
-    private static double OffsetAlong(SketchArc arc, Vec2d point)
+    /// <remarks>Internal rather than private: <see cref="SketchSplit"/> needs the same measure.</remarks>
+    internal static double OffsetAlong(SketchArc arc, Vec2d point)
     {
         double raw = (point - arc.Centre).Angle() - arc.StartAngle;
         double wrapped = raw % FullTurn;
