@@ -276,7 +276,14 @@ public sealed class MsaaTargetTests
 
         public static Fixture Create(int requestedSamples, int size = Size)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             MsaaTarget? target = null;
             OffscreenSurface? surface = null;
             FacePass? faces = null;
@@ -284,7 +291,6 @@ public sealed class MsaaTargetTests
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 target = new MsaaTarget(device.Device, Clear, requestedSamples);
 
                 if (size > 0)
@@ -323,9 +329,8 @@ public sealed class MsaaTargetTests
                 faces?.Dispose();
                 surface?.Dispose();
                 target?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -362,7 +367,6 @@ public sealed class MsaaTargetTests
             Faces?.Dispose();
             Surface?.Dispose();
             Target?.Dispose();
-            Device?.Dispose();
         }
 
         private static Matrix4x4 ToShaderMatrix(Mat4d m) => new(

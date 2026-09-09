@@ -73,13 +73,25 @@ starting to run against `OcctKernel` as well as the fake.
 
 ## Deferred work, recorded so it is not lost
 
-**One device for the render tests, rather than fourteen.** `021e662` stopped the CI failure that
-had been red for twenty-six consecutive commits, but it did it by not attaching the D3D12 debug
-layer on a build machine — behaviour that differs between a laptop and CI, which is a wart, and
-which gives up exactly the validation a pipeline should be running. The real repair is a single
-device shared across the assembly instead of fourteen created and destroyed in turn; that removes
-the churn this assembly's `.csproj` already documents as fragile. It is a refactor of eleven
-bespoke fixtures and could not be justified while CI was red for unrelated reasons. It can be now.
+**One device for the render tests — done, but wanting a CI run to confirm.** The assembly now
+shares a single device (`TestDevices.Shared`, released by `RenderTestHost` before finalizers are
+drained). Device constructions went from thirty-six to eight: the seven that remain belong to the
+three classes that are *about* the device lifecycle, and sharing one with them would test nothing.
+The `CI` environment variable no longer decides whether validation is attached, so the laptop and
+the build machine now run the same thing.
+
+Two things to know before trusting that:
+
+- **This has not run on CI.** The failure it addresses only ever appeared there, so a green local
+  run is not evidence — the same mistake `verify-ci-after-pushing` records. If the host still dies
+  on the way out of a run, the one-line revert is to make `TestDevices.Software` gate
+  `EnableDebugLayer` on `CI` again, exactly as it did before.
+- **The debug layer is not installed on this machine** (`D3D12SDKLayers.dll` is absent), so it was
+  never attaching locally either, and the old comment claiming a developer got validation was
+  wrong. `RenderDeviceInfo.ValidationEnabled` now reports what actually happened rather than what
+  was asked for, and the device logs a warning when validation is requested and unavailable. Until
+  a machine with the Graphics Tools feature runs this, nobody has observed the debug layer's
+  behaviour under the shared-device arrangement at all.
 
 **P3-T13, the naming corpus.** Six of the ten mandatory §5.3 categories are covered. The other
 four — sketch topology change, pattern instance count, mirror, imported geometry — need features

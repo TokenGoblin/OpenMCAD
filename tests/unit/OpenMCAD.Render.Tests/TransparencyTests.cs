@@ -242,7 +242,14 @@ public sealed class TransparencyTests
 
         public static Fixture Create(int samples = 1)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             OffscreenSurface? surface = null;
             MsaaTarget? msaa = null;
             TransparencyTarget? transparency = null;
@@ -251,7 +258,6 @@ public sealed class TransparencyTests
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, Size, Size);
 
                 msaa = new MsaaTarget(device.Device, Clear, samples);
@@ -283,9 +289,8 @@ public sealed class TransparencyTests
                 transparency?.Dispose();
                 msaa?.Dispose();
                 surface?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -343,7 +348,6 @@ public sealed class TransparencyTests
             Transparency?.Dispose();
             Msaa?.Dispose();
             Surface?.Dispose();
-            Device?.Dispose();
         }
 
         private SceneGeometry Upload(Vec3d at)

@@ -290,13 +290,19 @@ public sealed class ViewportResponsivenessTests
 
         public static Fixture Create(int size = 128)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             OffscreenSurface? surface = null;
             FacePass? pass = null;
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
 
                 pass = new FacePass(
@@ -315,9 +321,8 @@ public sealed class ViewportResponsivenessTests
             {
                 pass?.Dispose();
                 surface?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -375,7 +380,6 @@ public sealed class ViewportResponsivenessTests
             Scene?.Dispose();
             Pass?.Dispose();
             Surface?.Dispose();
-            Device?.Dispose();
         }
 
         /// <summary>One frame, submitted and waited on, as the viewport paces itself.</summary>

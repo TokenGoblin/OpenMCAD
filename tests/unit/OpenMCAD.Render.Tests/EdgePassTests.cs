@@ -434,13 +434,19 @@ public sealed class EdgePassTests
 
         public static Fixture Create(int size)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             OffscreenSurface? surface = null;
             FacePass? faces = null;
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
                 faces = new FacePass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
                 EdgePass edges = new(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
@@ -452,9 +458,8 @@ public sealed class EdgePassTests
             {
                 faces?.Dispose();
                 surface?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -571,7 +576,6 @@ public sealed class EdgePassTests
             Pass?.Dispose();
             Faces?.Dispose();
             Surface?.Dispose();
-            Device?.Dispose();
         }
 
         private static int Luminance(Pixel pixel) => ((pixel.R * 30) + (pixel.G * 59) + (pixel.B * 11)) / 100;

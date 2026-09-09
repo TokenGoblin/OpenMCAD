@@ -38,9 +38,32 @@ public sealed class RenderDeviceTests
     }
 
     [Fact]
+    public void ADeviceReportsWhetherItIsValidatingRatherThanWhetherItWasAsked()
+    {
+        // The debug layer ships with the optional Graphics Tools feature, not with Windows, so
+        // asking for it on a machine without it succeeds and validates nothing at all. Every test
+        // in this assembly asks for it. Whether any of them gets it is a property of the machine,
+        // and worth being able to read rather than assume -- "we run with validation on" is
+        // otherwise a claim nobody can check, and it was quietly false here.
+        D3D12RenderDevice asked = TestDevices.Required;
+
+        using D3D12RenderDevice unasked = new(new RenderDeviceOptions(ForceSoftware: true));
+
+        unasked.Info.ValidationEnabled.Should().BeFalse(
+            "nothing asked for validation, so nothing can be validating");
+
+        // Not asserted either way for the device that did ask: this has to pass on a developer's
+        // machine with the tools installed and on a build agent without them. What is asserted is
+        // that the answer describes reality rather than the request, which is what the device
+        // above establishes, and that it reaches a support bundle either way.
+        asked.Info.ToString().Should().Contain(
+            asked.Info.ValidationEnabled ? "validated" : "software");
+    }
+
+    [Fact]
     public void AStaticBufferHoldsWhatItWasGiven()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
 
         byte[] data = [.. Enumerable.Range(0, 1024).Select(i => (byte)i)];
         using IGpuBuffer buffer = device.CreateStaticBuffer(data, GpuBufferKind.Vertex, "test-vertices");
@@ -53,7 +76,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void AnEmptyBufferIsRejectedRatherThanCreated()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
 
         // D3D12 accepts a zero-length buffer and produces a resource nothing can be done with.
         // An empty mesh reaching the renderer is a bug upstream, and it should say so here rather
@@ -88,7 +111,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void DescriptorsAreHandedOutAndRecycled()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using DescriptorHeapAllocator heap = new(
             device.Device, DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView,
             capacity: 4, shaderVisible: false, "test-heap");
@@ -111,7 +134,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void AFullHeapSaysSoRatherThanCorrupting()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using DescriptorHeapAllocator heap = new(
             device.Device, DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView,
             capacity: 2, shaderVisible: false, "tiny-heap");
@@ -127,7 +150,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void HandlesAreSpacedByTheDeviceIncrement()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using DescriptorHeapAllocator heap = new(
             device.Device, DescriptorHeapType.ConstantBufferViewShaderResourceViewUnorderedAccessView,
             capacity: 8, shaderVisible: false, "spacing-heap");
@@ -145,7 +168,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void ANonShaderVisibleHeapRefusesGpuHandles()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using DescriptorHeapAllocator heap = new(
             device.Device, DescriptorHeapType.RenderTargetView,
             capacity: 2, shaderVisible: false, "rtv-heap");
@@ -162,7 +185,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void WhatIsWrittenToTheRingIsWhatTheGpuWouldRead()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 64 * 1024, "test-ring");
 
         ring.BeginFrame(1);
@@ -189,7 +212,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void AllocationsAreAlignedForConstantBuffers()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 64 * 1024, "aligned-ring");
 
         ring.BeginFrame(1);
@@ -209,7 +232,7 @@ public sealed class RenderDeviceTests
         // The failure this exists to prevent: the CPU runs ahead, so memory written for frame N is
         // still being read while N+1 is recorded. Silently reusing it makes geometry flicker under
         // load and looks like a driver fault.
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 1024, "small-ring");
 
         ring.BeginFrame(1);
@@ -226,7 +249,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void ReclaimingACompletedFrameFreesItsMemory()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 1024, "recycling-ring");
 
         ring.BeginFrame(1);
@@ -246,7 +269,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void ReclaimingOnlyFreesFramesTheGpuHasActuallyFinished()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 2048, "partial-ring");
 
         ring.BeginFrame(1);
@@ -263,7 +286,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void AnUploadLargerThanTheRingSaysSoPlainly()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 1024, "tiny-ring");
 
         ring.BeginFrame(1);
@@ -288,7 +311,7 @@ public sealed class RenderDeviceTests
         // Fixed seed: a failure has to be reproducible to be worth anything.
         Random random = new(20260823);
 
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 8 * 1024, "fuzz-ring");
 
         // What the GPU is still reading, as this test understands it, independent of the ring.
@@ -352,7 +375,7 @@ public sealed class RenderDeviceTests
     [Fact]
     public void FrameNumbersMayNotGoBackwards()
     {
-        using D3D12RenderDevice device = new(TestDevices.Software);
+        D3D12RenderDevice device = TestDevices.Required;
         using UploadRing ring = new(device.Device, 1024, "ordered-ring");
 
         ring.BeginFrame(5);

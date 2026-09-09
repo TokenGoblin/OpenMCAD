@@ -50,14 +50,29 @@ public sealed class D3D12RenderDevice : IRenderDevice
         // device exists. It costs real performance, so it is opt-in rather than
         // debug-build-by-default -- a developer profiling a scene should not be measuring it
         // without having asked.
-        if (options.EnableDebugLayer
-            && D3D12.D3D12GetDebugInterface(out ID3D12Debug? debug).Success
-            && debug is not null)
+        bool validating = false;
+
+        if (options.EnableDebugLayer)
         {
-            using (debug)
+            if (D3D12.D3D12GetDebugInterface(out ID3D12Debug? debug).Success && debug is not null)
             {
-                debug.EnableDebugLayer();
-                _logger.LogInformation("D3D12 debug layer enabled");
+                using (debug)
+                {
+                    debug.EnableDebugLayer();
+                    validating = true;
+                    _logger.LogInformation("D3D12 debug layer enabled");
+                }
+            }
+            else
+            {
+                // Asked for and not available. A warning rather than a failure, because a machine
+                // without the Graphics Tools feature can still render perfectly well -- but silence
+                // here is how "validation is on in CI" becomes something everybody believes and
+                // nobody has.
+                _logger.LogWarning(
+                    "D3D12 validation was requested and the debug layer is not installed on this "
+                    + "machine, so nothing is being validated. It ships with the optional Graphics "
+                    + "Tools feature.");
             }
         }
 
@@ -76,7 +91,8 @@ public sealed class D3D12RenderDevice : IRenderDevice
                 description.Description,
                 (description.Flags & AdapterFlags.Software) != 0,
                 (long)description.DedicatedVideoMemory,
-                level.ToString());
+                level.ToString(),
+                validating);
         }
 
         _device.Name = "OpenMCAD device";

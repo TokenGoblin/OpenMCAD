@@ -414,7 +414,14 @@ public sealed class IdPassTests
 
         public static Fixture Create(int size)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             OffscreenSurface? colour = null;
             IdOffscreen? ids = null;
             FacePass? faces = null;
@@ -424,7 +431,6 @@ public sealed class IdPassTests
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 colour = new OffscreenSurface(device, size, size);
                 ids = new IdOffscreen(device, size, size);
                 faces = new FacePass(device.Device, OffscreenSurface.ColourFormat, optimiseShaders: false);
@@ -451,9 +457,8 @@ public sealed class IdPassTests
                 faces?.Dispose();
                 ids?.Dispose();
                 colour?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -519,7 +524,6 @@ public sealed class IdPassTests
             Faces?.Dispose();
             Ids?.Dispose();
             Colour?.Dispose();
-            Device?.Dispose();
         }
 
         private static Matrix4x4 ToShaderMatrix(Mat4d m) => new(

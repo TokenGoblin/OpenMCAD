@@ -45,17 +45,29 @@ public interface IGpuBuffer : IDisposable
 /// </param>
 /// <param name="DedicatedVideoMemory">Dedicated video memory in bytes, zero for software.</param>
 /// <param name="FeatureLevel">The Direct3D feature level, as a string for logging.</param>
+/// <param name="ValidationEnabled">
+/// Whether the debug layer is actually attached — which is not the same as having asked for it.
+/// The layer ships with the Graphics Tools feature rather than with Windows, so on a machine
+/// without it the request succeeds and validates nothing. Reported rather than assumed, because
+/// "we run the tests with validation on" is a claim that is either true or quietly false, and
+/// nothing else here could tell the difference.
+/// </param>
 public readonly record struct RenderDeviceInfo(
     string AdapterName,
     bool IsSoftware,
     long DedicatedVideoMemory,
-    string FeatureLevel)
+    string FeatureLevel,
+    bool ValidationEnabled = false)
 {
     /// <inheritdoc />
     public override string ToString()
-        => IsSoftware
-            ? $"{AdapterName} (software, {FeatureLevel})"
-            : $"{AdapterName} ({FeatureLevel}, {DedicatedVideoMemory / (1024 * 1024)} MB)";
+    {
+        string validation = ValidationEnabled ? ", validated" : string.Empty;
+
+        return IsSoftware
+            ? $"{AdapterName} (software, {FeatureLevel}{validation})"
+            : $"{AdapterName} ({FeatureLevel}, {DedicatedVideoMemory / (1024 * 1024)} MB{validation})";
+    }
 }
 
 /// <summary>

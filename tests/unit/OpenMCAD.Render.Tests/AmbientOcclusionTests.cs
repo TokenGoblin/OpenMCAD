@@ -427,14 +427,20 @@ public sealed class AmbientOcclusionTests
 
         public static Fixture Create(int size, int samples = 1)
         {
-            D3D12RenderDevice? device = null;
+            // The one device this assembly shares (TestDevices). Borrowed, not made: creating
+            // and destroying one per class is what made this suite fragile, and no test here
+            // ever wanted a fresh device -- only a device.
+            if (TestDevices.Shared is not { } device)
+            {
+                return new Fixture(TestDevices.Unavailable!);
+            }
+
             OffscreenSurface? surface = null;
             MsaaTarget? msaa = null;
             FacePass? faces = null;
 
             try
             {
-                device = new D3D12RenderDevice(TestDevices.Software);
                 surface = new OffscreenSurface(device, size, size);
 
                 msaa = new MsaaTarget(
@@ -462,15 +468,15 @@ public sealed class AmbientOcclusionTests
             catch (Exception exception)
                 when (exception is RenderDeviceUnavailableException or SharpGenException)
             {
-                // A build agent with no D3D12 at all, or a WARP that will not create a pipeline
-                // state. Skipped rather than failed: this asserts on the pass, and "there is no GPU
-                // here" is not a defect in the pass.
+                // A WARP that will not create a pipeline state. Skipped rather than failed:
+                // this asserts on the pass, and "this device cannot build that" is not a
+                // defect in the pass. Having no device at all is handled above, before
+                // anything is tried.
                 faces?.Dispose();
                 msaa?.Dispose();
                 surface?.Dispose();
-                device?.Dispose();
 
-                return new Fixture($"No usable D3D12 device: {exception.Message}");
+                return new Fixture($"This device could not build what the test needs: {exception.Message}");
             }
         }
 
@@ -564,7 +570,6 @@ public sealed class AmbientOcclusionTests
             Faces?.Dispose();
             Msaa?.Dispose();
             Surface?.Dispose();
-            Device?.Dispose();
         }
 
         private static Matrix4x4 ToShaderMatrix(Mat4d m) => new(
