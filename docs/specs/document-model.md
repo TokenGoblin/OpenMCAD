@@ -33,6 +33,7 @@ Topological naming is `naming.md`.
 | `ParameterGraph`, cycle rejection | `Documents/ParameterGraph.cs` | P3-T16 |
 | `UndoHistory` | `Documents/UndoHistory.cs` | P3-T17 |
 | Headless commands (`build`, `rebuild`, `inspect`, `save`, `diff`) | `OpenMCAD.Cli/DocumentCommands.cs` | P3-T22 |
+| `ReferenceValue`, and the input an `EntityReference` satisfies | `Documents/FeatureValue.cs`, `Naming/EntityReference.cs` | P5-T03 |
 
 ---
 
@@ -107,6 +108,13 @@ those into per-feature state.
 The graph reads **both** `Feature.Inputs` and `Feature.EntityReferences`, so a feature declaring
 only references still gets its edges; a reference into a feature's own output is excluded, or it
 would be a self-cycle that is an artefact of how the name is written.
+
+**It does not read settings**, which matters now that one of them can point at something. A
+`ReferenceValue` names reference geometry by `(Owner, Name)`, and the owner is a real feature
+whenever the datum was not one of the standard ones — but nothing derives an edge from it, so a
+feature holding one **must also declare that owner in `Inputs`** or the rebuild will not sequence
+the two in order. Deriving it here instead was rejected: the graph would then have to know which
+settings are pointers, which is the feature schema's business and a layer above this one.
 
 ---
 
@@ -321,6 +329,34 @@ expression can drive it and the parameter graph can see it; a selection is an `E
 persistent naming can repair it; everything else is a `Feature.Settings` entry. A caller that had to
 know which would be a fifth description of the feature — the thing §5.7 exists to prevent.
 
+**A reference input is satisfied either way, and only one of the two may answer** (P5-T03).
+`PropertyKind.Reference` is an input the user answers by picking something that is already in the
+document, and there are two kinds of such thing. Reference geometry is a `ReferenceValue` setting:
+it carries a name it keeps, `Document.FindReference` finds it in one step, and it cannot split, so
+giving it the naming layer's repair, ranking and multiplicity machinery would be carrying all of
+that for a lookup that either finds a datum plane called "Front" or does not. Kernel topology stays
+an `EntityReference`, because it has no name of its own and because that is where the dependency
+graph reads its edges. `FeatureSchema.SatisfiedBy` reports which answered; a file naming **both** is
+an error rather than a preference, since whichever were preferred the other would be silently
+ignored, and a datum built on the face the user last picked while the file still names a datum plane
+is the kind of quietly wrong geometry §5.3 would rather refuse than guess at.
+
+**A reference says which input it satisfies.** Until a feature had more than one selection, position
+in `Feature.EntityReferences` was the only link to the property it answered — and position stops
+being a link the moment an input is optional or can be answered the other way instead. So
+`EntityReference` carries the property's stable name, and `Feature.FindSelection` is how an
+evaluator turns "the plane this datum is offset from" into the entity it resolved to this time
+round. The field is defaulted to empty and is only written when present: a feature with one
+selection has nothing to say, and every reference written before the field existed says nothing
+either. A datum plane through three points is the first feature where getting two inputs the wrong
+way round produces geometry rather than an error, which is what makes the field worth its cost.
+
+**A new kind of `FeatureValue` has three homes, not one.** The codec must learn to write it, and
+`RebuildKey` must learn to hash it — the latter refuses an unknown kind outright, on the grounds
+that hashing only a type name would make two different values look identical, so a value added
+without a case there fails loudly at the first rebuild rather than silently returning a stale
+cached result. That refusal is what caught `ReferenceValue`'s missing case.
+
 A property declares a **stable name**, which files and scripts use and which must never change, and
 a **label**, which is shown to a person and can.
 
@@ -383,7 +419,7 @@ this.**
 
 | Gap | Why |
 |---|---|
-| Real feature evaluation | `IFeatureEvaluator` has no production implementation; Phase 5 brings feature types. Everything above is exercised against test evaluators that behave like a kernel, including reissuing entity tags every rebuild. |
+| Feature evaluation that reaches a kernel | `DatumFeatureEvaluator` (P5-T03) is the first production `IFeatureEvaluator`, and it deliberately touches no kernel — a datum is naming and arithmetic. Everything that makes a body is still exercised against test evaluators that behave like a kernel, including reissuing entity tags every rebuild. |
 | Concurrent preparation of independent branches | §5.4 allows it; the engine executes serially. Nothing has needed it, and kernel calls serialise on the dispatcher regardless (ADR-0004). |
 | Preview rebuilds at reduced fidelity | §5.4 names them for interactive drag. Coalescing and cancellation are built; fidelity reduction has nothing to reduce yet. |
 | Configurations | Phase 14. |

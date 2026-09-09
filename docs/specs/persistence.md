@@ -237,6 +237,26 @@ place — as P3-T21 did when it added `settings` to the feature schema without a
 and recorded as such. **After the first release the same change needs a bump and a migration**, and
 that is the moment this document stops describing a mechanism and starts describing an obligation.
 
+P5-T03 made two more such edits, both additive and both recorded here for the same reason:
+
+- an optional `prop` field on an entity reference, naming which of its feature's declared inputs it
+  satisfies. Written **only when present**, so a file re-saved by this build does not grow an empty
+  string in every reference — §3 requires a re-save to be bit-identical, and an
+  unconditional field would break it for every document written before the field existed.
+- setting tag `5`, a pointer at reference geometry, holding the owner's id and the name.
+
+A reader of this build that meets an older file finds neither and is right to: an absent `prop`
+means the reference does not say which input it is, which is exactly what those files meant.
+
+Going the other way is not symmetrical, and the asymmetry is worth knowing. An older build reading a
+file from this one skips the `prop` field harmlessly — it only loses which input a reference
+answers, which that build had no use for. But an unrecognised **setting tag is dropped, not
+preserved**: §7's unknown-field preservation covers fields, and a setting of an unknown tag is
+skipped so it is not guessed at. So an older build that opened and re-saved a document containing a
+datum would silently lose the datum's pointer at what it was built on. That is the ordinary cost of
+editing schema 1 in place, and it stops being acceptable at the first release, which is what the
+bump-and-migrate rule above exists to force.
+
 ---
 
 ## 10. Not yet done
