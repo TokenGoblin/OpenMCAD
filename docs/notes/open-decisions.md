@@ -93,19 +93,68 @@ Two things to know before trusting that:
   a machine with the Graphics Tools feature runs this, nobody has observed the debug layer's
   behaviour under the shared-device arrangement at all.
 
-**P3-T13, the naming corpus.** Six of the ten mandatory §5.3 categories are covered. The other
-four — sketch topology change, pattern instance count, mirror, imported geometry — need features
-that do not exist until Phases 4, 5 and 7. It closes in Phase 7, not before, and Phase 3's third
-exit criterion is unmet until it does.
+**P3-T13, the naming corpus.** Seven of the ten mandatory §5.3 categories are covered. The other
+three — pattern instance count, mirror, imported geometry — need feature types that do not exist
+until Phases 5 and 8. It closes in Phase 8, not before, and Phase 3's third exit criterion is unmet
+until it does.
 
-**P2-T04, LOD.** Everything else in the tessellation pipeline is done. The measurements say
-nothing is triangle-throughput-bound, so this is speculative optimisation with no evidence behind
-it. It may be right to strike it rather than build it.
+Sketch topology change was the seventh, and it is worth recording *why* it sat here so long: the
+blocker written down was Phase 4, and that was simply wrong. The seam had always existed on
+`HistoryNameResolver`; `RebuildEngine` just never passed it one, so every sketch-sourced name
+resolved `Unsupported` in a real rebuild whatever the document said. One optional constructor
+parameter was the whole of it. A recorded blocker is a claim like any other and goes stale like
+one — `NamingCorpusTests.EveryMandatoryCategoryIsAccountedFor` is what eventually surfaced it, and
+nothing plays that role for the entries below.
 
-**`docs/specs/sketch.md` does not exist.** `docs/specs/README.md` lists it as "written in P4" and
-P4 is six tasks into being done (T03–T09, T10). Keeping a subsystem spec current is PLAN.md 8.5's
-definition of done, not a chore for the end of the phase, and this has been silently skipped every
-time so far. Writing it retroactively is a task on its own — it has to cover the entity model, the
-constraint model, the solver contract and diagnosis mapping, drag behaviour, inference, snapping,
-profile detection, and now the plane reference — and picking a moment to stop and write it before
-it grows further is worth doing before Phase 4 closes, not after.
+
+## Ready to build, currently recorded only inside finished tasks
+
+Both of these live in the note on a task marked `[x]`, which is where a gap goes to be forgotten.
+Neither is blocked on anything any more. Sizes are rough and are there to make them comparable
+rather than to promise anything.
+
+**Reference plane display (P2-T11) — done.** The blocker was stale: P2-T11 landed at commit 45 and the P2-T10 transparency it said it was waiting for arrived at 53. Built as `ReferencePlanePass` with `DisplayPlane` on the snapshot; see the P2-T11 note in PLAN.md for the decisions.
+
+**Selection does not survive a rebuild, and no task owns finishing it.** P2-T09's note and `SelectionSet.cs` both say a selection surviving a topology change "needs the persistent naming of PLAN.md 5.3", and the source says it "does not exist yet". It does: the whole of P3-T08 to P3-T12 shipped it, and `OpenMCAD.Interaction` already reaches `OpenMCAD.Core` through its existing references, so nothing structural is in the way.
+
+But this is only half a stale blocker, and the other half is the point. The **resolve** direction exists -- `NameResolver.Resolve(PersistentName, FeatureId)` -- while nothing anywhere **mints** a `PersistentName` from a picked `SubEntity`. The only two ways to construct one are `PersistentName.Of` and the text parser; there is no name generator. `RebuildHistory` carries the per-feature `HistoryMap`s such a pass would walk, so the material is there, but the pass is not.
+
+Worth deciding where that belongs. P6-T06 is selection *filters* and box-select, not rebuild survival, so on the current plan nobody is scheduled to do it -- which is how a half-cleared blocker stays invisible: the note that would have flagged it still says the thing it is waiting for does not exist.
+
+**Silhouette edges on curved surfaces (P2-T06).** "Everything but silhouettes." A cylinder currently
+shows its end circles and its seam but nothing where its wall turns away, which reads as a drawing
+error rather than as a style. Not blocked, but genuinely harder than the above: a silhouette is a
+property of the view rather than of the model, so it has to be found per frame, and that needs face
+adjacency the display mesh does not currently carry. Sizing it honestly needs a look at what the
+tessellation actually produces first.
+
+---
+
+## Decisions smaller than the three above, but still decisions
+
+**P2-T04, LOD — build it or strike it.** Everything else in the tessellation pipeline is done.
+P2-T13's measurements say nothing is limited by triangle throughput (2M triangles across 16 bodies
+costs 3.36 ms; 2M across ten thousand costs 10.67 ms), so reducing triangle counts buys little and
+the next optimisation is batching. LOD becomes interesting when a model exceeds what memory can
+hold, which is a different problem from frame time. Striking it and reopening it in Phase 15, where
+`P15-T01` already names occurrence-level LOD, may be righter than building it now.
+
+**P4-T11, `Intersect` against a circular edge.** A line crosses a plane at zero or one point; a
+circle crosses at zero, one or two. "One external reference produces one sketch entity" is
+deliberate, and there is nowhere to put a second point without giving `SketchExternalReference` a
+multiplicity policy the way `EntityReference` has one for kernel topology. That is a real design
+decision rather than missing code, and it should be made with the assembly work that will exercise
+it rather than invented here.
+
+**The subsystem specs are written — and the habit that lost them is not fixed.** All six
+`docs/specs/README.md` lists now exist: `kernel-abstraction`, `kernel-shim`, `naming`,
+`rendering`, `sketch`, `document-model`, `persistence`. Four of them were written retroactively, in
+one go, long after the subsystems they describe — `rendering.md` was due in P2 and `naming.md` in
+P3, and the entry that used to sit here only ever noticed the sketch one was missing.
+
+Keeping a spec current is PLAN.md 8.5's definition of done rather than a chore for the end of a
+phase, and writing four at once is the evidence that it was not being treated that way. Nothing
+enforces it: a phase can close with its spec unwritten and only a reader comparing the directory
+against the index would know. Worth deciding whether that check belongs in CI, in the same spirit
+as `EveryMandatoryCategoryIsAccountedFor` — a phase's exit criteria could name its spec, and a spec
+listed in the index but absent from the directory could simply fail the build.

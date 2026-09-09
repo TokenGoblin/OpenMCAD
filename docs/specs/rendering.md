@@ -92,7 +92,7 @@ superseded scene, intermittently and unreproducibly.
 
 `DisplaySnapshot` carries geometry and identity and **no appearance**. That is why scene opacity is
 one figure rather than per body, and why the default material is a scene-wide constant: per-body
-materials arrive with the document model, not here.
+materials are P6-T08's, not this layer's. The Phase 2 notes predicted the document model would carry them; it does not — `Body` has no appearance field.
 
 ---
 
@@ -268,13 +268,13 @@ scene measured the laptop's power governor ramping and reported four times its t
 
 | Not built | Why |
 |---|---|
-| **LOD** (P2-T04, and why it is still open) | Nothing measured is limited by triangle throughput, so reducing triangle counts would buy little. It becomes interesting when a model exceeds what memory can hold, which is a *different problem* from frame time. `open-decisions.md` records that striking it may be righter than building it. |
+| **LOD** (P2-T04, and why it is still open) | Nothing measured is limited by triangle throughput, so reducing triangle counts would buy little. It becomes interesting when a model exceeds what memory can hold, which is a *different problem* from frame time. `docs/notes/open-decisions.md` records that striking it may be righter than building it. |
 | Instancing, GPU frustum/occlusion culling | §5.10 asks for them; the harness says body count is the cost and batching is the answer. Not started, deliberately, so the work is aimed by numbers. |
 | Silhouette edges on curved surfaces (P2-T06) | A property of the view rather than of the model, so they must be found per frame. A cylinder shows its end circles and its seam but not where its wall turns away. |
 | Reference plane display (P2-T11) | Wants transparency to look like planes rather than walls. |
 | Vertex picking (P2-T07) | Upstream: the kernel's mesh has no vertex entities. |
 | FXAA/TAA | Section 2 — likely not worth adding given the MSAA arrangement. |
-| Per-body appearance and materials | `DisplaySnapshot` carries no appearance; arrives with the document model. |
+| Per-body appearance and materials | `DisplaySnapshot` carries no appearance. Owned by P6-T08; the Phase 2 guess that the document model would carry it was wrong. |
 | Section and exploded views | §5.10 names them; Phase 5 and later. |
 
 ---
