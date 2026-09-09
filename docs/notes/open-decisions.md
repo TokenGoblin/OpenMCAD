@@ -119,6 +119,19 @@ environment-specific is *what* removes it. On a runner, `DeviceLossTests` removi
 appears to take the shared one with it; on this machine it does not, so
 `SharedDeviceTests` removes the shared device directly and asserts the replacement.
 
+**CI #42 took it from eight failures to two**, which confirmed the mechanism and exposed the rest of
+it. All six `SwapChainTests` passed. The two that remained were `DeviceLossTests`' own, and their
+message was the useful part: not `DEVICE_REMOVED` but `RenderDeviceUnavailableException` from the
+*constructor* — "no D3D12 adapter could be created, including WARP". So on a runner, while a removed
+device is still referenced, no new device can be made at all. Replacing the shared device when
+somebody asks for it cannot help a class that never asks and builds its own, so `DeviceLossTests`
+now drops the shared device before each of its tests. The class that breaks the world tidies up
+first.
+
+That costs a little of what the sharing bought — three extra device creations per run rather than
+none — which is a fair price against thirty-six, and it is the honest shape of the problem: a suite
+that deliberately destroys devices cannot share one with the suite that uses them.
+
 The revert stays available and is written down here in case CI disagrees: 36 short-lived devices
 plus the `CI` debug-layer gate is the exact configuration that was green at #38. It was not tried
 first because it is an eleven-file blind edit whose own mistakes would be indistinguishable from the

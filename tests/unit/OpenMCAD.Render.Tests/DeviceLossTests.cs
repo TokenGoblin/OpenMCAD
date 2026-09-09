@@ -39,6 +39,26 @@ public sealed class DeviceLossTests
 {
     private const int Size = 64;
 
+    /// <summary>Drops the assembly's shared device before this class removes anything.</summary>
+    /// <remarks>
+    /// <para>
+    /// On a build agent, removing one WARP device removes every WARP device in the process, and
+    /// while a removed one is still referenced no new device can be created at all — the
+    /// constructor throws <see cref="RenderDeviceUnavailableException"/> rather than returning
+    /// something detectably dead. That is what failed CI #42 here: not the removal, but the
+    /// <em>next</em> <c>new D3D12RenderDevice</c>, with the shared device lying removed and
+    /// undisposed because nothing had asked <c>TestDevices</c> for it since.
+    /// </para>
+    /// <para>
+    /// <see cref="TestDevices.Attempted"/> replaces a removed device when someone asks for one,
+    /// which is what fixed the six <see cref="SwapChainTests"/>. It cannot help this class, which
+    /// never asks — so the class that breaks the world tidies up before it does. Released per test
+    /// rather than once, because xunit builds a fresh instance for each, and recreated lazily by
+    /// whichever class needs it next.
+    /// </para>
+    /// </remarks>
+    public DeviceLossTests() => TestDevices.ReleaseShared();
+
 
     /// <summary>Kills a device the way a driver update would.</summary>
     /// <returns>Whether the device could be removed on this machine.</returns>
