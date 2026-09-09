@@ -55,6 +55,7 @@ public sealed class SnapshotBuilder
     public const double OriginHysteresis = 2.0 * OriginGrid;
 
     private readonly List<PendingBody> _bodies = [];
+    private readonly List<DisplayPlane> _planes = [];
     private readonly ImmutableDictionary<DisplayId, SubEntity>.Builder _entities =
         ImmutableDictionary.CreateBuilder<DisplayId, SubEntity>();
 
@@ -63,6 +64,9 @@ public sealed class SnapshotBuilder
 
     /// <summary>Gets the number of bodies added so far.</summary>
     public int BodyCount => _bodies.Count;
+
+    /// <summary>Gets how many reference planes have been added.</summary>
+    public int PlaneCount => _planes.Count;
 
     /// <summary>
     /// Adds a tessellated body.
@@ -182,7 +186,39 @@ public sealed class SnapshotBuilder
             origin,
             bodies.MoveToImmutable(),
             _entities.ToImmutable(),
-            _bounds);
+            _bounds,
+            [.. _planes]);
+    }
+
+    /// <summary>Adds a reference plane for the viewport to draw.</summary>
+    /// <param name="origin">A point on the plane, in world coordinates and metres.</param>
+    /// <param name="right">A direction lying in the plane. Need not be unit length.</param>
+    /// <param name="up">
+    /// A second direction lying in the plane. Need not be unit length or exactly perpendicular to
+    /// <paramref name="right"/> — it is squared up against it here, so a caller can hand over the
+    /// two axes of a datum without first orthonormalising them.
+    /// </param>
+    /// <exception cref="ArgumentException">The two directions do not span a plane.</exception>
+    /// <remarks>
+    /// A plane does not extend <see cref="DisplaySnapshot.Bounds"/>. See the remarks there: the
+    /// square drawn for a plane is sized from the bounds, so feeding it back in would make the size
+    /// depend on itself.
+    /// </remarks>
+    public void AddPlane(Vec3d origin, Vec3d right, Vec3d up)
+    {
+        Vec3d normal = Vec3d.Cross(right, up);
+
+        if (normal.LengthSquared <= Tolerance.LinearResolution)
+        {
+            throw new ArgumentException(
+                "A reference plane needs two directions that span it; these are parallel.",
+                nameof(up));
+        }
+
+        Vec3d x = right.Normalized();
+        Vec3d y = Vec3d.Cross(normal.Normalized(), x);
+
+        _planes.Add(new DisplayPlane(origin, x, y));
     }
 
     /// <summary>Converts one body's tessellated edges into upload-shaped polylines.</summary>

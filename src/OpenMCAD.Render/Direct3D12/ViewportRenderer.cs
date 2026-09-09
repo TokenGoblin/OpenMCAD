@@ -57,6 +57,7 @@ public sealed class ViewportRenderer : IDisposable
     private readonly HighlightBuffer _highlights;
     private readonly EnvironmentPass _environment;
     private readonly AxisOverlayPass _axes;
+    private readonly ReferencePlanePass _planes;
     private readonly MsaaTarget _msaa;
     private readonly TransparencyTarget _transparency;
     private readonly TransparencyPass _transparent;
@@ -140,6 +141,10 @@ public sealed class ViewportRenderer : IDisposable
         _axes = new AxisOverlayPass(
             device.Device, AxisStyle.Default, SwapChainTarget.BackBufferFormat,
             DepthBuffer.DepthFormat, optimiseShaders: true, _msaa.SampleCount);
+
+        _planes = new ReferencePlanePass(
+            device.Device, SwapChainTarget.BackBufferFormat, DepthBuffer.DepthFormat,
+            optimiseShaders: true, _msaa.SampleCount);
 
         _transparency = new TransparencyTarget(device.Device, _msaa.SampleCount);
 
@@ -261,6 +266,17 @@ public sealed class ViewportRenderer : IDisposable
     /// <summary>Gets or sets whether to draw the orientation gizmo in the corner.</summary>
     public bool ShowGizmo { get; set; } = true;
 
+    /// <summary>Gets or sets how reference planes look.</summary>
+    public PlaneStyle PlaneStyle { get; set; } = PlaneStyle.Default;
+
+    /// <summary>Gets or sets whether to draw the snapshot's reference planes.</summary>
+    /// <remarks>
+    /// On by default, and costs nothing for a snapshot carrying none: a datum plane is what a new
+    /// document has to sketch on, so a viewport that hid them until asked would open on an empty
+    /// void with no way to begin.
+    /// </remarks>
+    public bool ShowReferencePlanes { get; set; } = true;
+
     /// <summary>Gets or sets which entities are highlighted.</summary>
     /// <remarks>
     /// Uploaded at the start of the next frame, and only when the table's version has changed —
@@ -351,6 +367,7 @@ public sealed class ViewportRenderer : IDisposable
         DrawScene();
 
         // After the scene, so the triad can be occluded by it and the gizmo can sit over it.
+        DrawReferencePlanes();
         DrawAxes();
         DrawIdsIfPicking();
 
@@ -478,6 +495,7 @@ public sealed class ViewportRenderer : IDisposable
         _transparent.Dispose();
         _transparency.Dispose();
         _msaa.Dispose();
+        _planes.Dispose();
         _axes.Dispose();
         _environment.Dispose();
         _highlights.Dispose();
@@ -609,6 +627,42 @@ public sealed class ViewportRenderer : IDisposable
                 style,
                 onTop: true);
         }
+    }
+
+    /// <summary>Records the reference planes for the current snapshot.</summary>
+    /// <remarks>
+    /// Between the scene and the axes. After the scene because a plane is depth-tested against the
+    /// solid standing on it; before the triad because the triad marks the origin those planes meet
+    /// at, and a landmark drawn underneath the thing it marks is not a landmark.
+    /// </remarks>
+    private void DrawReferencePlanes()
+    {
+        if (!ShowReferencePlanes || _target.Width <= 0 || _target.Height <= 0)
+        {
+            return;
+        }
+
+        System.Collections.Immutable.ImmutableArray<DisplayPlane> planes =
+            _snapshot.ReferencePlanes;
+
+        if (planes.IsEmpty)
+        {
+            return;
+        }
+
+        Bounds3d bounds = _scene?.Bounds ?? _snapshot.Bounds;
+
+        _planes.Upload(planes, _scene?.Origin ?? _snapshot.Origin);
+
+        PlaneConstants constants = ReferencePlanePass.ConstantsFor(
+            Camera, bounds, _scene?.Origin ?? _snapshot.Origin, PlaneStyle);
+
+        Span<byte> destination = _uploads.Allocate(
+            Marshal.SizeOf<PlaneConstants>(), out int offset);
+
+        MemoryMarshal.Write(destination, in constants);
+
+        _planes.Draw(_commands, _uploads.Resource.GPUVirtualAddress + (ulong)offset);
     }
 
     /// <summary>Uploads one set of axis constants and records the draw.</summary>

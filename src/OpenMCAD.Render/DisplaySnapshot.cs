@@ -128,6 +128,42 @@ public sealed record DisplayBody(
     Bounds3d Bounds);
 
 /// <summary>
+/// A reference plane, as the viewport draws it (P2-T11).
+/// </summary>
+/// <param name="Origin">A point on the plane, in world space and metres.</param>
+/// <param name="Right">A unit direction lying in the plane.</param>
+/// <param name="Up">A unit direction lying in the plane, perpendicular to <paramref name="Right"/>.</param>
+/// <remarks>
+/// <para>
+/// <b>Carried as a frame rather than as a normal, and with no size.</b> A plane is conceptually
+/// infinite; what gets drawn is a square standing for it, and how big that square is depends on the
+/// scene rather than on the plane. Storing an extent here would freeze it at whatever the scene
+/// looked like when the snapshot was built, so the square is sized at draw time from the scene's own
+/// bounds — the same decision, for the same reason, as the grid's spacing being taken from the scene
+/// rather than from the camera (P2-T11): a reference that changes size as you zoom is worse than one
+/// at the wrong scale.
+/// </para>
+/// <para>
+/// Two in-plane directions rather than a normal, because the square needs a rotation about the
+/// normal and a normal does not carry one. Deriving one per frame would make the square spin as the
+/// derivation flipped, which is exactly the kind of thing a reference must never do.
+/// </para>
+/// <para>
+/// <b>No colour.</b> A snapshot carries geometry and identity and no appearance — the reason scene
+/// opacity is one figure rather than per body (P2-T10) and the reason the default material is a
+/// scene-wide constant. How a plane is tinted is a style held by the pass that draws it, alongside
+/// <c>EdgeStyle</c> and <c>AxisStyle</c>.
+/// </para>
+/// <para>
+/// World coordinates and doubles, like <see cref="DisplaySnapshot.Origin"/> and
+/// <see cref="DisplaySnapshot.Bounds"/> rather than like a mesh's float positions. There is one
+/// point here, not a hundred thousand, so nothing is gained by pre-shifting it — and the pass has to
+/// build the square's corners anyway, which is where the shift belongs.
+/// </para>
+/// </remarks>
+public sealed record DisplayPlane(Vec3d Origin, Vec3d Right, Vec3d Up);
+
+/// <summary>
 /// An immutable, versioned picture of everything the viewport should draw.
 /// </summary>
 /// <remarks>
@@ -154,14 +190,24 @@ public sealed record DisplayBody(
 /// </param>
 /// <param name="Bodies">The bodies to draw.</param>
 /// <param name="Entities">What each <see cref="DisplayId"/> resolves to.</param>
-/// <param name="Bounds">The extent of everything, in world space and metres.</param>
+/// <param name="Bounds">
+/// The extent of the <em>bodies</em>, in world space and metres. Reference planes are deliberately
+/// not counted: they are drawn at a size derived from this, so including them would let the size
+/// they were drawn at last frame decide the size they are drawn at next, which converges on
+/// something but not on anything anyone chose.
+/// </param>
+/// <param name="Planes">The reference planes to draw, if any.</param>
 public sealed record DisplaySnapshot(
     long Version,
     Vec3d Origin,
     ImmutableArray<DisplayBody> Bodies,
     ImmutableDictionary<DisplayId, SubEntity> Entities,
-    Bounds3d Bounds)
+    Bounds3d Bounds,
+    ImmutableArray<DisplayPlane> Planes = default)
 {
+    /// <summary>Gets the reference planes, never a default array.</summary>
+    public ImmutableArray<DisplayPlane> ReferencePlanes => Planes.IsDefault ? [] : Planes;
+
     /// <summary>Gets the snapshot for an empty scene.</summary>
     /// <remarks>
     /// Version zero, so that any real snapshot supersedes it. The viewport starts here rather than
