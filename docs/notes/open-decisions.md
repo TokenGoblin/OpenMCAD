@@ -132,11 +132,18 @@ That costs a little of what the sharing bought — three extra device creations 
 none — which is a fair price against thirty-six, and it is the honest shape of the problem: a suite
 that deliberately destroys devices cannot share one with the suite that uses them.
 
-The revert stays available and is written down here in case CI disagrees: 36 short-lived devices
-plus the `CI` debug-layer gate is the exact configuration that was green at #38. It was not tried
-first because it is an eleven-file blind edit whose own mistakes would be indistinguishable from the
-failure it was meant to cure, while this is a dozen lines aimed at a mechanism a local test now
-pins down.
+**CI #43 is green, so this is settled** and the sharing is kept. The revert was never needed: it
+would have been an eleven-file blind edit whose own mistakes would have been indistinguishable from
+the failure it was meant to cure, where the two changes that worked come to about twenty lines
+between them. Recorded only so that the next person to touch this knows the fallback existed and
+why it was not taken — 36 short-lived devices plus the `CI` debug-layer gate is the configuration
+that was green at #38.
+
+**The rule this leaves behind, for whoever adds the next render test:** a class that destroys a
+device must not leave it alive, and must not run with somebody else's alive either. Both halves are
+enforced in one place each — `TestDevices.Attempted` replaces a device it finds removed, and
+`DeviceLossTests` drops the shared one before each of its tests — and both are commented with the
+run number that proved them, because none of it is reproducible on a developer's machine.
 
 One more thing found while reading rather than running: **`TestDevices`' own remarks were wrong
 about which classes make their own devices.** They named `RenderDeviceTests`, `DeviceLossTests` and
