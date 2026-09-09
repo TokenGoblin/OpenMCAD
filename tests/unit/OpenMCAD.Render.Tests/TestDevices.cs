@@ -28,8 +28,16 @@ namespace OpenMCAD.Render.Tests;
 /// </para>
 /// <para>
 /// The exceptions are the classes that are about the lifecycle itself —
-/// <see cref="RenderDeviceTests"/>, <see cref="DeviceLossTests"/>, <see cref="SwapChainTests"/> —
-/// which create and destroy their own on purpose. Sharing one with them would be testing nothing.
+/// <see cref="RenderDeviceTests"/> and <see cref="DeviceLossTests"/> — which create and destroy
+/// their own on purpose. Sharing one with them would be testing nothing.
+/// </para>
+/// <para>
+/// <b>This paragraph used to name <see cref="SwapChainTests"/> as a third, and it was wrong.</b>
+/// The commit that introduced the sharing converted that class to <see cref="Required"/> while
+/// saying it had not, and the mismatch matters: a swap chain built on the shared device is the
+/// thing that breaks when <see cref="DeviceLossTests"/> removes a device, which is the CI failure
+/// recorded in <c>docs/notes/open-decisions.md</c>. Whether it should go back to making its own is
+/// the open question there; what is fixed here is only that the comment now describes the code.
 /// </para>
 /// </remarks>
 internal static class TestDevices
@@ -50,17 +58,16 @@ internal static class TestDevices
     /// Not on a build agent, and this gate has now been removed once and put back. Sharing one
     /// device for the assembly was expected to make it unnecessary — the previous note said "if the
     /// shared-device refactor lands, this should go with it" — so it went, and the refactor was
-    /// then merged without ever reaching CI, because sixteen commits sat unpushed. The first run
-    /// that included both failed eight tests in <see cref="DeviceLossTests"/> and
-    /// <see cref="SwapChainTests"/> with <c>DXGI_ERROR_DEVICE_REMOVED</c>: exactly the two classes
-    /// that build a device of their own alongside the shared one.
+    /// then merged without ever reaching CI, because sixteen commits sat unpushed.
     /// </para>
     /// <para>
-    /// So the two changes were not independent after all. Sharing a device removed most of the
-    /// device churn but not all of it, and the debug layer on the several that remain is still
-    /// enough to lose one on a runner. The gate is the smaller half of the pair and the one whose
-    /// removal was speculative, so it is what goes back first; if CI stays red, the shared device
-    /// itself is the suspect and this note is the record that it was ruled out rather than assumed.
+    /// <b>Putting it back did not fix the failure, and that is why it is worth writing down.</b>
+    /// CI #39 failed eight render tests with <c>DXGI_ERROR_DEVICE_REMOVED</c>; CI #40, with this
+    /// gate restored, failed the same eight identically. So the debug layer is not the cause and
+    /// was a red herring. The gate stays because this is the configuration CI was last green with
+    /// and re-enabling the layer there is an untested change that deserves its own commit — not
+    /// because it fixed anything. The cause is the shared device, and
+    /// <c>docs/notes/open-decisions.md</c> holds the diagnosis and the two candidate remedies.
     /// </para>
     /// <para>
     /// Behaviour that differs between a laptop and a build machine is a wart, and this is a real

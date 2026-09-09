@@ -87,18 +87,41 @@ CI" and name the one-line revert if it went badly, and both turned out to matter
 - **It failed**: eight tests, all `DXGI_ERROR_DEVICE_REMOVED`, all in `DeviceLossTests` and
   `SwapChainTests` — precisely the two classes that build a device of their own *alongside* the
   shared one. `RenderDeviceTests`, the third such class, passed.
-- **The recorded revert is applied**: `TestDevices.Software` gates `EnableDebugLayer` on `CI`
-  again. The two changes were bundled and were assumed independent; they are not. Sharing a device
-  removed most of the churn but not all of it, and the layer on the few devices that remain is
-  still enough to lose one on a runner.
+- **The recorded revert was applied and did not help.** `TestDevices.Software` gates
+  `EnableDebugLayer` on `CI` again, and CI #40 failed identically: the same eight tests, the same
+  `DXGI_ERROR_DEVICE_REMOVED`. So the debug layer is not the cause and the gate was a red herring.
+  It stays gated anyway, because that is the configuration CI was last green with and re-enabling
+  it is an untested change that belongs on its own.
 
-Still open, and the reason this entry stays: **if CI is still red, the shared device itself is the
-suspect**, not the debug layer, and the next step is to give `DeviceLossTests` and `SwapChainTests`
-their own process or to stop creating their devices while the shared one is alive. Nothing about
-any of this can be checked here — this machine has no `D3D12SDKLayers.dll`, so the layer never
-attaches locally whichever way the gate is set, and CI is the only instrument.
-`RenderDeviceInfo.ValidationEnabled` reports what actually happened rather than what was asked for,
-which is what makes the next run's log worth reading.
+**The shared device is the cause, and here is the mechanism the evidence supports.** Every *pass*
+test passed — nine classes, all on the shared device — so a long-lived shared device is not itself
+a problem. What fails is the interaction with `DeviceLossTests`, whose entire purpose is to call
+`ID3D12Device5.RemoveDevice`. The failures are the two of its own tests that need a working adapter
+*after* a removal (`ARemovedDeviceReportsAReason`, `EverythingCanBeRebuiltOnAFreshDeviceAfterALoss`)
+plus all six `SwapChainTests`, and the third lifecycle class, `RenderDeviceTests`, passes.
+
+The reading that fits all of it: **removing one WARP device disturbs every WARP device in the
+process, and the shared device makes that permanent.** Before the refactor every device was
+short-lived, so after a removal the next test built a clean one; now a removed adapter is held open
+by the shared device for the rest of the run, and anything reaching for it afterwards gets
+`DEVICE_REMOVED`.
+
+Two candidate fixes, neither verifiable on this machine — the failure exists only on the runner, and
+locally the whole suite passes either way:
+
+1. **Revert the sharing.** 36 short-lived devices plus the `CI` debug-layer gate is the exact
+   configuration CI was green with at #38. Biggest change, highest confidence, and it gives back the
+   thing the refactor was for.
+2. **Let `DeviceLossTests` release the shared device first.** `TestDevices.ReleaseShared` already
+   exists and `Attempted()` rebuilds lazily, so the class could drop the shared device before
+   removing anything and let the next class make a fresh one. Much smaller, and it rests on the
+   guess that WARP recovers once *every* device is gone — which is the part nothing here can check.
+
+One more thing found while reading it, and worth fixing whichever way this goes: **`TestDevices`'
+own remarks are wrong about which classes make their own devices.** They name `RenderDeviceTests`,
+`DeviceLossTests` and `SwapChainTests` as the three that do, but the same commit converted
+`SwapChainTests` to `TestDevices.Required`. The comment describes the design that was intended, not
+the one that shipped, and that mismatch is most of why the failure is surprising to read.
 
 **The nightly regression has never once passed.** Thirteen runs since it was created on
 2026-08-28, thirteen failures, and the cause is the same every time: the *Licence notices* step
