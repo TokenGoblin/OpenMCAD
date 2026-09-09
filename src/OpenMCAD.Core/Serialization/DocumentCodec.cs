@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Collections.Immutable;
 
 using OpenMCAD.Core.Assemblies;
 using OpenMCAD.Core.Documents;
+using OpenMCAD.Solver.Assemblies;
 using OpenMCAD.Core.Naming;
 using OpenMCAD.Kernel;
 using OpenMCAD.Math;
@@ -153,7 +155,9 @@ public static class DocumentCodec
     /// </remarks>
     private static void WriteAssembly(MessagePackWriter writer, Assembly assembly)
     {
-        writer.WriteMapHeader(2);
+        // Three sections or two: an assembly with no mates writes none, for the same reason a
+        // part writes no assembly section at all.
+        writer.WriteMapHeader(assembly.Mates.IsEmpty ? 2 : 3);
 
         writer.Write("definitions");
         writer.WriteArrayHeader(assembly.Definitions.Length);
@@ -205,6 +209,127 @@ public static class DocumentCodec
             writer.Write("label");
             WriteOptional(writer, occurrence.Label);
         }
+
+        if (assembly.Mates.IsEmpty)
+        {
+            return;
+        }
+
+        writer.Write("mates");
+        writer.WriteArrayHeader(assembly.Mates.Length);
+
+        foreach (MateDefinition mate in assembly.Mates)
+        {
+            writer.WriteMapHeader(7);
+            writer.Write("id");
+            writer.Write(mate.Id.Value.ToString("D", CultureInfo.InvariantCulture));
+            writer.Write("kind");
+            writer.Write((int)mate.Kind);
+            writer.Write("first");
+            WriteMateEnd(writer, mate.First);
+            writer.Write("second");
+            WriteMateEnd(writer, mate.Second);
+            writer.Write("value");
+            writer.Write(mate.Value);
+            writer.Write("flipped");
+            writer.Write(mate.IsFlipped);
+            writer.Write("suppressed");
+            writer.Write(mate.IsSuppressed);
+        }
+    }
+
+    /// <summary>Writes one end of a mate.</summary>
+    /// <param name="writer">Where to write.</param>
+    /// <param name="end">The end.</param>
+    /// <remarks>
+    /// The path is written as its steps rather than joined into one string. An occurrence id is a
+    /// GUID today and no separator can appear inside one, but a format that leans on that is a
+    /// format that breaks the day ids stop being GUIDs.
+    /// </remarks>
+    private static void WriteMateEnd(MessagePackWriter writer, MateEnd end)
+    {
+        writer.WriteMapHeader(2);
+
+        writer.Write("path");
+        writer.WriteArrayHeader(end.Occurrence.Steps.Length);
+
+        foreach (OccurrenceId step in end.Occurrence.Steps)
+        {
+            writer.Write(step.ToStorageString());
+        }
+
+        writer.Write("element");
+        writer.Write(end.Element);
+    }
+
+    private static MateEnd ReadMateEnd(ref MessagePackReader reader)
+    {
+        List<OccurrenceId> steps = [];
+        string element = string.Empty;
+
+        int fields = reader.ReadMapHeader();
+
+        for (int f = 0; f < fields; ++f)
+        {
+            switch (reader.ReadString())
+            {
+                case "path":
+                    int count = reader.ReadArrayHeader();
+
+                    for (int i = 0; i < count; ++i)
+                    {
+                        steps.Add(OccurrenceId.Parse(reader.ReadString()));
+                    }
+
+                    break;
+
+                case "element":
+                    element = reader.ReadString() ?? string.Empty;
+                    break;
+
+                default:
+                    reader.Skip();
+                    break;
+            }
+        }
+
+        return new MateEnd(OccurrencePath.Of(steps), element);
+    }
+
+    private static MateDefinition ReadMate(ref MessagePackReader reader)
+    {
+        Guid id = Guid.Empty;
+        MateKind kind = MateKind.Coincident;
+        MateEnd? first = null;
+        MateEnd? second = null;
+        double value = 0;
+        bool flipped = false;
+        bool suppressed = false;
+
+        int fields = reader.ReadMapHeader();
+
+        for (int f = 0; f < fields; ++f)
+        {
+            switch (reader.ReadString())
+            {
+                case "id": id = Guid.ParseExact(reader.ReadString(), "D"); break;
+                case "kind": kind = (MateKind)reader.ReadInt32(); break;
+                case "first": first = ReadMateEnd(ref reader); break;
+                case "second": second = ReadMateEnd(ref reader); break;
+                case "value": value = reader.ReadDouble(); break;
+                case "flipped": flipped = reader.ReadBoolean(); break;
+                case "suppressed": suppressed = reader.ReadBoolean(); break;
+                default: reader.Skip(); break;
+            }
+        }
+
+        if (id == Guid.Empty || first is null || second is null)
+        {
+            throw new DocumentFormatException(
+                "An assembly holds a mate that does not say what it joins.");
+        }
+
+        return new MateDefinition(new MateId(id), kind, first, second, value, flipped, suppressed);
     }
 
     /// <summary>Reads an assembly's components and placements.</summary>
@@ -215,6 +340,7 @@ public static class DocumentCodec
     {
         List<ComponentDefinition> definitions = [];
         List<ComponentOccurrence> occurrences = [];
+        List<MateDefinition> mates = [];
 
         int fields = reader.ReadMapHeader();
 
@@ -238,6 +364,16 @@ public static class DocumentCodec
                     for (int i = 0; i < placements; ++i)
                     {
                         occurrences.Add(ReadOccurrence(ref reader));
+                    }
+
+                    break;
+
+                case "mates":
+                    int joins = reader.ReadArrayHeader();
+
+                    for (int i = 0; i < joins; ++i)
+                    {
+                        mates.Add(ReadMate(ref reader));
                     }
 
                     break;
@@ -269,6 +405,27 @@ public static class DocumentCodec
             {
                 throw new DocumentFormatException(
                     $"This assembly places a component it does not list: {exception.Message}",
+                    exception);
+            }
+        }
+
+        foreach (MateDefinition mate in mates)
+        {
+            // Assembly.WithMate refuses a mate naming a placement that is not there, which is the
+            // invariant everything that reads a mate is written against.
+            //
+            // Caught for the message, not for the type: Read already turns an ArgumentException
+            // into a DocumentFormatException, so without this the file would still be refused --
+            // as "this document is damaged", which tells the reader nothing about which part of it
+            // is wrong. The same is true of the occurrence check above.
+            try
+            {
+                assembly = assembly.WithMate(mate);
+            }
+            catch (ArgumentException exception)
+            {
+                throw new DocumentFormatException(
+                    $"This assembly mates something it does not place: {exception.Message}",
                     exception);
             }
         }

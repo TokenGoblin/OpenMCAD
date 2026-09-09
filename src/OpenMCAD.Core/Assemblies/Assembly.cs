@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 
 using OpenMCAD.Math;
+using OpenMCAD.Solver.Assemblies;
 
 namespace OpenMCAD.Core.Assemblies;
 
@@ -38,12 +39,14 @@ public sealed class Assembly
         ImmutableArray<ComponentDefinition> definitions,
         ImmutableDictionary<ComponentDefinitionId, ComponentDefinition> definitionsById,
         ImmutableArray<ComponentOccurrence> occurrences,
-        ImmutableDictionary<OccurrenceId, ComponentOccurrence> occurrencesById)
+        ImmutableDictionary<OccurrenceId, ComponentOccurrence> occurrencesById,
+        ImmutableArray<MateDefinition> mates)
     {
         Definitions = definitions;
         _definitionsById = definitionsById;
         Occurrences = occurrences;
         _occurrencesById = occurrencesById;
+        Mates = mates;
     }
 
     /// <summary>Gets an assembly with nothing in it.</summary>
@@ -51,13 +54,22 @@ public sealed class Assembly
         [],
         ImmutableDictionary<ComponentDefinitionId, ComponentDefinition>.Empty,
         [],
-        ImmutableDictionary<OccurrenceId, ComponentOccurrence>.Empty);
+        ImmutableDictionary<OccurrenceId, ComponentOccurrence>.Empty,
+        []);
 
     /// <summary>Gets the components used, one entry each however often they are placed.</summary>
     public ImmutableArray<ComponentDefinition> Definitions { get; }
 
     /// <summary>Gets the placements, in the order the user arranged them.</summary>
     public ImmutableArray<ComponentOccurrence> Occurrences { get; }
+
+    /// <summary>Gets what must be true of where the placements sit.</summary>
+    /// <remarks>
+    /// Held beside the occurrences rather than on them, because a mate is a statement about two
+    /// instances and belongs to neither. Putting it on one would make deleting that one delete the
+    /// mate while leaving the other believing it was still constrained.
+    /// </remarks>
+    public ImmutableArray<MateDefinition> Mates { get; }
 
     /// <summary>Gets whether this assembly holds no placements.</summary>
     public bool IsEmpty => Occurrences.IsEmpty;
@@ -109,7 +121,8 @@ public sealed class Assembly
             Definitions.Add(definition),
             _definitionsById.Add(definition.Id, definition),
             Occurrences,
-            _occurrencesById);
+            _occurrencesById,
+            Mates);
     }
 
     /// <summary>Places a component.</summary>
@@ -153,7 +166,8 @@ public sealed class Assembly
             Definitions,
             _definitionsById,
             Occurrences.Add(occurrence),
-            _occurrencesById.Add(occurrence.Id, occurrence));
+            _occurrencesById.Add(occurrence.Id, occurrence),
+            Mates);
     }
 
     /// <summary>Replaces a placement, keeping its position in the tree.</summary>
@@ -184,7 +198,8 @@ public sealed class Assembly
             Definitions,
             _definitionsById,
             Occurrences.SetItem(index, occurrence),
-            _occurrencesById.SetItem(occurrence.Id, occurrence));
+            _occurrencesById.SetItem(occurrence.Id, occurrence),
+            Mates);
     }
 
     /// <summary>Removes a placement.</summary>
@@ -200,13 +215,22 @@ public sealed class Assembly
     {
         int index = IndexOf(id);
 
-        return index < 0
-            ? this
-            : new Assembly(
-                Definitions,
-                _definitionsById,
-                Occurrences.RemoveAt(index),
-                _occurrencesById.Remove(id));
+        if (index < 0)
+        {
+            return this;
+        }
+
+        // The mates that named it go with it. A mate to a placement that is no longer there cannot
+        // be solved and cannot be repaired -- there is nothing to re-point it at -- so leaving it
+        // behind would be leaving a permanent error in the document as the price of one deletion.
+        OccurrenceId removed = Occurrences[index].Id;
+
+        return new Assembly(
+            Definitions,
+            _definitionsById,
+            Occurrences.RemoveAt(index),
+            _occurrencesById.Remove(id),
+            [.. Mates.Where(m => !m.Instances.Any(path => Names(path, removed)))]);
     }
 
     /// <summary>Removes every component that is not placed anywhere.</summary>
@@ -226,8 +250,86 @@ public sealed class Assembly
             kept,
             kept.ToImmutableDictionary(d => d.Id),
             Occurrences,
-            _occurrencesById);
+            _occurrencesById,
+            Mates);
     }
+
+    /// <summary>Adds a mate.</summary>
+    /// <param name="mate">What must be true.</param>
+    /// <returns>The new assembly.</returns>
+    /// <exception cref="ArgumentException">
+    /// The mate has no id, one with that id is already here, or an end names a placement this
+    /// assembly does not have.
+    /// </exception>
+    /// <remarks>
+    /// The same invariant <see cref="WithOccurrence"/> enforces for a placement's component, and
+    /// for the same reason: everything that reads a mate may then assume both ends resolve, so
+    /// none of it has to invent an answer for an end that names nothing.
+    /// </remarks>
+    public Assembly WithMate(MateDefinition mate)
+    {
+        ArgumentNullException.ThrowIfNull(mate);
+
+        if (!mate.Id.IsValid)
+        {
+            throw new ArgumentException("A mate needs an id.", nameof(mate));
+        }
+
+        if (Mates.Any(m => m.Id == mate.Id))
+        {
+            throw new ArgumentException(
+                $"{mate.Id} is already a mate of this assembly.", nameof(mate));
+        }
+
+        foreach (OccurrencePath path in mate.Instances)
+        {
+            if (path.IsRoot || FindOccurrence(path.Steps[0]) is null)
+            {
+                throw new ArgumentException(
+                    $"'{path}' is not a placement in this assembly, so it cannot be mated.",
+                    nameof(mate));
+            }
+        }
+
+        return new Assembly(
+            Definitions, _definitionsById, Occurrences, _occurrencesById, Mates.Add(mate));
+    }
+
+    /// <summary>Replaces a mate, keeping its position in the list.</summary>
+    /// <param name="mate">The mate, with the id of the one it replaces.</param>
+    /// <returns>The new assembly.</returns>
+    /// <exception cref="ArgumentException">There is no mate with that id.</exception>
+    public Assembly ReplaceMate(MateDefinition mate)
+    {
+        ArgumentNullException.ThrowIfNull(mate);
+
+        int index = Mates.IndexOf(Mates.FirstOrDefault(m => m.Id == mate.Id)!);
+
+        if (index < 0)
+        {
+            throw new ArgumentException(
+                $"{mate.Id} is not a mate of this assembly.", nameof(mate));
+        }
+
+        return new Assembly(
+            Definitions, _definitionsById, Occurrences, _occurrencesById, Mates.SetItem(index, mate));
+    }
+
+    /// <summary>Removes a mate.</summary>
+    /// <param name="id">Which mate.</param>
+    /// <returns>The new assembly, or this one if there was no such mate.</returns>
+    public Assembly WithoutMate(MateId id)
+    {
+        ImmutableArray<MateDefinition> kept = [.. Mates.Where(m => m.Id != id)];
+
+        return kept.Length == Mates.Length
+            ? this
+            : new Assembly(Definitions, _definitionsById, Occurrences, _occurrencesById, kept);
+    }
+
+    /// <summary>Whether a path leads through a given placement of this assembly.</summary>
+    private static bool Names(OccurrencePath path, OccurrenceId id)
+        => !path.IsRoot && path.Steps[0] == id;
 
     /// <summary>Works out where an instance sits in the world.</summary>
     /// <param name="path">Which instance.</param>
@@ -335,12 +437,30 @@ public sealed class Assembly
             }
         }
 
+        foreach (MateDefinition mate in Mates)
+        {
+            if (mate.First.Occurrence.Equals(mate.Second.Occurrence))
+            {
+                // Refused here rather than at insertion, because a mate can become one of these:
+                // it is what a user makes by mating two faces of the same component, and it is
+                // also what a sub-assembly collapsing to one instance would leave behind.
+                found.Add($"'{mate}' joins a placement to itself, which constrains nothing.");
+            }
+
+            if (string.IsNullOrWhiteSpace(mate.First.Element)
+                || string.IsNullOrWhiteSpace(mate.Second.Element))
+            {
+                found.Add($"'{mate}' does not say what it attaches to.");
+            }
+        }
+
         return found.ToImmutable();
     }
 
     /// <inheritdoc />
     public override string ToString()
-        => $"{Occurrences.Length} placements of {Definitions.Length} components";
+        => $"{Occurrences.Length} placements of {Definitions.Length} components, "
+        + $"{Mates.Length} mates";
 
     private int IndexOf(OccurrenceId id)
     {

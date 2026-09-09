@@ -2,6 +2,16 @@
 
   <ItemGroup>
     <ProjectReference Include="../../../src/OpenMCAD.Core/OpenMCAD.Core.csproj" />
+
+    <!--
+      An implementation of IAssemblySolver, so that MateSystem's crossing into the solver's
+      vocabulary can be tested against a real solve rather than a stub that agrees with it.
+
+      This points the wrong way for src, since OpenMCAD.Solver.Fake sits above OpenMCAD.Core, and
+      that is exactly why it is here and not there. A test may reach for an implementation the code
+      under test must not name; the layering rules in tests/arch govern src and are unaffected.
+    -->
+    <ProjectReference Include="../../../src/OpenMCAD.Solver.Fake/OpenMCAD.Solver.Fake.csproj" />
   </ItemGroup>
 
 </Project>
