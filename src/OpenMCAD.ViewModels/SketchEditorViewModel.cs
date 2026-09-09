@@ -221,6 +221,176 @@ public sealed class SketchEditorViewModel : ObservableObject
         return null;
     }
 
+    // --- Editing tools (P4-T13) ------------------------------------------------------------------
+
+    /// <summary>Shortens an entity back to the nearest crossing on the side that was clicked.</summary>
+    /// <param name="id">Which entity.</param>
+    /// <param name="near">Roughly where the user clicked, which decides which side goes.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? Trim(SketchEntityId id, Vec2d near)
+    {
+        TrimResult result = SketchTrim.Trim(Sketch, id, near);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Lengthens the end of a line nearest a click until it reaches the rest of the sketch.</summary>
+    /// <param name="id">Which line.</param>
+    /// <param name="near">Roughly where the user clicked, which decides which end grows.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? Extend(SketchEntityId id, Vec2d near)
+    {
+        ExtendResult result = SketchExtend.Extend(Sketch, id, near);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Breaks an entity into two at a point on it, keeping both pieces.</summary>
+    /// <param name="id">Which entity.</param>
+    /// <param name="at">Where to cut it.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? Split(SketchEntityId id, Vec2d at)
+    {
+        SplitResult result = SketchSplit.Split(Sketch, id, at);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Rounds the corner between two lines with an arc tangent to both.</summary>
+    /// <param name="first">One leg, and where it was clicked.</param>
+    /// <param name="second">The other leg, and where it was clicked.</param>
+    /// <param name="radius">How big the fillet is.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? Fillet(CornerPick first, CornerPick second, double radius)
+    {
+        CornerResult result = SketchCorner.Fillet(Sketch, first, second, radius);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Cuts the corner between two lines off with a straight line across it.</summary>
+    /// <param name="first">One leg, and where it was clicked.</param>
+    /// <param name="second">The other leg, and where it was clicked.</param>
+    /// <param name="setback">How far back from the corner the cut starts, along each leg.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? Chamfer(CornerPick first, CornerPick second, double setback)
+    {
+        CornerResult result = SketchCorner.Chamfer(Sketch, first, second, setback);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Builds a parallel copy of the selected chain.</summary>
+    /// <param name="distance">
+    /// How far, and to which side: positive is to the left of the way the chain runs, and the chain
+    /// runs through the <em>first</em> selected entity in that entity's own direction. So the order
+    /// the user picked things in decides the side, which is what lets a preview follow the cursor
+    /// without this layer having to know where the cursor is.
+    /// </param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? OffsetSelection(double distance)
+    {
+        OffsetResult result = SketchOffset.Offset(Sketch, SelectedEntities, distance);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Moves, rotates or scales the selection in place.</summary>
+    /// <param name="transform">The transform.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? TransformSelection(SketchTransform transform)
+    {
+        SketchEditResult result = SketchEdit.Transform(Sketch, SelectedEntities, transform);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Adds a transformed copy of the selection, keeping the original.</summary>
+    /// <param name="transform">The transform.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? CopySelection(SketchTransform transform)
+    {
+        SketchEditResult result = SketchEdit.Duplicate(Sketch, SelectedEntities, transform);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Adds a mirrored copy of the selection about a line.</summary>
+    /// <param name="lineStart">One point on the mirror line.</param>
+    /// <param name="lineEnd">Another point on it.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? MirrorSelection(Vec2d lineStart, Vec2d lineEnd)
+    {
+        SketchEditResult result = SketchEdit.Mirror(Sketch, SelectedEntities, lineStart, lineEnd);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Repeats the selection along a step.</summary>
+    /// <param name="step">The offset from one instance to the next.</param>
+    /// <param name="count">How many instances in total, the original included.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? LinearPatternSelection(Vec2d step, int count)
+    {
+        SketchEditResult result = SketchEdit.LinearPattern(Sketch, SelectedEntities, step, count);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>Repeats the selection around a centre.</summary>
+    /// <param name="centre">What to turn about.</param>
+    /// <param name="totalAngle">How far round, in radians.</param>
+    /// <param name="count">How many instances in total, the original included.</param>
+    /// <returns>Why it could not be done, or null on success.</returns>
+    public string? CircularPatternSelection(Vec2d centre, double totalAngle, int count)
+    {
+        SketchEditResult result = SketchEdit.CircularPattern(
+            Sketch, SelectedEntities, centre, totalAngle, count);
+
+        return Apply(result.IsResolved, result.Sketch, result.Reason);
+    }
+
+    /// <summary>The entities the selection names, once, in the order they were selected.</summary>
+    /// <remarks>
+    /// Order is kept rather than sorted, and that part is load-bearing: an offset takes its
+    /// direction from the first entity named, so sorting here would decide which side of a chain
+    /// the user's offset lands on. The <c>Distinct</c> is not load-bearing — every tool that takes
+    /// a selection already deduplicates it, and <see cref="SketchEdit.Duplicate"/> says so in its
+    /// own remarks — and is kept as a cheap guard for a tool that one day does not, rather than
+    /// because anything today depends on it.
+    /// </remarks>
+    private IEnumerable<SketchEntityId> SelectedEntities
+        => Selection.Select(o => o.Entity).Distinct();
+
+    /// <summary>
+    /// Takes the common shape of every editing tool's result and does the one thing they all need.
+    /// </summary>
+    /// <remarks>
+    /// Six result types, one shape: did it work, what came out, and why not. They are separate types
+    /// because what each adds beyond that differs — a split names both pieces, a corner names its
+    /// blend, an offset names every piece it made — and none of that is this layer's business. Rather
+    /// than give six records a shared interface for one caller's convenience, the caller takes the
+    /// three fields it actually uses, once, here.
+    /// <para>
+    /// Testing <paramref name="resolved"/> as well as <paramref name="sketch"/> is belt and braces
+    /// today: every tool's failure carries no sketch, so the null check alone would do, and no test
+    /// can tell the two apart. It stays because the alternative is depending on that coupling, and a
+    /// tool that one day reports a partial result alongside a failure would then apply it.
+    /// </para>
+    /// </remarks>
+    private string? Apply(bool resolved, Sketch? sketch, string? reason)
+    {
+        if (!resolved || sketch is null)
+        {
+            return reason ?? "That tool could not be applied to this sketch.";
+        }
+
+        Sketch = sketch;
+        Resolve();
+
+        return null;
+    }
+
     private SketchEntityId Add(Func<SketchEntityId, SketchEntity> make)
     {
         SketchEntityId id = SketchEntityId.New();
