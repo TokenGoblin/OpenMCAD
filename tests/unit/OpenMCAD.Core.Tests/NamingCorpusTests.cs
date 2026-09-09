@@ -21,10 +21,13 @@ namespace OpenMCAD.Core.Tests;
 /// <para>
 /// §5.3 gives the shape — build, apply a parametric edit, assert every downstream feature resolves
 /// to the intended entity — and lists ten mandatory categories. Six of them are about the document,
-/// the rebuild and the resolution of names, which is what Phase 3 builds, and they are here. The
-/// other four need feature types that do not exist yet: there is nothing to pattern, nothing to
-/// mirror, no sketch to change the topology of, and no importer. <see cref="EveryMandatoryCategoryIsAccountedFor"/>
-/// is what stops those being quietly forgotten.
+/// the rebuild and the resolution of names, which is what Phase 3 builds, and they are here. Sketch
+/// topology change is the seventh: P4-T03 and P4-T04 brought a sketch to change, and the seam the
+/// naming layer had always had for it -- a name whose provenance bottoms out in a sketch entity
+/// rather than in another named entity -- is wired through the engine as of this scenario. The
+/// remaining three need feature types that do not exist: there is nothing to pattern, nothing to
+/// mirror, and no importer. <see cref="EveryMandatoryCategoryIsAccountedFor"/> is what stops those
+/// being quietly forgotten.
 /// </para>
 /// <para>
 /// These run the whole stack rather than a piece of it: a real <see cref="DocumentSession"/>, the
@@ -55,7 +58,7 @@ public sealed class NamingCorpusTests
         ("feature deletion with dependents", null),
         ("face split by a later feature", null),
         ("body split", null),
-        ("sketch topology change", "Phase 4 — there is no sketch to add or remove a line from"),
+        ("sketch topology change", null),
         ("pattern instance count change", "P5 — there is no pattern feature"),
         ("mirror", "P5 — there is no mirror feature"),
         ("imported-geometry reference", "Phase 8 — there is no importer"),
@@ -74,8 +77,8 @@ public sealed class NamingCorpusTests
         ImmutableArray<string> blocked =
             [.. Mandatory.Where(m => m.BlockedBy is not null).Select(m => m.Category)];
 
-        covered.Should().HaveCount(6);
-        blocked.Should().HaveCount(4);
+        covered.Should().HaveCount(7);
+        blocked.Should().HaveCount(3);
 
         foreach ((string category, string? blockedBy) in Mandatory)
         {
@@ -129,6 +132,87 @@ public sealed class NamingCorpusTests
 
         scene.Report.StateOf(consumer).Should().Be(FeatureState.Ok);
         scene.WhatItUsed(consumer).IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AddingASketchLineDoesNotDisturbAReferenceToAnotherLinesWall()
+    {
+        // The category §5.3 names. A reference here is anchored to a *sketch entity*, not to a
+        // role, so the wall it wants is "the one L2 made" however many other lines the sketch
+        // gains. Adding L4 reissues every tag and adds a wall in the middle of the list; nothing
+        // about that is a fact about L2.
+        using Scenario scene = new(sketch: ["L1", "L2", "L3"]);
+
+        FeatureId body = scene.AddBase("Extrude1");
+        FeatureId consumer = scene.AddSketchConsumer("Fillet1", body, "L2");
+
+        await scene.RebuildAsync();
+
+        SubEntity before = scene.WhatItUsed(consumer);
+        before.IsValid.Should().BeTrue();
+        scene.WallFor(body, "L2").Should().Be(before);
+
+        scene.AddSketchLine("L4");
+        await scene.RebuildAsync();
+
+        SubEntity after = scene.WhatItUsed(consumer);
+
+        after.Should().NotBe(before, "the kernel issued new tags, as a kernel does");
+        after.Should().Be(
+            scene.WallFor(body, "L2"), "the reference still means the wall L2 made");
+        scene.RoleOf(body, after).Should().Be(OperationRole.SideWall);
+        scene.Report.StateOf(consumer).Should().Be(FeatureState.Ok);
+    }
+
+    [Fact]
+    public async Task RemovingASketchLineBreaksOnlyTheReferenceThatNamedIt()
+    {
+        // The half that matters more. Deleting L2 must not quietly re-point its consumer at L1's
+        // wall or L3's -- both are side walls of the same extrude, both are plausible, and either
+        // would be the silent corruption §5.3 forbids. The consumer that named L3 is untouched.
+        using Scenario scene = new(sketch: ["L1", "L2", "L3"]);
+
+        FeatureId body = scene.AddBase("Extrude1");
+        FeatureId onDoomed = scene.AddSketchConsumer("Fillet1", body, "L2");
+        FeatureId onSurvivor = scene.AddSketchConsumer("Fillet2", body, "L3");
+
+        await scene.RebuildAsync();
+        scene.Report.StateOf(onDoomed).Should().Be(FeatureState.Ok);
+
+        scene.RemoveSketchLine("L2");
+        await scene.RebuildAsync();
+
+        scene.Report.StateOf(onDoomed).Should().Be(
+            FeatureState.UnresolvedReference,
+            "the line it was built on is gone, and no other wall is a substitute for it");
+        scene.Report.Repairs.Should().ContainSingle()
+            .Which.Feature.Should().Be(onDoomed);
+
+        scene.Report.StateOf(onSurvivor).Should().Be(
+            FeatureState.Ok, "nothing happened to L3");
+        scene.WhatItUsed(onSurvivor).Should().Be(scene.WallFor(body, "L3"));
+    }
+
+    [Fact]
+    public async Task ASketchSourceIsUnsupportedRatherThanMissingWhenNothingCanLookOneUp()
+    {
+        // The distinction the naming layer draws and the engine now has to preserve: a host with
+        // no way to resolve a sketch entity has not discovered a broken model, it has failed to
+        // answer. Reporting that as a missing reference would make every sketch-anchored name in
+        // an unwired build look like user-visible damage.
+        using Scenario scene = new(sketch: ["L1", "L2"], wireSketchLookup: false);
+
+        FeatureId body = scene.AddBase("Extrude1");
+        FeatureId consumer = scene.AddSketchConsumer("Fillet1", body, "L1");
+
+        await scene.RebuildAsync();
+
+        scene.Report.StateOf(consumer).Should().Be(FeatureState.UnresolvedReference);
+        scene.Report.Repairs.Should().ContainSingle()
+            .Which.Outcome.Should().Be(
+                NameResolutionOutcome.Unsupported,
+                "'cannot answer' and 'the answer is no' are different, and only the outcome "
+                + "carries that distinction anywhere a caller can act on it");
     }
 
     [Fact]
@@ -295,13 +379,31 @@ public sealed class NamingCorpusTests
         private readonly KernelDispatcher _dispatcher = new("naming corpus kernel");
         private readonly ModelEvaluator _evaluator = new();
         private readonly Dictionary<FeatureId, ImmutableArray<SubEntity>> _used = [];
+        private ImmutableArray<string> _lines;
+        private FeatureId _sketchOwner = FeatureId.None;
 
-        public Scenario()
+        /// <summary>Sets a scenario up.</summary>
+        /// <param name="sketch">
+        /// The lines of the profile the base feature is built from, one wall each. One line by
+        /// default, which is the shape every scenario written before sketches existed assumes.
+        /// </param>
+        /// <param name="wireSketchLookup">
+        /// Whether the engine is given a way to resolve a sketch entity. False stands in for a host
+        /// that has none, which is a different thing from a sketch entity that is gone.
+        /// </param>
+        public Scenario(IEnumerable<string>? sketch = null, bool wireSketchLookup = true)
         {
             Session = new DocumentSession();
+            _lines = sketch is null ? ["L1"] : [.. sketch];
+            _evaluator.SketchLines = _lines;
 
             Engine = new RebuildEngine(
-                Session, _dispatcher, _evaluator, new GeometryCache(), _evaluator.Measure);
+                Session,
+                _dispatcher,
+                _evaluator,
+                new GeometryCache(),
+                _evaluator.Measure,
+                wireSketchLookup ? _evaluator.ProfileFor : null);
 
             _evaluator.Used = (feature, entities) => _used[feature] = entities;
         }
@@ -317,10 +419,13 @@ public sealed class NamingCorpusTests
         {
             FeatureId id = FeatureId.New();
 
+            _sketchOwner = id;
+
             Edit($"Add {name}", t => t.AddFeature(
                 Feature.Create(id, name, "Base") with
                 {
                     Parameters = [new Parameter("Depth", Quantity.Metres(0.025))],
+                    Settings = Lines(_lines),
                 }));
 
             return id;
@@ -389,6 +494,44 @@ public sealed class NamingCorpusTests
             "Reroute",
             t => t.ReplaceFeature(Session.Current.FindFeature(feature)! with { Inputs = [input] }));
 
+        /// <summary>A feature built on the wall one named sketch line produced.</summary>
+        /// <remarks>
+        /// The reference bottoms out in the sketch entity rather than in a role, which is the whole
+        /// point of the category: "the wall L2 made" stays meaningful when the sketch gains or loses
+        /// other lines, and a role-and-ordinal reference would not.
+        /// </remarks>
+        public FeatureId AddSketchConsumer(string name, FeatureId source, string line)
+        {
+            FeatureId id = FeatureId.New();
+
+            EntityReference reference = new(
+                PersistentName.Of(new NameSegment(
+                    source,
+                    ProvenanceKind.Generated,
+                    [new NameSource.Sketch(source, line)],
+                    EntityRole.SideWall,
+                    0,
+                    new GeoHint(GeometryKind.Plane, 1.0, Vec3d.Zero, Vec3d.UnitZ, 4))),
+                MultiplicityPolicy.ExactlyOne);
+
+            Edit($"Add {name}", t => t.AddFeature(
+                Feature.Create(id, name, "Consumer") with
+                {
+                    Inputs = [source],
+                    References = [reference],
+                }));
+
+            return id;
+        }
+
+        public void AddSketchLine(string line) => ReplaceSketch(_lines.Add(line));
+
+        public void RemoveSketchLine(string line) => ReplaceSketch(_lines.Remove(line));
+
+        /// <summary>The wall a given sketch line produced in the latest rebuild.</summary>
+        public SubEntity WallFor(FeatureId producer, string line)
+            => _evaluator.WallFor(producer, line);
+
         /// <summary>A feature that divides what it is given: each face in two, and the body.</summary>
         public FeatureId AddSplitter(string name, FeatureId source)
         {
@@ -416,6 +559,29 @@ public sealed class NamingCorpusTests
             Engine.Dispose();
             _dispatcher.Dispose();
         }
+
+        /// <summary>Edits the sketch, which is a document edit like any other.</summary>
+        /// <remarks>
+        /// The line list is a <see cref="Feature.Settings"/> entry rather than something held beside
+        /// the document, so changing it dirties the feature and invalidates its cache entry through
+        /// the ordinary machinery. A sketch edit smuggled past the document would rebuild nothing.
+        /// </remarks>
+        private void ReplaceSketch(ImmutableArray<string> lines)
+        {
+            _lines = lines;
+            _evaluator.SketchLines = lines;
+
+            Edit(
+                "Edit sketch",
+                t => t.ReplaceFeature(Session.Current.FindFeature(_sketchOwner)! with
+                {
+                    Settings = Lines(lines),
+                }));
+        }
+
+        private static ImmutableDictionary<string, FeatureValue> Lines(ImmutableArray<string> lines)
+            => ImmutableDictionary<string, FeatureValue>.Empty
+                .Add("Lines", new TextValue(string.Join(',', lines)));
 
         private static EntityReference Reference(
             FeatureId source, EntityRole role, MultiplicityPolicy policy)
@@ -449,9 +615,29 @@ public sealed class NamingCorpusTests
     {
         private readonly Dictionary<FeatureId, Dictionary<SubEntity, OperationRole>> _roles = [];
         private readonly Dictionary<SubEntity, GeoHint> _hints = [];
+        private readonly Dictionary<(FeatureId, string), SubEntity> _profiles = [];
+        private readonly Dictionary<(FeatureId, string), SubEntity> _walls = [];
         private ulong _next = 1;
 
         public Action<FeatureId, ImmutableArray<SubEntity>>? Used { get; set; }
+
+        /// <summary>Gets or sets the profile lines the base feature is built from.</summary>
+        public ImmutableArray<string> SketchLines { get; set; } = ["L1"];
+
+        /// <summary>What a sketch entity produced, as things stand after the latest rebuild.</summary>
+        /// <remarks>
+        /// This is the delegate a real host would satisfy from its sketch layer. A line that is no
+        /// longer in the sketch has no edge, and saying so as <see cref="SubEntity.None"/> is what
+        /// lets the resolver report a reference to it as missing rather than as unanswerable.
+        /// </remarks>
+        public SubEntity ProfileFor(NameSource.Sketch sketch)
+            => _profiles.TryGetValue((sketch.Owner, sketch.EntityId), out SubEntity edge)
+                ? edge
+                : SubEntity.None;
+
+        /// <summary>The wall a given line produced, for a test to assert against.</summary>
+        public SubEntity WallFor(FeatureId producer, string line)
+            => _walls.TryGetValue((producer, line), out SubEntity wall) ? wall : SubEntity.None;
 
         public GeoHint? Measure(SubEntity entity)
             => _hints.TryGetValue(entity, out GeoHint? hint) ? hint : null;
@@ -478,22 +664,47 @@ public sealed class NamingCorpusTests
             };
         }
 
-        /// <summary>A prism: side walls and two caps, all tags freshly issued.</summary>
+        /// <summary>A prism: one side wall per profile line, and a cap.</summary>
+        /// <remarks>
+        /// Every tag is freshly issued, and the per-line edges are re-recorded from scratch, so a
+        /// line dropped from the sketch leaves nothing behind for a stale lookup to find.
+        /// </remarks>
         private FeatureOutput Build(FeatureId id)
         {
             KernelShape shape = new(_next++);
             HistoryMapBuilder history = new();
             Dictionary<SubEntity, OperationRole> roles = [];
 
-            SubEntity profile = Fresh(shape, SubEntityKind.Edge);
+            foreach ((FeatureId owner, string line) in _profiles.Keys.Where(k => k.Item1 == id).ToArray())
+            {
+                _profiles.Remove((owner, line));
+                _walls.Remove((owner, line));
+            }
 
-            // The profile is the thing a name bottoms out on, so it has to exist in the map.
-            history.AddNew(profile, OperationRole.Retained);
-            roles[profile] = OperationRole.Retained;
+            SubEntity first = SubEntity.None;
 
-            Wall(shape, history, roles, profile, Vec3d.Zero);
+            for (int i = 0; i < SketchLines.Length; i++)
+            {
+                string line = SketchLines[i];
+                SubEntity profile = Fresh(shape, SubEntityKind.Edge);
 
-            Cap(shape, history, roles, profile, OperationRole.EndCap);
+                // The profile edge is the thing a name bottoms out on, so it has to be in the map.
+                history.AddNew(profile, OperationRole.Retained);
+                roles[profile] = OperationRole.Retained;
+                _profiles[(id, line)] = profile;
+
+                // Each wall sits somewhere different, so that if the geometric tier were ever
+                // consulted about one it would have something to tell them apart by -- and so that
+                // a test asserting the right wall is asserting more than "a wall".
+                _walls[(id, line)] = Wall(shape, history, roles, profile, new Vec3d(i, 0, 0));
+
+                if (i == 0)
+                {
+                    first = profile;
+                }
+            }
+
+            Cap(shape, history, roles, first, OperationRole.EndCap);
 
             _roles[id] = roles;
 
@@ -591,7 +802,7 @@ public sealed class NamingCorpusTests
                 [NewBody(id, shape)], [], HistoryMap.Empty);
         }
 
-        private void Wall(
+        private SubEntity Wall(
             KernelShape shape,
             HistoryMapBuilder history,
             Dictionary<SubEntity, OperationRole> roles,
@@ -603,6 +814,8 @@ public sealed class NamingCorpusTests
             history.AddGenerated(profile, wall, OperationRole.SideWall);
             roles[wall] = OperationRole.SideWall;
             _hints[wall] = new GeoHint(GeometryKind.Plane, 1.0, at, Vec3d.UnitZ, 4);
+
+            return wall;
         }
 
         private void Cap(

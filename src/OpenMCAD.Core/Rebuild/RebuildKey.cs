@@ -66,8 +66,9 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
         // A version tag. When the encoding below changes, every key changes with it, so entries
         // written by an older build are missed rather than misread. Without this, adding a field
         // here would silently make old cache entries answer new questions -- which is exactly what
-        // adding the entity references at version 2 would otherwise have done.
-        Write(hash, 2);
+        // adding the entity references at version 2, and the settings at version 3, would otherwise
+        // have done.
+        Write(hash, 3);
 
         // The feature's own identity, and not only its definition. Two features of the same type
         // with the same parameters do produce the same geometry, so a purely content-addressed key
@@ -103,6 +104,24 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
             Write(hash, (int)reference.Multiplicity);
         }
 
+        // Settings are what a feature is told that is not a dimension and not a selection: which
+        // direction, how many, which end condition, whether to merge (P3-T21). Every one of those
+        // changes the geometry, so leaving them out let a feature whose only edit was a setting hit
+        // the cache and hand back what it looked like beforehand.
+        //
+        // Sorted by name, and by ordinal rather than by culture. An ImmutableDictionary promises no
+        // enumeration order, so hashing it as it comes would give the same feature different keys in
+        // different processes -- which ADR-0011 does not allow, and which would present as a cache
+        // that mysteriously stops hitting.
+        Write(hash, feature.SettingValues.Count);
+
+        foreach (KeyValuePair<string, FeatureValue> setting
+            in feature.SettingValues.OrderBy(s => s.Key, StringComparer.Ordinal))
+        {
+            WriteText(hash, setting.Key);
+            WriteSetting(hash, setting.Value);
+        }
+
         Write(hash, inputKeys.Length);
 
         foreach (RebuildKey input in inputKeys)
@@ -122,6 +141,52 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
     /// <inheritdoc />
     public override string ToString()
         => string.Create(CultureInfo.InvariantCulture, $"key({High:X16}{Low:X16})");
+
+    /// <summary>Writes one setting, tagged with which kind it is.</summary>
+    /// <remarks>
+    /// The tag matters as much as the value: without it a <see cref="NumberValue"/> of 1 and a
+    /// <see cref="FlagValue"/> of true would hash alike, and two features differing only in that
+    /// would share a cache entry.
+    /// </remarks>
+    private static void WriteSetting(IncrementalHash hash, FeatureValue value)
+    {
+        switch (value)
+        {
+            case QuantityValue quantity:
+                Write(hash, 1);
+                Write(hash, (int)quantity.Value.Dimension);
+                Write(hash, BitConverter.DoubleToInt64Bits(quantity.Value.Value));
+                break;
+
+            case NumberValue number:
+                Write(hash, 2);
+                Write(hash, number.Value);
+                break;
+
+            case FlagValue flag:
+                Write(hash, 3);
+                Write(hash, flag.Value ? 1 : 0);
+                break;
+
+            case TextValue text:
+                Write(hash, 4);
+                WriteText(hash, text.Value);
+                break;
+
+            case ChoiceValue choice:
+                Write(hash, 5);
+                WriteText(hash, choice.Value);
+                break;
+
+            default:
+                // A kind this build does not know cannot be hashed into a key that means anything,
+                // and hashing only its type name would make two different values look identical.
+                throw new ArgumentException(
+                    $"There is no way to put a {value.GetType().Name} into a rebuild key, so a "
+                    + "feature carrying one cannot be cached correctly.",
+                    nameof(value));
+        }
+    }
 
     private static void Write(IncrementalHash hash, byte[] value)
     {

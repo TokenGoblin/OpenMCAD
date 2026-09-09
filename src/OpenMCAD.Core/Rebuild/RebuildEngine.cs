@@ -39,6 +39,7 @@ public sealed class RebuildEngine : IDisposable
     private readonly IFeatureEvaluator _evaluator;
     private readonly IGeometryCache _cache;
     private readonly Func<SubEntity, GeoHint?>? _measure;
+    private readonly Func<NameSource.Sketch, SubEntity>? _sketchEntities;
     private readonly SemaphoreSlim _oneAtATime = new(1, 1);
     private readonly Lock _gate = new();
 
@@ -59,12 +60,20 @@ public sealed class RebuildEngine : IDisposable
     /// (P3-T10). Null runs history alone, which resolves the overwhelming majority of references
     /// and refuses the rest rather than guessing.
     /// </param>
+    /// <param name="sketchEntities">
+    /// How to find the kernel entity a sketch entity produced, for names whose provenance bottoms
+    /// out in a sketch rather than in another named entity (§5.3). Null is not "no sketches" — it is
+    /// "this host cannot answer", and such a name then resolves as
+    /// <see cref="NameResolutionOutcome.Unsupported"/> rather than as missing, which is the
+    /// difference between a build that has not been wired up and a model that is broken.
+    /// </param>
     public RebuildEngine(
         DocumentSession session,
         KernelDispatcher dispatcher,
         IFeatureEvaluator evaluator,
         IGeometryCache? cache = null,
-        Func<SubEntity, GeoHint?>? measure = null)
+        Func<SubEntity, GeoHint?>? measure = null,
+        Func<NameSource.Sketch, SubEntity>? sketchEntities = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(dispatcher);
@@ -75,6 +84,7 @@ public sealed class RebuildEngine : IDisposable
         _evaluator = evaluator;
         _cache = cache ?? new GeometryCache();
         _measure = measure;
+        _sketchEntities = sketchEntities;
     }
 
     /// <summary>Gets where results are remembered.</summary>
@@ -489,7 +499,8 @@ public sealed class RebuildEngine : IDisposable
             return null;
         }
 
-        NameResolver resolver = new(history.Build(), _measure);
+        NameResolver resolver = new(
+            history.Build(), _measure, sketchEntities: _sketchEntities);
 
         ImmutableArray<ResolvedReference>.Builder found =
             ImmutableArray.CreateBuilder<ResolvedReference>(feature.EntityReferences.Length);

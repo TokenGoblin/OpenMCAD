@@ -163,20 +163,84 @@ public sealed class GeometryCacheTests
         // to be a deliberate one. It was produced by a second implementation of the encoding, in
         // another language, rather than by pasting in whatever this code happened to emit -- which
         // would pin the behaviour without checking it against the description of it.
+        //
+        // It carries one setting of every kind there is, so that each kind tag is pinned and not
+        // merely written down: without a tag two kinds can encode identically, and the pair that
+        // does -- text and a choice -- would then share a cache entry while meaning different
+        // things. The settings also pin the by-name ordering. That last guard is only as good as
+        // the enumeration order this process happens to produce, since an ImmutableDictionary
+        // orders by hash and .NET randomises string hashing per run; it is a real guard on the runs
+        // where the two differ, which are exactly the runs the sort exists for.
         Feature feature = new(
             new FeatureId(Guid.Parse("00000000-0000-0000-0000-000000000001")),
             "Extrude1",
             "Extrude",
             [],
-            [new Parameter("Depth", Quantity.Metres(0.01))]);
+            [new Parameter("Depth", Quantity.Metres(0.01))],
+            Settings: ImmutableDictionary<string, FeatureValue>.Empty
+                .Add("Merge", new FlagValue(true))
+                .Add("Direction", new ChoiceValue("Symmetric"))
+                .Add("Angle", new QuantityValue(Quantity.Radians(0.5)))
+                .Add("Count", new NumberValue(3))
+                .Add("Label", new TextValue("Blind")));
 
         RebuildKey key = RebuildKey.For(feature, []);
 
         key.ToString().Should().Be(
-            "key(F5B6B222A74D4FC7415DB2E25E748DA9)",
+            "key(C80EF14FED81A9036EC9534FAA20CAB4)",
             "the encoding is a compatibility surface: when it changes, every cached entry has to "
             + "miss rather than be misread, which is what the version tag in the key is for");
     }
+
+    [Fact]
+    public void ChangingASettingChangesTheKey()
+    {
+        // A setting is not decoration: which direction, how many, which end condition, whether to
+        // merge (P3-T21) all decide what the feature produces. Leaving them out of the key let a
+        // feature whose only edit was a setting hit the cache and hand back the geometry from
+        // before it -- and unlike a wrong parameter, nothing downstream would look wrong either.
+        Feature before = Extrude("Extrude1", 0.010) with { Settings = Setting("Merge", new FlagValue(false)) };
+        Feature after = before with { Settings = Setting("Merge", new FlagValue(true)) };
+
+        RebuildKey.For(before, []).Should().NotBe(RebuildKey.For(after, []));
+    }
+
+    [Fact]
+    public void TwoSettingValuesOfDifferentKindsDoNotShareAKey()
+    {
+        // Text and a choice encode identically once you take the kind tag away -- both are just a
+        // string -- and they mean different things: a free-text setting and one picked from a list
+        // are not interchangeable. Without the tag these two features share a cache entry.
+        Feature free = Extrude("Extrude1", 0.010) with { Settings = Setting("End", new TextValue("Blind")) };
+        Feature picked = free with { Settings = Setting("End", new ChoiceValue("Blind")) };
+
+        RebuildKey.For(free, []).Should().NotBe(RebuildKey.For(picked, []));
+    }
+
+    [Fact]
+    public void TheOrderSettingsWereAddedInDoesNotChangeTheKey()
+    {
+        // An ImmutableDictionary promises no enumeration order. Hashing it as it comes would give
+        // the same feature different keys in different processes -- a cache that mysteriously
+        // stops hitting, and a determinism failure ADR-0011 does not allow.
+        ImmutableDictionary<string, FeatureValue> oneWay = ImmutableDictionary<string, FeatureValue>.Empty
+            .Add("Depth", new NumberValue(3))
+            .Add("Angle", new NumberValue(4))
+            .Add("Merge", new FlagValue(true));
+
+        ImmutableDictionary<string, FeatureValue> theOther = ImmutableDictionary<string, FeatureValue>.Empty
+            .Add("Merge", new FlagValue(true))
+            .Add("Angle", new NumberValue(4))
+            .Add("Depth", new NumberValue(3));
+
+        Feature first = Extrude("Extrude1", 0.010) with { Settings = oneWay };
+        Feature second = first with { Settings = theOther };
+
+        RebuildKey.For(first, []).Should().Be(RebuildKey.For(second, []));
+    }
+
+    private static ImmutableDictionary<string, FeatureValue> Setting(string name, FeatureValue value)
+        => ImmutableDictionary<string, FeatureValue>.Empty.Add(name, value);
 
     [Fact]
     public void TwoIdenticalFeaturesDoNotShareAnEntry()
