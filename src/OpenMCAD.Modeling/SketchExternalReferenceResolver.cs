@@ -182,7 +182,7 @@ public static class SketchExternalReferenceResolver
         SketchExternalReference reference, SketchPlane plane, WorldCurve curve) => curve switch
         {
             WorldCurve.Line line => Finish(ProjectLine(reference, plane, line)),
-            WorldCurve.Circle circle => Finish(ProjectCircle(reference, plane, circle)),
+            WorldCurve.Circle circle => ProjectCircle(reference, plane, circle),
             _ => SketchExternalReferenceResolution.Failed(
                 SketchExternalReferenceResolutionOutcome.Unsupported,
                 "This build does not project this kind of edge."),
@@ -229,7 +229,7 @@ public static class SketchExternalReferenceResolver
         => new SketchLine(
             reference.Produces, plane.ToLocal(line.Start), plane.ToLocal(line.End), reference.IsConstruction);
 
-    private static SketchEntity? ProjectCircle(
+    private static SketchExternalReferenceResolution ProjectCircle(
         SketchExternalReference reference, SketchPlane plane, WorldCurve.Circle circle)
     {
         Vec3d normal;
@@ -242,7 +242,12 @@ public static class SketchExternalReferenceResolver
         }
         catch (InvalidOperationException)
         {
-            return null;
+            // The edge itself does not describe a circle: no usable normal, or a reference
+            // direction parallel to it. Degenerate rather than unsupported -- there is nothing
+            // here this build is declining to handle.
+            return SketchExternalReferenceResolution.Failed(
+                SketchExternalReferenceResolutionOutcome.Degenerate,
+                "This circular edge has no usable plane of its own, so it cannot be projected.");
         }
 
         double angleToSketch = normal.AngleTo(plane.Normal);
@@ -250,7 +255,25 @@ public static class SketchExternalReferenceResolver
 
         if (angleToSketch > Tolerance.Angular && !antiparallel)
         {
-            return null;
+            // Edge-on: the two planes are perpendicular, so the circle projects to a straight line
+            // and there is no ellipse to build. Decided by the angle, alongside the parallel test
+            // it belongs with, rather than by measuring the minor axis afterwards -- a length
+            // threshold on a radius is wrong at one end of the range CAD spans, refusing a
+            // perfectly reasonable aspect ratio for a millimetre-scale hole.
+            //
+            // SketchEllipse.Degeneracy would catch the resulting geometry regardless. This exists
+            // so the reason names the view rather than the ellipse: "seen edge-on" is something the
+            // user can act on, and "this ellipse has no minor radius" is about an entity they never
+            // asked for.
+            if (System.Math.Abs(angleToSketch - (System.Math.PI / 2)) <= Tolerance.Angular)
+            {
+                return SketchExternalReferenceResolution.Failed(
+                    SketchExternalReferenceResolutionOutcome.Degenerate,
+                    "This circular edge is seen exactly edge-on from the sketch plane, so it "
+                    + "projects to a straight line rather than to an ellipse.");
+            }
+
+            return ProjectTransverseCircle(reference, plane, circle, normal, xDirection);
         }
 
         int sign = antiparallel ? -1 : 1;
@@ -258,7 +281,8 @@ public static class SketchExternalReferenceResolver
 
         if (circle.IsFull)
         {
-            return new SketchCircle(reference.Produces, localCentre, circle.Radius, reference.IsConstruction);
+            return Finish(
+                new SketchCircle(reference.Produces, localCentre, circle.Radius, reference.IsConstruction));
         }
 
         Vec2d localXDirection = plane.ToLocalDirection(xDirection);
@@ -274,13 +298,101 @@ public static class SketchExternalReferenceResolver
         double startAngle3D = sign > 0 ? circle.StartAngle : circle.EndAngle;
         double endAngle3D = sign > 0 ? circle.EndAngle : circle.StartAngle;
 
-        return new SketchArc(
+        return Finish(new SketchArc(
             reference.Produces,
             localCentre,
             circle.Radius,
             rotationOffset + (sign * startAngle3D),
             rotationOffset + (sign * endAngle3D),
-            reference.IsConstruction);
+            reference.IsConstruction));
+    }
+
+    /// <summary>
+    /// Projects a circle whose own plane is at an angle to the sketch's, which is an ellipse.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Orthographic projection is linear, so a circle written as
+    /// <c>C + r·cos θ·u + r·sin θ·v</c> lands as <c>c + cos θ·A + sin θ·B</c> with
+    /// <c>A</c> and <c>B</c> the projections of its own two radius vectors. That is already an
+    /// ellipse; what it is not is an ellipse in the form <see cref="SketchEllipse"/> stores, because
+    /// <c>A</c> and <c>B</c> are in general neither perpendicular to one another nor of equal
+    /// length. Finding the axes is one closed-form step: <c>|p(θ) − c|²</c> is a sinusoid in
+    /// <c>2θ</c>, so its extremes are half a turn apart in <c>2θ</c> and therefore a quarter turn
+    /// apart in <c>θ</c> — which is why one <c>atan2</c> gives both axes rather than only the
+    /// longer.
+    /// </para>
+    /// <para>
+    /// <b>The eccentric angle falls out for free, and that is the reason for doing it this way.</b>
+    /// Because <c>A cos θ + B sin θ</c> is identically <c>M cos(θ − θ₀) + N sin(θ − θ₀)</c> for the
+    /// axes found at <c>θ₀</c>, a point at circle-angle <c>θ</c> is at eccentric angle
+    /// <c>θ − θ₀</c> exactly. <see cref="SketchEllipticalArc"/> stores eccentric angles (P4-T03)
+    /// precisely so that no transcendental solve is needed to evaluate a point, and computing them
+    /// here from the projected geometry rather than from the parameterisation would put that solve
+    /// straight back in.
+    /// </para>
+    /// <para>
+    /// <b>A basis that comes out clockwise has to be turned round, not merely negated.</b>
+    /// <see cref="SketchEllipticalArc"/> sweeps anticlockwise from start to end, and its minor axis
+    /// is a quarter turn anticlockwise from its major, so a projected frame with the opposite
+    /// handedness describes the same physical arc traversed the other way. Negating the eccentric
+    /// angles alone would keep the original start labelled "start" while describing a sweep the long
+    /// way round to reach the original end — a different arc. The ends swap too, which is the same
+    /// correction an antiparallel circular edge needs, arrived at independently and for the same
+    /// underlying reason.
+    /// </para>
+    /// <para>
+    /// Edge-on is refused before this is reached, by the caller, on the angle between the two
+    /// planes — see there for why the test is an angle rather than a measurement of what came out.
+    /// </para>
+    /// </remarks>
+    private static SketchExternalReferenceResolution ProjectTransverseCircle(
+        SketchExternalReference reference,
+        SketchPlane plane,
+        WorldCurve.Circle circle,
+        Vec3d normal,
+        Vec3d xDirection)
+    {
+        // The circle's own frame. Angles on it are measured anticlockwise about its normal from
+        // xDirection, so this is the right-handed pair that parameterisation assumes.
+        Vec2d a = plane.ToLocalDirection(xDirection) * circle.Radius;
+        Vec2d b = plane.ToLocalDirection(Vec3d.Cross(normal, xDirection)) * circle.Radius;
+
+        double turn = System.Math.Atan2(
+            2 * Vec2d.Dot(a, b), a.LengthSquared - b.LengthSquared) / 2;
+
+        // `turn` is the maximum rather than either extreme: |p(θ) − c|² is
+        // K + R·cos(2θ − ψ) with ψ the atan2 above, so the angle it names is where that cosine is
+        // +1. The axis found there is therefore always the longer, and the swap this originally
+        // carried -- to put the longer one in `major` -- could never run. Removed rather than kept
+        // as insurance, because a branch no input can reach is a branch nothing can check.
+        Vec2d major = (a * System.Math.Cos(turn)) + (b * System.Math.Sin(turn));
+        Vec2d minor = (b * System.Math.Cos(turn)) - (a * System.Math.Sin(turn));
+
+        // A left-handed projected frame means the sketch sees this circle turning the other way.
+        bool reversed = Vec2d.Cross(major, minor) < 0;
+        Vec2d centre = plane.ToLocal(circle.Centre);
+        double rotation = major.Angle();
+
+        if (circle.IsFull)
+        {
+            return Finish(new SketchEllipse(
+                reference.Produces, centre, major.Length, minor.Length, rotation,
+                reference.IsConstruction));
+        }
+
+        double start = circle.StartAngle - turn;
+        double end = circle.EndAngle - turn;
+
+        return Finish(new SketchEllipticalArc(
+            reference.Produces,
+            centre,
+            major.Length,
+            minor.Length,
+            rotation,
+            reversed ? -end : start,
+            reversed ? -start : end,
+            reference.IsConstruction));
     }
 
     private static bool LiesOnPlane(WorldCurve curve, SketchPlane plane) => curve switch
@@ -305,16 +417,15 @@ public static class SketchExternalReferenceResolver
         return t >= -Tolerance.Parametric && t <= 1 + Tolerance.Parametric;
     }
 
-    private static SketchExternalReferenceResolution Finish(SketchEntity? entity)
+    /// <summary>Hands back a produced entity, unless the geometry it describes is degenerate.</summary>
+    /// <remarks>
+    /// Takes a non-null entity: every path that can fail now says why itself, in terms of what it
+    /// was actually trying to do. It used to take a nullable one and explain every failure as
+    /// "only a parallel circle can be brought in", which stopped being true the moment a transverse
+    /// one could be projected and would have gone on being reported for a degenerate edge as well.
+    /// </remarks>
+    private static SketchExternalReferenceResolution Finish(SketchEntity entity)
     {
-        if (entity is null)
-        {
-            return SketchExternalReferenceResolution.Failed(
-                SketchExternalReferenceResolutionOutcome.Unsupported,
-                "This build can only bring in a circular edge whose plane is parallel to the "
-                + "sketch plane.");
-        }
-
         return entity.Degeneracy is { } problem
             ? SketchExternalReferenceResolution.Failed(
                 SketchExternalReferenceResolutionOutcome.Degenerate, problem)

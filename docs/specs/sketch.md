@@ -522,6 +522,11 @@ not stop its faces being recognised; reusing it here would place a sketch at the
 first time that feature moved. Nothing in `OpenMCAD.Kernel` exposes either query yet — Phase 5 and
 the OCCT decision supply them — and this is the shape a real one will satisfy.
 
+**A circle whose plane is transverse to the sketch's projects to an ellipse**, and a partial one to
+an elliptical arc whose eccentric angles are the circle's own parameters shifted by the axis angle —
+which is what keeps evaluating a point free of a transcendental solve. Exactly edge-on is refused,
+by the angle between the planes rather than by measuring the result.
+
 **`SketchExternalReference.Produces` is assigned once and never afterwards**, so a constraint
 attached to projected geometry, or a later feature naming it, keeps pointing at the same entity
 while its geometry is replaced every rebuild.
@@ -532,9 +537,8 @@ features that have nothing to do with it (§5.4). `SketchPlane.FromNormal`/`From
 a genuinely degenerate normal or axis set — they are geometry constructors with a real precondition —
 but the resolvers report.
 
-Deliberately incomplete: only straight and circular edges are handled; a circle projects or converts
-only when its own plane is parallel or antiparallel to the sketch plane (a circle projected onto a
-transverse plane is an ellipse — a real operation, a second one); `Intersect` is straight edges only,
+Deliberately incomplete: only straight and circular edges are handled; `Intersect` is straight edges
+only,
 because a line crosses a plane at zero or one point while a circular edge can cross at two and "one
 reference produces one entity" has nowhere to put a second; `Convert` is `Project` plus an in-plane
 precondition, refusing with `NotInPlane` rather than silently doing what `Project` would have.
@@ -635,7 +639,7 @@ A checklist for a change in this subsystem. Each of these has cost real debuggin
 | `native/openmcad_gcs`, and `OpenMCAD.Solver.Planegcs` (P4-T01, half of P4-T02) | Blocked on whether to vendor LGPL source into a public repository, and on Boost.Graph as a native dependency. Both in `docs/notes/open-decisions.md`. |
 | The 16 ms / 200-entity drag exit criterion | `FakeSolver` is not going to meet it and is not meant to. It needs planegcs. |
 | Ordinate dimension stacking across several dimensions at once (P4-T12) | Section 12. |
-| External references: conic and spline edges, transverse circle projection, multi-point `Intersect` (P4-T11) | Section 11. |
+| External references: conic and spline edges, multi-point `Intersect` (P4-T11) | Section 11. |
 | Sketch UI beyond the view model (P4-T15) | `SketchEditorViewModel` exposes the whole of sections 4 and 9 — geometry, constraints, the DOF readout and every editing tool — and is fully tested. The editor itself does not exist: it needs the shell chrome Phase 6 builds. |
 | Offset self-intersection against another part of the same chain | Section 9. |
 | Naming corpus categories that need sketch topology change (P3-T13) | Closes in Phase 7, not here. |
