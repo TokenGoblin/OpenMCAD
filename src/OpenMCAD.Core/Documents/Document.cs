@@ -51,10 +51,12 @@ public sealed class Document
         long version,
         DocumentKind kind,
         Assembly assembly,
+        ImmutableArray<ExternalReference> externalReferences,
         ImmutableArray<UnknownField> unknownFields = default)
     {
         Kind = kind;
         Assembly = assembly;
+        ExternalReferences = externalReferences;
         UnknownFields = unknownFields.IsDefault ? [] : unknownFields;
         RollbackPosition = rollbackPosition;
         Report = report;
@@ -78,6 +80,15 @@ public sealed class Document
     /// looking at is the disagreement <see cref="Kind"/> exists to prevent.
     /// </remarks>
     public Assembly Assembly { get; }
+
+    /// <summary>Gets the documents this one depends on, and what is being done about each.</summary>
+    /// <remarks>
+    /// Carried on the document so that locking or breaking one is an edit like any other — a
+    /// transaction, and therefore an undo. It is written to its own part of the container rather
+    /// than into the graph (§5.8's <c>/refs/external.json</c>), so that something which only wants
+    /// to know what a file depends on need not parse the graph to find out.
+    /// </remarks>
+    public ImmutableArray<ExternalReference> ExternalReferences { get; }
 
     /// <summary>Gets the features, in the order the user arranged them.</summary>
     public ImmutableArray<Feature> Features { get; }
@@ -185,7 +196,8 @@ public sealed class Document
         report: RebuildReport.Empty,
         version: 0,
         kind: kind,
-        assembly: Assembly.Empty);
+        assembly: Assembly.Empty,
+        externalReferences: []);
 
     /// <summary>Whether this document describes the same model as another.</summary>
     /// <param name="other">The document to compare with.</param>
@@ -220,6 +232,8 @@ public sealed class Document
             || Kind != other.Kind
             || !Assembly.Definitions.SequenceEqual(other.Assembly.Definitions)
             || !Assembly.Occurrences.SequenceEqual(other.Assembly.Occurrences)
+            || !Assembly.Mates.SequenceEqual(other.Assembly.Mates)
+            || !ExternalReferences.SequenceEqual(other.ExternalReferences)
             || ActiveFeatureCount != other.ActiveFeatureCount
             || _parametersByName.Count != other._parametersByName.Count
             || _bodiesById.Count != other._bodiesById.Count)
@@ -527,6 +541,67 @@ public sealed class Document
             : References.SetItem(existing, reference));
     }
 
+    /// <summary>Returns this document depending on one more thing, or on it differently.</summary>
+    /// <param name="reference">What it depends on.</param>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// Add-or-replace on the target, the same shape <see cref="WithReference"/> settled on for
+    /// reference geometry (P3-T04) and for the same reason: a document depends on another document
+    /// once, however many things inside it reach across, so a second entry for one target would be
+    /// two answers to "is this up to date".
+    /// </remarks>
+    internal Document WithExternalReference(ExternalReference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        int existing = IndexOfExternal(reference.Target);
+
+        return With(externalReferences: existing < 0
+            ? ExternalReferences.Add(reference)
+            : ExternalReferences.SetItem(existing, reference));
+    }
+
+    /// <summary>Returns this document no longer recording a dependency.</summary>
+    /// <param name="target">Which document.</param>
+    /// <returns>The new document, or this one if it did not depend on that.</returns>
+    /// <remarks>
+    /// Forgetting the dependency entirely, which is not the same as
+    /// <see cref="ExternalReferenceState.Broken"/> — a broken reference is a severed link the user
+    /// can still see, and this is for a dependency that genuinely no longer exists because whatever
+    /// reached across has been deleted.
+    /// </remarks>
+    internal Document WithoutExternalReference(string target)
+    {
+        int existing = IndexOfExternal(target);
+
+        return existing < 0 ? this : With(externalReferences: ExternalReferences.RemoveAt(existing));
+    }
+
+    /// <summary>Finds what this document records about a dependency.</summary>
+    /// <param name="target">Which document.</param>
+    /// <returns>The reference, or <see langword="null"/> if it does not depend on that.</returns>
+    public ExternalReference? FindExternalReference(string target)
+    {
+        int existing = IndexOfExternal(target);
+
+        return existing < 0 ? null : ExternalReferences[existing];
+    }
+
+    private int IndexOfExternal(string target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        for (int i = 0; i < ExternalReferences.Length; ++i)
+        {
+            if (string.Equals(ExternalReferences[i].Target, target, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     /// <summary>Returns this document with a different assembly structure.</summary>
     /// <param name="assembly">The structure.</param>
     /// <returns>The new document.</returns>
@@ -572,6 +647,7 @@ public sealed class Document
     /// <param name="unknownFields">Fields of the file this build could not read.</param>
     /// <param name="kind">What the document is for.</param>
     /// <param name="assembly">The components it places, for an assembly.</param>
+    /// <param name="externalReferences">The documents it depends on.</param>
     /// <returns>The document.</returns>
     /// <remarks>
     /// For a reader, which knows everything before it builds anything. Adding features one at a
@@ -589,7 +665,8 @@ public sealed class Document
         int? rollbackPosition,
         ImmutableArray<UnknownField> unknownFields = default,
         DocumentKind kind = DocumentKind.Part,
-        Assembly? assembly = null)
+        Assembly? assembly = null,
+        ImmutableArray<ExternalReference> externalReferences = default)
     {
         ImmutableDictionary<FeatureId, Feature>.Builder featuresById =
             ImmutableDictionary.CreateBuilder<FeatureId, Feature>();
@@ -650,6 +727,7 @@ public sealed class Document
             version: 0,
             kind,
             assembly ?? Assembly.Empty,
+            externalReferences.IsDefault ? [] : externalReferences,
             unknownFields);
     }
 
@@ -756,7 +834,8 @@ public sealed class Document
         int? rollbackPosition = null,
         bool clearRollback = false,
         RebuildReport? report = null,
-        Assembly? assembly = null)
+        Assembly? assembly = null,
+        ImmutableArray<ExternalReference>? externalReferences = null)
         => new(
             features ?? Features,
             featuresById ?? _featuresById,
@@ -769,6 +848,7 @@ public sealed class Document
             Version + 1,
             Kind,
             assembly ?? Assembly,
+            externalReferences ?? ExternalReferences,
 
             // Never dropped by an edit. A field nothing here understands is not made irrelevant by
             // the user moving a rollback bar, and the one thing that must not happen is for it to

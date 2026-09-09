@@ -113,6 +113,27 @@ public interface IDocumentTransaction : IDisposable
     /// </remarks>
     void SetAssembly(Assemblies.Assembly assembly);
 
+    /// <summary>Records what this document depends on, or changes what is being done about it.</summary>
+    /// <param name="reference">The dependency.</param>
+    /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
+    /// <remarks>
+    /// Add-or-replace on the target. Locking, breaking and unlocking all come through here, which
+    /// is what makes each of them an ordinary edit — one transaction, and therefore one undo. §5.9
+    /// calls in-context references hazardous and asks for clear UI; being able to take back a
+    /// broken link with the same keystroke as any other mistake is part of that.
+    /// </remarks>
+    void SetExternalReference(ExternalReference reference);
+
+    /// <summary>Forgets a dependency entirely.</summary>
+    /// <param name="target">Which document.</param>
+    /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
+    /// <remarks>
+    /// For a dependency that no longer exists because whatever reached across has been deleted.
+    /// Not the same as breaking it: a broken reference is a severed link the user can still see and
+    /// account for, and this leaves nothing behind.
+    /// </remarks>
+    void RemoveExternalReference(string target);
+
     /// <summary>Moves the rollback bar.</summary>
     /// <param name="position">
     /// How many features from the top of the tree stay active, or null to roll forward to the end.

@@ -281,5 +281,5 @@ bump-and-migrate rule above exists to force.
 | More than one format fixture | Same reason: no released version has produced one. |
 | Autosave and crash-recovery journaling | §5.8 places it in Phase 6. |
 | LOD levels in the tessellation cache | The container has the slot; P2-T04's LOD is not built, and `rendering.md` §11 records why. |
-| External-reference metadata (`/refs/external.json`) | The part is defined; assemblies (Phase 9) are what will write it. |
+| Wiring `/refs/external.json` into save and open | The part, its format and its model exist (P5-T11), and `ExternalReferenceFormat` converts between them. What composes them is still the caller's, like the thumbnail: `Save` writes whatever `PackageContents` it is handed. A save command that forgets is a save that loses the stamps, so this wants closing with P5-T12's session management. |
 | Per-configuration previews | Configurations are Phase 14. |

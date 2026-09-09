@@ -157,6 +157,28 @@ internal sealed class DocumentTransaction : IDocumentTransaction
 
     /// <inheritdoc />
     /// <inheritdoc/>
+    public void SetExternalReference(ExternalReference reference)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        EnsureOpen();
+
+        // No feature is touched. Whether this document is up to date with another is not something
+        // the feature graph produces, and marking features dirty for it would ask the rebuild
+        // engine to re-evaluate work that has not changed. What an out-of-date reference should
+        // trigger is a decision for whoever is watching it, not a side effect of recording it.
+        _working = _working.WithExternalReference(reference);
+    }
+
+    /// <inheritdoc/>
+    public void RemoveExternalReference(string target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        EnsureOpen();
+
+        _working = _working.WithoutExternalReference(target);
+    }
+
+    /// <inheritdoc/>
     public void SetAssembly(Assemblies.Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
