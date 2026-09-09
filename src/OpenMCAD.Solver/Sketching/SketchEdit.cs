@@ -67,7 +67,9 @@ public sealed record SketchEditResult(
 /// operation — cutting an entity at an intersection, building a new curve at a distance and
 /// re-trimming it against its neighbours at each corner, inserting a blend between two curves whose
 /// endpoints move to meet it — and none of them is "apply a transform to a selection" underneath.
-/// They are real, separate work, left for when it is their turn rather than forced into this shape.
+/// They are real, separate work, and they live in their own places for that reason:
+/// <see cref="SketchTrim"/>, <see cref="SketchExtend"/>, <see cref="SketchSplit"/>,
+/// <see cref="SketchCorner"/> and <see cref="SketchOffset"/>.
 /// </para>
 /// </remarks>
 public static class SketchEdit
