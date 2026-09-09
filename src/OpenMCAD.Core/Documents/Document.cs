@@ -561,6 +561,20 @@ public sealed class Document
             : ExternalReferences.SetItem(existing, reference));
     }
 
+    /// <summary>Returns this document depending on exactly these things.</summary>
+    /// <param name="references">What it depends on.</param>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// For a reader, which knows the whole list before it builds anything — the same reason
+    /// <see cref="FromParts"/> exists beside the one-at-a-time editing API. Replaces rather than
+    /// merges: what a file says it depends on <em>is</em> what it depends on, and folding a file's
+    /// list into an existing one would let a stale entry survive a reload.
+    /// </remarks>
+    internal Document WithExternalReferences(ImmutableArray<ExternalReference> references)
+        => references.IsDefaultOrEmpty && ExternalReferences.IsEmpty
+            ? this
+            : With(externalReferences: references.IsDefault ? [] : references);
+
     /// <summary>Returns this document no longer recording a dependency.</summary>
     /// <param name="target">Which document.</param>
     /// <returns>The new document, or this one if it did not depend on that.</returns>

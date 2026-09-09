@@ -254,25 +254,101 @@ public sealed class ExternalReferenceTests
         Document document = Document.Empty(DocumentKind.Assembly)
             .WithExternalReference(new ExternalReference("bolt.omcad", "v1"));
 
-        PackageContents contents = PackageContents.Empty with
-        {
-            ExternalReferences = ExternalReferenceFormat.Write(document.ExternalReferences),
-        };
-
         using MemoryStream stream = new();
 
+        // Nothing is composed by hand. The part is written from the document and folded back into
+        // it on the way in, so a caller cannot forget it -- which is the whole reason this one part
+        // is not opaque like the thumbnail beside it.
         DocumentPackage.Save(
             stream,
             document,
-            DocumentManifest.ForNewDocument("tests", DocumentKind.Assembly, DateTimeOffset.UnixEpoch),
-            contents);
+            DocumentManifest.ForNewDocument("tests", DocumentKind.Assembly, DateTimeOffset.UnixEpoch));
 
         stream.Position = 0;
 
         OpenedPackage read = DocumentPackage.Open(stream);
 
-        ExternalReferenceFormat.Read(read.Contents.ExternalReferences)
-            .Should().Equal(document.ExternalReferences);
+        read.Document.ExternalReferences.Should().Equal(document.ExternalReferences);
+        read.Contents.ExternalReferences.Should().NotBeNull("the part is on disk as well");
+    }
+
+    // --- Dirty tracking ---------------------------------------------------------------------------
+
+    [Fact]
+    public void AFreshlyOpenedDocumentIsNotDirty()
+    {
+        // What a user expects of a title bar: the first edit is what makes it dirty, not the act
+        // of opening the file.
+        new DocumentSession().IsDirty.Should().BeFalse();
+        new DocumentSession(Document.Empty(DocumentKind.Assembly)).IsDirty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void AnEditMakesADocumentDirtyAndSavingClearsIt()
+    {
+        DocumentSession session = new();
+
+        Edit(session, t => t.SetExternalReference(new ExternalReference("bolt.omcad", "v1")));
+        session.IsDirty.Should().BeTrue();
+
+        session.MarkSaved().Should().BeSameAs(session.Current);
+        session.IsDirty.Should().BeFalse();
+
+        Edit(session, t => t.SetExternalReference(new ExternalReference("bolt.omcad", "v2")));
+        session.IsDirty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void UndoingBackToWhatWasSavedIsNotDirty()
+    {
+        // The property immutability buys, and the reason this compares by reference: undo hands
+        // back the very document that was saved, so asking the user to save a file that cannot
+        // have changed would be asking them to save nothing.
+        DocumentSession session = new();
+        UndoHistory undo = new(session);
+
+        Edit(session, t => t.SetExternalReference(new ExternalReference("bolt.omcad", "v1")));
+        session.MarkSaved();
+
+        Edit(session, t => t.SetExternalReference(new ExternalReference("plate.omcad", "v1")));
+        session.IsDirty.Should().BeTrue();
+
+        undo.Undo().Should().BeTrue();
+        session.IsDirty.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EditingBackToAnEqualStateStillCountsAsDirty()
+    {
+        // The one case where comparing by reference and comparing by value disagree, and the
+        // choice is deliberate: this document equals the saved one and is not the saved one, and
+        // reporting it clean would mean deciding on the user's behalf that their round trip
+        // changed nothing. Offering to save something that need not be saved costs a keystroke;
+        // the other way costs the work.
+        DocumentSession session = new();
+        Document saved = session.MarkSaved();
+
+        Edit(session, t => t.SetExternalReference(new ExternalReference("bolt.omcad", "v1")));
+        Edit(session, t => t.RemoveExternalReference("bolt.omcad"));
+
+        session.Current.Matches(saved).Should().BeTrue("it is an equal document");
+        session.IsDirty.Should().BeTrue("but it is not the same one");
+    }
+
+    [Fact]
+    public void ReadingWhatADocumentDependsOnReplacesRatherThanMerges()
+    {
+        // What a file says it depends on *is* what it depends on. Folding a file's list into an
+        // existing one would let an entry that has been deleted survive a reload -- and the
+        // surviving entry would carry a stamp, so it would go on claiming to be up to date.
+        Document had = Document.Empty()
+            .WithExternalReference(new ExternalReference("gone.omcad", "v1"));
+
+        Document reloaded = had.WithExternalReferences(
+            [new ExternalReference("bolt.omcad", "v2")]);
+
+        reloaded.ExternalReferences.Should().ContainSingle();
+        reloaded.FindExternalReference("gone.omcad").Should().BeNull();
     }
 
     // --- Cycles ---------------------------------------------------------------------------------------

@@ -67,7 +67,9 @@ public sealed record DocumentManifest(
 /// <param name="Tessellation">Cached display meshes, by body id.</param>
 /// <param name="Thumbnail">A picture for a file browser, or null.</param>
 /// <param name="Previews">Per-configuration pictures, by configuration name.</param>
-/// <param name="ExternalReferences">The contents of <c>/refs/external.json</c>, or null.</param>
+/// <param name="ExternalReferences">
+/// The bytes of <c>/refs/external.json</c> as they were read, or null.
+/// </param>
 /// <param name="Custom">Anything a plugin or a user put in <c>/custom/</c>.</param>
 /// <param name="Unrecognised">
 /// Every other part of the container, by its full path. A newer build writing a part this one has
@@ -196,7 +198,14 @@ public static class DocumentPackage
 
         PutAll(archive, "preview/", contents.Previews, ".png");
 
-        if (contents.ExternalReferences is { } refs)
+        // Derived from the document rather than taken from the contents handed in. Everything
+        // else here is opaque and the caller's business, and this deliberately is not: the stamps
+        // in it are the only record of what each target was when it was last read, so a save
+        // command that forgot to compose the part would lose them silently and report every
+        // dependency as current for ever after. Reading is still symmetric -- Open folds the part
+        // back into the document -- so PackageContents.ExternalReferences is what was on disk and
+        // the document is what is true.
+        if (ExternalReferenceFormat.Write(document.ExternalReferences) is { } refs)
         {
             Put(archive, "refs/external.json", refs);
         }
@@ -325,9 +334,12 @@ public static class DocumentPackage
             }
         }
 
+        // The part is the document's, so it is folded back in rather than left beside it. Handing
+        // back a document that had forgotten what it depends on, with the answer sitting in a
+        // byte array next to it, is how a caller ends up saving the forgetting.
         return new OpenedPackage(
             manifest,
-            document,
+            document.WithExternalReferences(ExternalReferenceFormat.Read(externals)),
             new PackageContents(
                 geometry.ToImmutable(),
                 tessellation.ToImmutable(),

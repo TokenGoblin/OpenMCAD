@@ -60,6 +60,13 @@ can be compared against each other rather than against a second implementation.
 **Container parts this build has no name for are kept and written back** (`PackageContents.Unrecognised`).
 That is the whole of what forward compatibility means for something nobody can interpret.
 
+**One part is not the caller's business.** Everything in `PackageContents` is opaque and comes from
+whoever is saving — except `/refs/external.json`, which `Save` writes from the document and `Open`
+folds back into it (P5-T12). The asymmetry is deliberate: the stamps in that part are the only
+record of what each dependency was when it was last read, so a save command that forgot to compose
+it would lose them silently and report every dependency as current from then on. What the field
+carries after a read is what was on disk; the document is what is true.
+
 ---
 
 ## 3. Bytes are a function of the document (P3-T18)
@@ -281,5 +288,5 @@ bump-and-migrate rule above exists to force.
 | More than one format fixture | Same reason: no released version has produced one. |
 | Autosave and crash-recovery journaling | §5.8 places it in Phase 6. |
 | LOD levels in the tessellation cache | The container has the slot; P2-T04's LOD is not built, and `rendering.md` §11 records why. |
-| Wiring `/refs/external.json` into save and open | The part, its format and its model exist (P5-T11), and `ExternalReferenceFormat` converts between them. What composes them is still the caller's, like the thumbnail: `Save` writes whatever `PackageContents` it is handed. A save command that forgets is a save that loses the stamps, so this wants closing with P5-T12's session management. |
+| Opening a document by reference | The container reads and writes; nothing yet turns a `/refs/external.json` target into an open document. That is P5-T12's store, and what P5-T11's resolution waits on. |
 | Per-configuration previews | Configurations are Phase 14. |

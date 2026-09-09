@@ -27,11 +27,18 @@ public sealed class DocumentSession
     private readonly Lock _gate = new();
 
     private Document _current;
+    private Document _saved;
     private DocumentTransaction? _open;
 
     /// <summary>Creates a session over a document.</summary>
     /// <param name="document">The starting state, or null for an empty document.</param>
-    public DocumentSession(Document? document = null) => _current = document ?? Document.Empty();
+    /// <remarks>
+    /// The starting state counts as saved. A session opened on a document read from disk is not
+    /// dirty, and a new empty one has nothing worth keeping — so in both cases the first edit is
+    /// what makes it dirty, which is what a user expects of a title bar.
+    /// </remarks>
+    public DocumentSession(Document? document = null)
+        => _saved = _current = document ?? Document.Empty();
 
     /// <summary>Raised after a transaction commits something.</summary>
     /// <remarks>
@@ -58,6 +65,49 @@ public sealed class DocumentSession
             {
                 return _current;
             }
+        }
+    }
+
+    /// <summary>Gets whether there are changes that have not been written to disk.</summary>
+    /// <remarks>
+    /// <para>
+    /// By reference, not by comparison. An immutable document makes undo a matter of holding an
+    /// earlier reference (§5.4), so a user who edits and then undoes back to where they started is
+    /// holding the very document that was saved — and reporting that as dirty would ask them to
+    /// save a file that cannot have changed. A deep comparison would reach the same answer here and
+    /// would also call two separately-built identical documents the same, which is a different
+    /// claim and a slower one.
+    /// </para>
+    /// <para>
+    /// The counterpart is that this can say "dirty" for a document that has been edited into an
+    /// equal state by a different route. That is the safe direction to be wrong in: offering to
+    /// save something that need not be saved costs a keystroke, and the other way costs the work.
+    /// </para>
+    /// </remarks>
+    public bool IsDirty
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return !ReferenceEquals(_current, _saved);
+            }
+        }
+    }
+
+    /// <summary>Records that the document as it now stands has been written to disk.</summary>
+    /// <returns>The document that was marked, so a caller can be sure what it saved.</returns>
+    /// <remarks>
+    /// Returns what it marked rather than nothing, because a save is not instantaneous: a caller
+    /// that wrote <see cref="Current"/> to a file and then called this could be marking a later
+    /// document if an edit landed in between. Marking and reporting in one locked step means the
+    /// caller can compare what it wrote against what it marked and notice.
+    /// </remarks>
+    public Document MarkSaved()
+    {
+        lock (_gate)
+        {
+            return _saved = _current;
         }
     }
 

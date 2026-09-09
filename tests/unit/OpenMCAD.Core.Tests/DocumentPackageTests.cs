@@ -177,14 +177,19 @@ public sealed class DocumentPackageTests
             ImmutableDictionary<string, byte[]>.Empty,
             Thumbnail: Encoding.UTF8.GetBytes("not really a png"),
             Previews: ImmutableDictionary<string, byte[]>.Empty.Add("default", [7]),
-            ExternalReferences: Encoding.UTF8.GetBytes("{}"),
             Custom: ImmutableDictionary<string, byte[]>.Empty.Add("plugin/settings.json", [8]));
 
         OpenedPackage opened = Open(Save(Build(), Manifest(), contents));
 
         opened.Contents.Thumbnail.Should().NotBeNull();
         opened.Contents.Previews!.Should().ContainKey("default");
-        opened.Contents.ExternalReferences.Should().NotBeNull();
+
+        // /refs/external.json is deliberately not in this list any more. Every other part here is
+        // opaque and comes from the caller; that one is written from the document, because the
+        // stamps in it are the only record of what each dependency was when it was last read and a
+        // caller that forgot to compose it would lose them silently. ExternalReferenceTests covers
+        // the round trip.
+        opened.Contents.ExternalReferences.Should().BeNull("this document depends on nothing");
 
         // Custom parts keep their extension, because this build has no idea what any of it is and
         // a plugin that wrote settings.json expects settings.json back.
