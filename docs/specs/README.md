@@ -8,6 +8,7 @@ multi-year build, is rated high likelihood. These files are a mitigation for it.
 
 | Spec | Covers | Written in |
 |---|---|---|
+| `kernel-abstraction.md` | `IGeometryKernel`, the IDL design, and what `FakeKernel` promises. The review PLAN.md §14 item 3 asks for. | P1 |
 | `kernel-shim.md` | Extending the C ABI surface. PLAN.md P1-T16 requires this to be a 30-minute task, not an archaeology expedition. | P1-T16 |
 | `naming.md` | The topological naming scheme, PLAN.md 5.3. The highest-risk subsystem in the product. | P3 |
 | `document-model.md` | Document graph, rebuild engine, transactions. | P3 |
