@@ -73,25 +73,54 @@ starting to run against `OcctKernel` as well as the fake.
 
 ## Deferred work, recorded so it is not lost
 
-**One device for the render tests — done, but wanting a CI run to confirm.** The assembly now
-shares a single device (`TestDevices.Shared`, released by `RenderTestHost` before finalizers are
-drained). Device constructions went from thirty-six to eight: the seven that remain belong to the
-three classes that are *about* the device lifecycle, and sharing one with them would test nothing.
-The `CI` environment variable no longer decides whether validation is attached, so the laptop and
-the build machine now run the same thing.
+**One device for the render tests — it ran on CI, and CI said no.** The assembly shares a single
+device (`TestDevices.Shared`, released by `RenderTestHost` before finalizers are drained). Device
+constructions went from thirty-six to eight: the seven that remain belong to the three classes that
+are *about* the device lifecycle, and sharing one with them would test nothing. That part stands.
 
-Two things to know before trusting that:
+What did not stand is the half that went with it. The entry here used to say "this has not run on
+CI" and name the one-line revert if it went badly, and both turned out to matter:
 
-- **This has not run on CI.** The failure it addresses only ever appeared there, so a green local
-  run is not evidence — the same mistake `verify-ci-after-pushing` records. If the host still dies
-  on the way out of a run, the one-line revert is to make `TestDevices.Software` gate
-  `EnableDebugLayer` on `CI` again, exactly as it did before.
-- **The debug layer is not installed on this machine** (`D3D12SDKLayers.dll` is absent), so it was
-  never attaching locally either, and the old comment claiming a developer got validation was
-  wrong. `RenderDeviceInfo.ValidationEnabled` now reports what actually happened rather than what
-  was asked for, and the device logs a warning when validation is requested and unavailable. Until
-  a machine with the Graphics Tools feature runs this, nobody has observed the debug layer's
-  behaviour under the shared-device arrangement at all.
+- **It had not run on CI because sixteen commits were sitting unpushed**, which is the same failure
+  `verify-ci-after-pushing` records wearing a different hat — not a pipeline nobody reads, but a
+  pipeline nobody had given anything to read. CI #39 was the first run to include it.
+- **It failed**: eight tests, all `DXGI_ERROR_DEVICE_REMOVED`, all in `DeviceLossTests` and
+  `SwapChainTests` — precisely the two classes that build a device of their own *alongside* the
+  shared one. `RenderDeviceTests`, the third such class, passed.
+- **The recorded revert is applied**: `TestDevices.Software` gates `EnableDebugLayer` on `CI`
+  again. The two changes were bundled and were assumed independent; they are not. Sharing a device
+  removed most of the churn but not all of it, and the layer on the few devices that remain is
+  still enough to lose one on a runner.
+
+Still open, and the reason this entry stays: **if CI is still red, the shared device itself is the
+suspect**, not the debug layer, and the next step is to give `DeviceLossTests` and `SwapChainTests`
+their own process or to stop creating their devices while the shared one is alive. Nothing about
+any of this can be checked here — this machine has no `D3D12SDKLayers.dll`, so the layer never
+attaches locally whichever way the gate is set, and CI is the only instrument.
+`RenderDeviceInfo.ValidationEnabled` reports what actually happened rather than what was asked for,
+which is what makes the next run's log worth reading.
+
+**The nightly regression has never once passed.** Thirteen runs since it was created on
+2026-08-28, thirteen failures, and the cause is the same every time: the *Licence notices* step
+reports that `THIRD-PARTY-NOTICES.md` does not match the dependency closure the build resolved. Two
+of its three jobs fail on it; "Rebuild from scratch" passes.
+
+Why it went unnoticed for a fortnight is the interesting half. The check only runs in an OCCT
+build — `build.ps1` skips it otherwise, deliberately, because a stub build has no native closure to
+compare — so neither a local `./build.ps1` nor the fast CI ever executes it. The nightly is the only
+thing that does, and nobody was reading it.
+
+The managed half of the file is **not** the problem: the resolved package graph and the committed
+table agree exactly, forty-four packages, no additions, no removals, no version drift (checked
+against `artifacts/obj/**/project.assets.json`, which is what the generator itself reads). So the
+drift is in the native section, which comes from `native/vcpkg_installed` and can only be
+regenerated from a machine that has actually built OCCT — around 660 minutes from cold, per the
+nightly's own note. That is why this is here rather than fixed.
+
+Worth fixing at the same time, and cheap: **`generate-notices.ps1 -Check` says only "does not
+match"**, with no indication of which line. A check whose failure message cannot be acted on
+without a ten-hour build is most of the reason this sat for thirteen runs. Emitting the first
+differing rows would make the next failure diagnosable from the log alone.
 
 **P3-T13, the naming corpus.** Seven of the ten mandatory §5.3 categories are covered. The other
 three — pattern instance count, mirror, imported geometry — need feature types that do not exist

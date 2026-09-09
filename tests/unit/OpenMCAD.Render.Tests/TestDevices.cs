@@ -41,7 +41,37 @@ internal static class TestDevices
     /// <remarks>
     /// For the classes that must create their own. Everything else takes <see cref="Shared"/>.
     /// </remarks>
-    public static RenderDeviceOptions Software => new(EnableDebugLayer: true, ForceSoftware: true);
+    public static RenderDeviceOptions Software
+        => new(EnableDebugLayer: WantsDebugLayer, ForceSoftware: true);
+
+    /// <summary>Whether to ask for the D3D12 debug layer.</summary>
+    /// <remarks>
+    /// <para>
+    /// Not on a build agent, and this gate has now been removed once and put back. Sharing one
+    /// device for the assembly was expected to make it unnecessary — the previous note said "if the
+    /// shared-device refactor lands, this should go with it" — so it went, and the refactor was
+    /// then merged without ever reaching CI, because sixteen commits sat unpushed. The first run
+    /// that included both failed eight tests in <see cref="DeviceLossTests"/> and
+    /// <see cref="SwapChainTests"/> with <c>DXGI_ERROR_DEVICE_REMOVED</c>: exactly the two classes
+    /// that build a device of their own alongside the shared one.
+    /// </para>
+    /// <para>
+    /// So the two changes were not independent after all. Sharing a device removed most of the
+    /// device churn but not all of it, and the debug layer on the several that remain is still
+    /// enough to lose one on a runner. The gate is the smaller half of the pair and the one whose
+    /// removal was speculative, so it is what goes back first; if CI stays red, the shared device
+    /// itself is the suspect and this note is the record that it was ruled out rather than assumed.
+    /// </para>
+    /// <para>
+    /// Behaviour that differs between a laptop and a build machine is a wart, and this is a real
+    /// one: the layer's validation is exactly what a pipeline ought to be running. It is a
+    /// deliberate trade against a suite that fails every time and therefore tells nobody anything.
+    /// Nothing here can be checked locally — this machine has no <c>D3D12SDKLayers.dll</c>, so the
+    /// layer never attaches whichever way the gate is set, and the only instrument is CI itself.
+    /// </para>
+    /// </remarks>
+    private static bool WantsDebugLayer
+        => string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI"));
 
     /// <summary>The one device this assembly shares, or null if there is none to be had.</summary>
     public static D3D12RenderDevice? Shared => Attempted().Device;
