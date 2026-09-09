@@ -403,9 +403,51 @@ if ($Check) {
     }
 
     $current = & $normalise (Get-Content -Raw -LiteralPath $NoticesPath)
-    if ($current -ne (& $normalise $generated)) {
+    $wanted = & $normalise $generated
+
+    if ($current -ne $wanted) {
         Write-Host ('THIRD-PARTY-NOTICES.md does not match the dependencies this build resolved. ' +
             'Run tools/generate-notices.ps1 and commit the result.') -ForegroundColor Red
+
+        # Say *what* differs, not just that something does. This check only runs in an OCCT build,
+        # so the machine that sees it fail is almost always a build agent -- and a failure whose
+        # only remedy is "reproduce a ten-hour build and look" is a failure nobody acts on. The
+        # nightly regression failed thirteen consecutive runs on exactly this message, unread.
+        #
+        # Reported as lines present on one side and not the other, rather than line by line in
+        # order. A version moving in the native table is one row changing, but a *section* that
+        # could not be generated shifts every line after it, and a positional diff then prints a
+        # screenful of rows that are merely displaced -- burying the one that moved as thoroughly
+        # as saying nothing did. Set differences show a version drift as exactly two lines.
+        $onlyCommitted = [System.Linq.Enumerable]::ToArray(
+            [System.Linq.Enumerable]::Except([string[]]($current -split "`n"), [string[]]($wanted -split "`n")))
+
+        $onlyResolved = [System.Linq.Enumerable]::ToArray(
+            [System.Linq.Enumerable]::Except([string[]]($wanted -split "`n"), [string[]]($current -split "`n")))
+
+        $report = {
+            param($label, $lines, $colour)
+
+            $lines = @($lines | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ($lines.Count -eq 0) { return }
+
+            Write-Host ''
+            Write-Host "  $label" -ForegroundColor Yellow
+
+            # Bounded, because a first run against a closure nobody has generated yet differs in
+            # every line and the cap is what keeps the useful case readable.
+            foreach ($line in $lines | Select-Object -First 15) {
+                Write-Host "    $colour $line"
+            }
+
+            if ($lines.Count -gt 15) {
+                Write-Host "    ... and $($lines.Count - 15) more"
+            }
+        }
+
+        & $report 'In the committed file, not in what this build resolved:' $onlyCommitted '-'
+        & $report 'In what this build resolved, not in the committed file:' $onlyResolved '+'
+
         exit 1
     }
 

@@ -168,10 +168,21 @@ drift is in the native section, which comes from `native/vcpkg_installed` and ca
 regenerated from a machine that has actually built OCCT — around 660 minutes from cold, per the
 nightly's own note. That is why this is here rather than fixed.
 
-Worth fixing at the same time, and cheap: **`generate-notices.ps1 -Check` says only "does not
-match"**, with no indication of which line. A check whose failure message cannot be acted on
-without a ten-hour build is most of the reason this sat for thirteen runs. Emitting the first
-differing rows would make the next failure diagnosable from the log alone.
+**The check now says what differs**, which is the half of this that could be fixed from here. It
+used to report only "does not match", and a failure whose sole remedy is "reproduce a ten-hour
+build and look" is a failure nobody acts on — most of the reason this sat for thirteen runs. It
+prints the lines present on one side and not the other, capped, so a version drift in the native
+table comes out as one line each way.
+
+Set differences rather than a line-by-line diff, deliberately: a row changing is one row, but a
+*section* that could not be generated shifts every line after it, and a positional diff then prints
+a screenful of merely displaced rows and buries the one that moved. Verified both ways here —
+against a build with no native closure, where it correctly reports the whole section as missing, and
+against a one-version change, where it reports exactly two lines.
+
+So the next nightly run will name the drifted rows in its log, and fixing the file itself becomes a
+small edit rather than an expedition. **That is the thing to read after the next nightly**, and it
+is why this entry can stay short.
 
 **P3-T13, the naming corpus.** Seven of the ten mandatory §5.3 categories are covered. The other
 three — pattern instance count, mirror, imported geometry — need feature types that do not exist
