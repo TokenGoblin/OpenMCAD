@@ -8,19 +8,6 @@ using OpenMCAD.Core.Documents;
 
 namespace OpenMCAD.Core.Serialization;
 
-/// <summary>What kind of document a package holds.</summary>
-public enum DocumentKind
-{
-    /// <summary>A single part.</summary>
-    Part,
-
-    /// <summary>An assembly of components.</summary>
-    Assembly,
-
-    /// <summary>A drawing.</summary>
-    Drawing,
-}
-
 /// <summary>
 /// What a package says about itself, before anything reads the graph.
 /// </summary>

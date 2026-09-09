@@ -303,8 +303,12 @@ public sealed class DocumentCommandTests : IDisposable
             payload = copy.ToArray();
         }
 
-        payload[0].Should().Be(0x87, "the document is a seven-field map");
-        payload[0] = 0x88;
+        // Derived rather than asserted. What this helper means is "one more field than the
+        // document has", and pinning the count made it a second, silent record of how many fields
+        // a document carries -- which broke the moment P5-T04 added one, in a CLI test that has
+        // nothing to do with assemblies.
+        payload[0].Should().BeInRange(0x80, 0x8E, "the document is a fixmap with room for a field");
+        payload[0] = (byte)(payload[0] + 1);
 
         byte[] appended =
         [

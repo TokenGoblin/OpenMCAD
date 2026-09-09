@@ -245,6 +245,20 @@ P5-T03 made two more such edits, both additive and both recorded here for the sa
   unconditional field would break it for every document written before the field existed.
 - setting tag `5`, a pointer at reference geometry, holding the owner's id and the name.
 
+P5-T04 added two more, on the same terms:
+
+- `kind` on the document, always written. A file without it reads as a part, which is what every
+  file written before it was.
+- `assembly`, written **only for an assembly**, holding the component definitions and the
+  placements. A part carries no such section, because §3 wants the bytes to be a function of the
+  document and an empty section in every part file would change all of them to say nothing.
+
+A reader refuses an assembly that places a component it does not list, turning `Assembly`'s own
+invariant into a statement about the file. That is the one place where a malformed document is
+rejected rather than preserved, and deliberately: every reader of the structure is written against
+that invariant, so letting it through would hand each of them a placement with no definition to
+resolve.
+
 A reader of this build that meets an older file finds neither and is right to: an absent `prop`
 means the reference does not say which input it is, which is exactly what those files meant.
 

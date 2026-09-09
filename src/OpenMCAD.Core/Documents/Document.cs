@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 
+using OpenMCAD.Core.Assemblies;
 using OpenMCAD.Core.Serialization;
 
 namespace OpenMCAD.Core.Documents;
@@ -48,8 +49,12 @@ public sealed class Document
         int? rollbackPosition,
         RebuildReport report,
         long version,
+        DocumentKind kind,
+        Assembly assembly,
         ImmutableArray<UnknownField> unknownFields = default)
     {
+        Kind = kind;
+        Assembly = assembly;
         UnknownFields = unknownFields.IsDefault ? [] : unknownFields;
         RollbackPosition = rollbackPosition;
         Report = report;
@@ -61,6 +66,18 @@ public sealed class Document
         Metadata = metadata;
         Version = version;
     }
+
+    /// <summary>Gets what this document is for, and so which of its parts carry meaning.</summary>
+    public DocumentKind Kind { get; }
+
+    /// <summary>Gets the components this document places, and where.</summary>
+    /// <remarks>
+    /// Empty for anything that is not a <see cref="DocumentKind.Assembly"/>, and a transaction
+    /// refuses to put a component in one — a part that could quietly acquire occurrences would be
+    /// an assembly that nothing had declared, and every reader deciding for itself which it was
+    /// looking at is the disagreement <see cref="Kind"/> exists to prevent.
+    /// </remarks>
+    public Assembly Assembly { get; }
 
     /// <summary>Gets the features, in the order the user arranged them.</summary>
     public ImmutableArray<Feature> Features { get; }
@@ -146,7 +163,18 @@ public sealed class Document
 
     /// <summary>Gets an empty document, with origin geometry and nothing else.</summary>
     /// <returns>The document.</returns>
-    public static Document Empty() => new(
+    public static Document Empty() => Empty(DocumentKind.Part);
+
+    /// <summary>Gets an empty document of a given kind, with origin geometry and nothing else.</summary>
+    /// <param name="kind">What it is for.</param>
+    /// <returns>The document.</returns>
+    /// <remarks>
+    /// An assembly gets the standard datums too. They are what a first component is placed against
+    /// and what a mate to "the front plane" resolves to, so a document that had to grow them later
+    /// would be one whose first action was to create somewhere to work — the same argument
+    /// <see cref="ReferenceGeometry.StandardDatums"/> already makes for parts.
+    /// </remarks>
+    public static Document Empty(DocumentKind kind) => new(
         [],
         ImmutableDictionary<FeatureId, Feature>.Empty,
         ImmutableDictionary<BodyId, Body>.Empty,
@@ -155,7 +183,9 @@ public sealed class Document
         DocumentMetadata.Empty,
         rollbackPosition: null,
         report: RebuildReport.Empty,
-        version: 0);
+        version: 0,
+        kind: kind,
+        assembly: Assembly.Empty);
 
     /// <summary>Whether this document describes the same model as another.</summary>
     /// <param name="other">The document to compare with.</param>
@@ -187,6 +217,9 @@ public sealed class Document
             || !Features.SequenceEqual(other.Features)
             || !References.SequenceEqual(other.References)
             || !Metadata.Equals(other.Metadata)
+            || Kind != other.Kind
+            || !Assembly.Definitions.SequenceEqual(other.Assembly.Definitions)
+            || !Assembly.Occurrences.SequenceEqual(other.Assembly.Occurrences)
             || ActiveFeatureCount != other.ActiveFeatureCount
             || _parametersByName.Count != other._parametersByName.Count
             || _bodiesById.Count != other._bodiesById.Count)
@@ -494,6 +527,31 @@ public sealed class Document
             : References.SetItem(existing, reference));
     }
 
+    /// <summary>Returns this document with a different assembly structure.</summary>
+    /// <param name="assembly">The structure.</param>
+    /// <returns>The new document.</returns>
+    /// <exception cref="InvalidOperationException">This document is not an assembly.</exception>
+    /// <remarks>
+    /// The whole structure rather than an operation per edit. <see cref="Assembly"/> is already
+    /// immutable and already enforces its own invariants — a placement of a component it does not
+    /// have is refused there — so a set of <c>WithOccurrence…</c> methods here would be a second
+    /// copy of rules that already have one place to live, and the second copy is the one that
+    /// drifts.
+    /// </remarks>
+    internal Document WithAssembly(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+
+        if (Kind != DocumentKind.Assembly)
+        {
+            throw new InvalidOperationException(
+                $"A {Kind} document holds no components. Create the document as an assembly if it "
+                + "is meant to place them.");
+        }
+
+        return With(assembly: assembly);
+    }
+
     /// <summary>Replaces the document's properties.</summary>
     /// <param name="metadata">The new properties.</param>
     /// <returns>The new document.</returns>
@@ -512,6 +570,8 @@ public sealed class Document
     /// <param name="metadata">The properties.</param>
     /// <param name="rollbackPosition">Where the rollback bar sits.</param>
     /// <param name="unknownFields">Fields of the file this build could not read.</param>
+    /// <param name="kind">What the document is for.</param>
+    /// <param name="assembly">The components it places, for an assembly.</param>
     /// <returns>The document.</returns>
     /// <remarks>
     /// For a reader, which knows everything before it builds anything. Adding features one at a
@@ -527,7 +587,9 @@ public sealed class Document
         ImmutableArray<ReferenceGeometry> references,
         DocumentMetadata metadata,
         int? rollbackPosition,
-        ImmutableArray<UnknownField> unknownFields = default)
+        ImmutableArray<UnknownField> unknownFields = default,
+        DocumentKind kind = DocumentKind.Part,
+        Assembly? assembly = null)
     {
         ImmutableDictionary<FeatureId, Feature>.Builder featuresById =
             ImmutableDictionary.CreateBuilder<FeatureId, Feature>();
@@ -586,6 +648,8 @@ public sealed class Document
             rollbackPosition,
             RebuildReport.Empty,
             version: 0,
+            kind,
+            assembly ?? Assembly.Empty,
             unknownFields);
     }
 
@@ -691,7 +755,8 @@ public sealed class Document
         DocumentMetadata? metadata = null,
         int? rollbackPosition = null,
         bool clearRollback = false,
-        RebuildReport? report = null)
+        RebuildReport? report = null,
+        Assembly? assembly = null)
         => new(
             features ?? Features,
             featuresById ?? _featuresById,
@@ -702,6 +767,8 @@ public sealed class Document
             clearRollback ? null : rollbackPosition ?? RollbackPosition,
             report ?? Report,
             Version + 1,
+            Kind,
+            assembly ?? Assembly,
 
             // Never dropped by an edit. A field nothing here understands is not made irrelevant by
             // the user moving a rollback bar, and the one thing that must not happen is for it to

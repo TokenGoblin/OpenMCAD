@@ -96,6 +96,23 @@ public interface IDocumentTransaction : IDisposable
     /// </remarks>
     void RemoveReference(FeatureId owner, string name);
 
+    /// <summary>Replaces the assembly structure: which components are used, and where.</summary>
+    /// <param name="assembly">The structure.</param>
+    /// <exception cref="InvalidOperationException">
+    /// The transaction is no longer open, or this document is not a
+    /// <see cref="DocumentKind.Assembly"/>.
+    /// </exception>
+    /// <remarks>
+    /// The whole structure rather than an operation per component, because
+    /// <see cref="Assemblies.Assembly"/> is itself immutable and already refuses a placement of a
+    /// component it does not have. Threading those rules through a set of transaction methods would
+    /// give them a second home, and §5.9's warning is precisely about what happens when the
+    /// definition/occurrence distinction is enforced in more than one place and the places
+    /// disagree. A caller edits the structure with its own <c>With…</c> methods and hands back the
+    /// result, which is one transaction and therefore one undo.
+    /// </remarks>
+    void SetAssembly(Assemblies.Assembly assembly);
+
     /// <summary>Moves the rollback bar.</summary>
     /// <param name="position">
     /// How many features from the top of the tree stay active, or null to roll forward to the end.

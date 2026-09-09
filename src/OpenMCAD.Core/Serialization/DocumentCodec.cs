@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 
+using OpenMCAD.Core.Assemblies;
 using OpenMCAD.Core.Documents;
 using OpenMCAD.Core.Naming;
 using OpenMCAD.Kernel;
@@ -67,10 +68,19 @@ public static class DocumentCodec
         ILookup<string, UnknownField> unknown =
             document.UnknownFields.ToLookup(f => f.Owner, StringComparer.Ordinal);
 
-        writer.WriteMapHeader(7 + Extra(unknown, UnknownField.Root));
+        // Eight fields, or nine when there is an assembly to write. A part carries no assembly
+        // section at all rather than an empty one: §3 wants the bytes to be a function of the
+        // document, and an empty section in every part file already written would change all of
+        // them for the sake of saying nothing.
+        bool hasAssembly = document.Kind == DocumentKind.Assembly;
+
+        writer.WriteMapHeader(8 + (hasAssembly ? 1 : 0) + Extra(unknown, UnknownField.Root));
 
         writer.Write("schema");
         writer.Write(SchemaVersion);
+
+        writer.Write("kind");
+        writer.Write((int)document.Kind);
 
         writer.Write("features");
         writer.WriteArrayHeader(document.Features.Length);
@@ -121,9 +131,228 @@ public static class DocumentCodec
             writer.WriteNil();
         }
 
+        if (hasAssembly)
+        {
+            writer.Write("assembly");
+            WriteAssembly(writer, document.Assembly);
+        }
+
         Preserved(writer, unknown, UnknownField.Root);
 
         return writer.ToArray();
+    }
+
+    /// <summary>Writes an assembly's components and placements.</summary>
+    /// <param name="writer">Where to write.</param>
+    /// <param name="assembly">The structure.</param>
+    /// <remarks>
+    /// Both collections in the order the document holds them. Definitions are not sorted the way
+    /// bodies are, because unlike a body's generated id their order is the order the user added
+    /// components in and is worth keeping; occurrences are the tree order a user arranged and
+    /// sorting them would rearrange the tree on every save.
+    /// </remarks>
+    private static void WriteAssembly(MessagePackWriter writer, Assembly assembly)
+    {
+        writer.WriteMapHeader(2);
+
+        writer.Write("definitions");
+        writer.WriteArrayHeader(assembly.Definitions.Length);
+
+        foreach (ComponentDefinition definition in assembly.Definitions)
+        {
+            writer.WriteMapHeader(4);
+            writer.Write("id");
+            writer.Write(definition.Id.ToStorageString());
+            writer.Write("source");
+            writer.Write(definition.Source);
+            writer.Write("name");
+            writer.Write(definition.Name);
+            writer.Write("kind");
+            writer.Write((int)definition.Kind);
+        }
+
+        writer.Write("occurrences");
+        writer.WriteArrayHeader(assembly.Occurrences.Length);
+
+        foreach (ComponentOccurrence occurrence in assembly.Occurrences)
+        {
+            writer.WriteMapHeader(8);
+            writer.Write("id");
+            writer.Write(occurrence.Id.ToStorageString());
+            writer.Write("definition");
+            writer.Write(occurrence.Definition.ToStorageString());
+
+            writer.Write("placement");
+            writer.WriteArrayHeader(8);
+            writer.Write(occurrence.Placement.Rotation.X);
+            writer.Write(occurrence.Placement.Rotation.Y);
+            writer.Write(occurrence.Placement.Rotation.Z);
+            writer.Write(occurrence.Placement.Rotation.W);
+            writer.Write(occurrence.Placement.Translation.X);
+            writer.Write(occurrence.Placement.Translation.Y);
+            writer.Write(occurrence.Placement.Translation.Z);
+            writer.Write(occurrence.Placement.Scale);
+
+            writer.Write("grounded");
+            writer.Write(occurrence.IsGrounded);
+            writer.Write("suppressed");
+            writer.Write(occurrence.IsSuppressed);
+            writer.Write("hidden");
+            writer.Write(occurrence.IsHidden);
+
+            writer.Write("appearance");
+            WriteOptional(writer, occurrence.Appearance);
+            writer.Write("label");
+            WriteOptional(writer, occurrence.Label);
+        }
+    }
+
+    /// <summary>Reads an assembly's components and placements.</summary>
+    /// <param name="reader">Where to read from.</param>
+    /// <returns>The structure.</returns>
+    /// <exception cref="DocumentFormatException">A placement names a component that is not there.</exception>
+    private static Assembly ReadAssembly(ref MessagePackReader reader)
+    {
+        List<ComponentDefinition> definitions = [];
+        List<ComponentOccurrence> occurrences = [];
+
+        int fields = reader.ReadMapHeader();
+
+        for (int f = 0; f < fields; ++f)
+        {
+            switch (reader.ReadString())
+            {
+                case "definitions":
+                    int count = reader.ReadArrayHeader();
+
+                    for (int i = 0; i < count; ++i)
+                    {
+                        definitions.Add(ReadDefinition(ref reader));
+                    }
+
+                    break;
+
+                case "occurrences":
+                    int placements = reader.ReadArrayHeader();
+
+                    for (int i = 0; i < placements; ++i)
+                    {
+                        occurrences.Add(ReadOccurrence(ref reader));
+                    }
+
+                    break;
+
+                default:
+                    reader.Skip();
+                    break;
+            }
+        }
+
+        Assembly assembly = Assembly.Empty;
+
+        foreach (ComponentDefinition definition in definitions)
+        {
+            assembly = assembly.WithDefinition(definition);
+        }
+
+        foreach (ComponentOccurrence occurrence in occurrences)
+        {
+            // Assembly.WithOccurrence refuses a placement whose component is absent, which is the
+            // invariant every reader of the structure is written against. Turned into a format
+            // error rather than allowed to escape as ArgumentException, because from here it is a
+            // statement about the file rather than about the caller.
+            try
+            {
+                assembly = assembly.WithOccurrence(occurrence);
+            }
+            catch (ArgumentException exception)
+            {
+                throw new DocumentFormatException(
+                    $"This assembly places a component it does not list: {exception.Message}",
+                    exception);
+            }
+        }
+
+        return assembly;
+    }
+
+    private static ComponentDefinition ReadDefinition(ref MessagePackReader reader)
+    {
+        ComponentDefinitionId id = ComponentDefinitionId.None;
+        string source = string.Empty;
+        string name = string.Empty;
+        ComponentKind kind = ComponentKind.Part;
+
+        int fields = reader.ReadMapHeader();
+
+        for (int f = 0; f < fields; ++f)
+        {
+            switch (reader.ReadString())
+            {
+                case "id": id = ComponentDefinitionId.Parse(reader.ReadString()); break;
+                case "source": source = reader.ReadString() ?? string.Empty; break;
+                case "name": name = reader.ReadString() ?? string.Empty; break;
+                case "kind": kind = (ComponentKind)reader.ReadInt32(); break;
+                default: reader.Skip(); break;
+            }
+        }
+
+        if (!id.IsValid)
+        {
+            throw new DocumentFormatException("An assembly lists a component with no identity.");
+        }
+
+        return new ComponentDefinition(id, source, name, kind);
+    }
+
+    private static ComponentOccurrence ReadOccurrence(ref MessagePackReader reader)
+    {
+        OccurrenceId id = OccurrenceId.None;
+        ComponentDefinitionId definition = ComponentDefinitionId.None;
+        Transform placement = Transform.Identity;
+        bool grounded = false;
+        bool suppressed = false;
+        bool hidden = false;
+        string? appearance = null;
+        string? label = null;
+
+        int fields = reader.ReadMapHeader();
+
+        for (int f = 0; f < fields; ++f)
+        {
+            switch (reader.ReadString())
+            {
+                case "id": id = OccurrenceId.Parse(reader.ReadString()); break;
+                case "definition": definition = ComponentDefinitionId.Parse(reader.ReadString()); break;
+                case "placement": placement = ReadTransform(ref reader); break;
+                case "grounded": grounded = reader.ReadBoolean(); break;
+                case "suppressed": suppressed = reader.ReadBoolean(); break;
+                case "hidden": hidden = reader.ReadBoolean(); break;
+                case "appearance": appearance = reader.TryReadNil() ? null : reader.ReadString(); break;
+                case "label": label = reader.TryReadNil() ? null : reader.ReadString(); break;
+                default: reader.Skip(); break;
+            }
+        }
+
+        if (!id.IsValid)
+        {
+            throw new DocumentFormatException("An assembly holds a placement with no identity.");
+        }
+
+        return new ComponentOccurrence(
+            id, definition, placement, grounded, suppressed, hidden, appearance, label);
+    }
+
+    private static Transform ReadTransform(ref MessagePackReader reader)
+    {
+        reader.ReadArrayHeader();
+
+        Quatd rotation = new(
+            reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble());
+
+        Vec3d translation = new(reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble());
+
+        return new Transform(rotation, translation, reader.ReadDouble());
     }
 
     /// <summary>How many fields an owner carries that this build cannot read.</summary>
@@ -250,6 +479,11 @@ public static class DocumentCodec
         ImmutableArray<ReferenceGeometry>? references = null;
         DocumentMetadata metadata = DocumentMetadata.Empty;
         int? rollback = null;
+
+        // A file written before documents had a kind is a part, which is what every file written
+        // before this existed was. Its assembly section is likewise absent rather than empty.
+        DocumentKind kind = DocumentKind.Part;
+        Assembly assembly = Assembly.Empty;
         List<UnknownField> unknown = [];
 
         for (int i = 0; i < fields; ++i)
@@ -322,6 +556,14 @@ public static class DocumentCodec
                     rollback = reader.TryReadNil() ? null : reader.ReadInt32();
                     break;
 
+                case "kind":
+                    kind = (DocumentKind)reader.ReadInt32();
+                    break;
+
+                case "assembly":
+                    assembly = ReadAssembly(ref reader);
+                    break;
+
                 default:
                     // Kept, not skipped (P3-T20). A field this build has no name for was put there
                     // by something that did, and a reader that dropped it would make opening a
@@ -341,7 +583,9 @@ public static class DocumentCodec
             references ?? [.. ReferenceGeometry.StandardDatums()],
             metadata,
             rollback,
-            [.. unknown]);
+            [.. unknown],
+            kind,
+            assembly);
     }
 
     /// <summary>Takes the value of a field this build has no name for, exactly as it is.</summary>

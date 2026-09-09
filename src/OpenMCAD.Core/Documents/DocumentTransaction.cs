@@ -156,6 +156,19 @@ internal sealed class DocumentTransaction : IDocumentTransaction
     }
 
     /// <inheritdoc />
+    /// <inheritdoc/>
+    public void SetAssembly(Assemblies.Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        EnsureOpen();
+
+        // No feature is touched. An assembly's structure is not produced by the feature graph, so
+        // marking one dirty would ask the rebuild engine to re-evaluate something that had not
+        // changed -- and marking none is right rather than merely cheap: what a placement affects
+        // is where geometry sits in the world, which is P5-T06's live mate solving, not a rebuild.
+        _working = _working.WithAssembly(assembly);
+    }
+
     public void AddReference(ReferenceGeometry reference)
     {
         ArgumentNullException.ThrowIfNull(reference);
