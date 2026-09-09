@@ -60,6 +60,13 @@ can be compared against each other rather than against a second implementation.
 **Container parts this build has no name for are kept and written back** (`PackageContents.Unrecognised`).
 That is the whole of what forward compatibility means for something nobody can interpret.
 
+**A target names a document, and the store decides what that means** (`IDocumentStore`, P5-T12).
+Nothing above the store interprets the string: `ComponentDefinition.Source` and
+`/refs/external.json` both carry one, and a folder, a vault or a fixture answers it differently.
+`FileDocumentStore` reads it as a path relative to a root and refuses any target that escapes that
+root — a document is data, and one that could name a path outside the folder it lives in would make
+opening an untrusted file a way to read the machine.
+
 **One part is not the caller's business.** Everything in `PackageContents` is opaque and comes from
 whoever is saving — except `/refs/external.json`, which `Save` writes from the document and `Open`
 folds back into it (P5-T12). The asymmetry is deliberate: the stamps in that part are the only
@@ -288,5 +295,5 @@ bump-and-migrate rule above exists to force.
 | More than one format fixture | Same reason: no released version has produced one. |
 | Autosave and crash-recovery journaling | §5.8 places it in Phase 6. |
 | LOD levels in the tessellation cache | The container has the slot; P2-T04's LOD is not built, and `rendering.md` §11 records why. |
-| Opening a document by reference | The container reads and writes; nothing yet turns a `/refs/external.json` target into an open document. That is P5-T12's store, and what P5-T11's resolution waits on. |
+| Content-addressed staleness | `FileDocumentStore` stamps a document with its modification time and length, which is cheap enough to ask about every dependency when an out-of-date indicator is drawn. Two edits inside the filesystem's timestamp granularity that leave the length unchanged are indistinguishable. A vault-backed `IDocumentStore` should stamp with the revision the vault already knows; a bare filesystem has nothing better that is not a full read. |
 | Per-configuration previews | Configurations are Phase 14. |
