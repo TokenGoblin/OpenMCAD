@@ -141,6 +141,21 @@ internal sealed class DocumentTransaction : IDocumentTransaction
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    public void RemoveReference(FeatureId owner, string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        EnsureOpen();
+
+        _working = _working.WithoutReference(owner, name);
+
+        if (owner.IsValid)
+        {
+            _touchedFeatures.Add(owner);
+        }
+    }
+
+    /// <inheritdoc />
     public void AddReference(ReferenceGeometry reference)
     {
         ArgumentNullException.ThrowIfNull(reference);

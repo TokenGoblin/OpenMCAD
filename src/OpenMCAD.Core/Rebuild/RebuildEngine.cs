@@ -473,6 +473,30 @@ public sealed class RebuildEngine : IDisposable
             }
         }
 
+        // Reference geometry travels with the bodies. Until now it did not: a feature's datums were
+        // computed into the working document and then dropped on the floor here, so
+        // FeatureOutput.References -- documented since P3-T04 as carrying "any reference geometry it
+        // created, such as a datum plane" -- had never once reached a document. Nothing noticed,
+        // because until P5-T03 nothing produced any.
+        //
+        // Published exactly the way bodies are, two lines above: set what the rebuild produced,
+        // then take away what it no longer produces. The identity is the owner and the name rather
+        // than a generated id, which is the only difference. The standard datums are in both
+        // collections and so are never candidates for removal.
+        foreach (ReferenceGeometry reference in working.References)
+        {
+            transaction.AddReference(reference);
+        }
+
+        foreach (ReferenceGeometry reference in start.References)
+        {
+            if (!working.References.Any(
+                r => r.Owner == reference.Owner && r.Name == reference.Name))
+            {
+                transaction.RemoveReference(reference.Owner, reference.Name);
+            }
+        }
+
         transaction.SetReport(working.Report);
         transaction.Commit();
 
@@ -592,6 +616,11 @@ public sealed class RebuildEngine : IDisposable
     }
 
     /// <summary>Takes away the geometry of a feature that is no longer evaluated.</summary>
+    /// <remarks>
+    /// Reference geometry goes too. A datum plane belonging to a feature the user has suppressed or
+    /// rolled back past is not there any more, and leaving it would let a sketch be placed on a
+    /// plane the model does not currently produce.
+    /// </remarks>
     private static Document Discard(Document document, FeatureId id)
     {
         foreach (Body existing in document.BodiesOf(id))
@@ -599,7 +628,7 @@ public sealed class RebuildEngine : IDisposable
             document = document.WithBodyRemoved(existing.Id);
         }
 
-        return document;
+        return document.WithoutReferencesOf(id);
     }
 
     /// <summary>Replaces what a feature owned with what it has just produced.</summary>
@@ -611,6 +640,11 @@ public sealed class RebuildEngine : IDisposable
         {
             document = document.WithBodyRemoved(existing.Id);
         }
+
+        // The same for reference geometry, which until now nothing produced and so nothing tested.
+        // A datum plane is identified by its owner and its name, not by a generated id, so a second
+        // rebuild would otherwise add a second copy of the same plane rather than replacing it.
+        document = document.WithoutReferencesOf(id);
 
         foreach (Body body in output.Bodies)
         {

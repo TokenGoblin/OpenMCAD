@@ -474,7 +474,24 @@ public sealed class Document
     {
         ArgumentNullException.ThrowIfNull(reference);
 
-        return With(references: References.Add(reference));
+        // Add or replace, keyed by owner and name -- the pair that identifies a datum, and
+        // what a sketch plane reference resolves against (P4-T10). A plain append would give a
+        // feature two planes called the same thing the second time it was rebuilt, and the
+        // resolution that has to choose between them has no way to prefer either.
+        int existing = -1;
+
+        for (int i = 0; i < References.Length; ++i)
+        {
+            if (References[i].Owner == reference.Owner && References[i].Name == reference.Name)
+            {
+                existing = i;
+                break;
+            }
+        }
+
+        return With(references: existing < 0
+            ? References.Add(reference)
+            : References.SetItem(existing, reference));
     }
 
     /// <summary>Replaces the document's properties.</summary>
@@ -580,6 +597,43 @@ public sealed class Document
     /// there would give the document two of each after every open.
     /// </remarks>
     internal Document WithoutReferences() => With(references: []);
+
+    /// <summary>Takes away one piece of reference geometry.</summary>
+    /// <param name="owner">Who produced it.</param>
+    /// <param name="name">What it is called.</param>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// The pair is the identity, so this is the exact counterpart of
+    /// <see cref="WithBodyRemoved"/>: a rebuild publishes what a feature produced and takes away
+    /// what it no longer does, and a feature that made three datums and now makes one has to lose
+    /// the other two by name rather than by owner.
+    /// </remarks>
+    internal Document WithoutReference(FeatureId owner, string name)
+        => With(references: [.. References.Where(r => r.Owner != owner || r.Name != name)]);
+
+    /// <summary>Takes away the reference geometry one feature produced.</summary>
+    /// <param name="owner">Whose geometry to remove.</param>
+    /// <returns>The new document.</returns>
+    /// <remarks>
+    /// <para>
+    /// The counterpart of <see cref="WithBodyRemoved"/>, and needed for the same reason: a rebuild
+    /// replaces what a feature produced rather than adding to it. Bodies are held by id and so
+    /// replace themselves, but reference geometry is a plain collection that only ever grew — a
+    /// datum plane rebuilt twice would exist twice, and a suppressed one would stay in the document
+    /// and remain sketchable.
+    /// </para>
+    /// <para>
+    /// <see cref="FeatureId.None"/> owns the standard datums, so it is ignored rather than obeyed.
+    /// Today's only caller cannot reach it — the rebuild removes an owner only when its geometry
+    /// has gone, and the standard datums never go — so no test can distinguish the branch being
+    /// there. It stays for the next caller, because the cost of being wrong is a document whose
+    /// origin planes silently vanish and every sketch loses its plane.
+    /// </para>
+    /// </remarks>
+    internal Document WithoutReferencesOf(FeatureId owner)
+        => owner == FeatureId.None
+            ? this
+            : With(references: [.. References.Where(r => r.Owner != owner)]);
 
     /// <summary>Records how every feature stood after a rebuild.</summary>
     /// <param name="report">The report.</param>

@@ -85,6 +85,17 @@ public interface IDocumentTransaction : IDisposable
     /// <exception cref="InvalidOperationException">The transaction is no longer open.</exception>
     void AddReference(ReferenceGeometry reference);
 
+    /// <summary>Takes away one piece of reference geometry.</summary>
+    /// <param name="owner">Who produced it.</param>
+    /// <param name="name">What it is called.</param>
+    /// <remarks>
+    /// The counterpart of <see cref="RemoveBody"/>, at the granularity a reference is identified
+    /// by. A rebuild replaces what a feature produced rather than adding to it, so a datum
+    /// belonging to a feature that has been suppressed, rolled back past, or that simply makes
+    /// fewer datums than it used to, has to go the same way a body does.
+    /// </remarks>
+    void RemoveReference(FeatureId owner, string name);
+
     /// <summary>Moves the rollback bar.</summary>
     /// <param name="position">
     /// How many features from the top of the tree stay active, or null to roll forward to the end.
