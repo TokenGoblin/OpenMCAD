@@ -151,6 +151,112 @@ public static class MateAnalysis
         ];
     }
 
+    /// <summary>Which bodies moving one of them can disturb.</summary>
+    /// <param name="bodies">The bodies, and which of them are fixed.</param>
+    /// <param name="mates">What joins them.</param>
+    /// <param name="from">The body being moved.</param>
+    /// <returns>
+    /// <paramref name="from"/> and everything a mate can carry the movement to, including the
+    /// grounded bodies that stop it. Empty when <paramref name="from"/> is not one of the bodies.
+    /// </returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <remarks>
+    /// <para>
+    /// A different question from <see cref="Groups"/>, and it took a drag to notice. Groups answers
+    /// "which bodies must be solved together", and deliberately leaves grounded bodies out because
+    /// they are anchors rather than unknowns. A drag asks "what does moving <em>this</em> disturb",
+    /// and the answer has to start at a body the drag has just grounded — so the one Groups would
+    /// exclude is the one this must begin from.
+    /// </para>
+    /// <para>
+    /// <b>Movement stops at a grounded body rather than passing through it.</b> Drag a bracket
+    /// mated to a fixed base which is mated to a cover, and the cover does not move: the base
+    /// cannot, so nothing beyond it can be disturbed by way of it. The grounded body is still
+    /// returned, because the solve needs it — it is what the dragged part is being positioned
+    /// against — but the search does not expand from it. Traversing through would drag the whole
+    /// product every time, which is the answer this exists to avoid.
+    /// </para>
+    /// </remarks>
+    public static ImmutableArray<MateBodyId> Reaching(
+        IReadOnlyCollection<MateBody> bodies,
+        IReadOnlyCollection<AssemblyMate> mates,
+        MateBodyId from)
+    {
+        ArgumentNullException.ThrowIfNull(bodies);
+        ArgumentNullException.ThrowIfNull(mates);
+
+        Dictionary<MateBodyId, MateBody> byId = bodies.ToDictionary(b => b.Id);
+
+        if (!byId.ContainsKey(from))
+        {
+            return [];
+        }
+
+        Dictionary<MateBodyId, List<MateBodyId>> neighbours = [];
+
+        foreach (AssemblyMate mate in mates)
+        {
+            if (!MatePairing.For(mate).IsSupported || mate.Bodies.Length != 2)
+            {
+                continue;
+            }
+
+            MateBodyId a = mate.Bodies[0];
+            MateBodyId b = mate.Bodies[1];
+
+            if (!byId.ContainsKey(a) || !byId.ContainsKey(b))
+            {
+                continue;
+            }
+
+            Add(neighbours, a, b);
+            Add(neighbours, b, a);
+        }
+
+        HashSet<MateBodyId> found = [from];
+        Queue<MateBodyId> pending = new();
+        pending.Enqueue(from);
+
+        while (pending.Count > 0)
+        {
+            MateBodyId at = pending.Dequeue();
+
+            // The body the drag holds is grounded too, and expanding from it is the whole point --
+            // so the check is on the ones reached rather than on the one started from.
+            if (at != from && byId[at].IsGrounded)
+            {
+                continue;
+            }
+
+            if (!neighbours.TryGetValue(at, out List<MateBodyId>? next))
+            {
+                continue;
+            }
+
+            foreach (MateBodyId neighbour in next)
+            {
+                if (found.Add(neighbour))
+                {
+                    pending.Enqueue(neighbour);
+                }
+            }
+        }
+
+        // Ordered, so that two runs hand the solver the same sub-problem (ADR-0011).
+        return [.. found.OrderBy(id => id.Value)];
+    }
+
+    private static void Add(
+        Dictionary<MateBodyId, List<MateBodyId>> neighbours, MateBodyId from, MateBodyId to)
+    {
+        if (!neighbours.TryGetValue(from, out List<MateBodyId>? next))
+        {
+            neighbours[from] = next = [];
+        }
+
+        next.Add(to);
+    }
+
     private static MateBodyId Find(Dictionary<MateBodyId, MateBodyId> parent, MateBodyId id)
     {
         while (parent[id] != id)
