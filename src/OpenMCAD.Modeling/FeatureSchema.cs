@@ -29,6 +29,27 @@ public enum PropertyKind
 
     /// <summary>Geometry the user picks, stored as one of the feature's entity references.</summary>
     Selection,
+
+    /// <summary>
+    /// Something already in the document that the user picks: reference geometry by name, or a
+    /// face, edge or vertex of a body.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Distinct from <see cref="Selection"/> because it is satisfied two different ways and stored
+    /// in two different places. Reference geometry is a <see cref="ReferenceValue"/> setting, kernel
+    /// topology is an <see cref="EntityReference"/> claiming this property by name, and exactly one
+    /// of the two applies — a file saying both says two things about one input.
+    /// </para>
+    /// <para>
+    /// The split is not a storage detail leaking into the schema. Topology has to live in
+    /// <see cref="Feature.References"/> because that is where <see cref="FeatureGraph"/> reads the
+    /// dependency edges from, and reference geometry has to be a value because it carries no
+    /// <see cref="PersistentName"/> to trace. Declaring one property either way round is what lets
+    /// a datum plane be offset from a datum or from a face without being two features.
+    /// </para>
+    /// </remarks>
+    Reference,
 }
 
 /// <summary>
@@ -229,7 +250,53 @@ public sealed record FeatureSchema(
                 : null;
         }
 
+        // A Reference property falls through to the settings deliberately: a ReferenceValue lives
+        // there, and a null means either "satisfied by an entity reference instead" or "not given",
+        // which SatisfiedBy is what tells apart.
         return property.Kind == PropertyKind.Selection ? null : feature.FindSetting(property.Name);
+    }
+
+    /// <summary>How a feature has answered one of its declared inputs.</summary>
+    public enum InputSource
+    {
+        /// <summary>Nothing has answered it.</summary>
+        Unanswered,
+
+        /// <summary>Reference geometry, named by a <see cref="ReferenceValue"/> setting.</summary>
+        Geometry,
+
+        /// <summary>Kernel topology, by an <see cref="EntityReference"/> claiming this property.</summary>
+        Topology,
+
+        /// <summary>Both, which is a file saying two things about one input.</summary>
+        Both,
+    }
+
+    /// <summary>Says how a feature has answered a <see cref="PropertyKind.Reference"/> input.</summary>
+    /// <param name="property">The property.</param>
+    /// <param name="feature">The feature.</param>
+    /// <returns>Which of the two ways answered it, if either.</returns>
+    /// <remarks>
+    /// <see cref="InputSource.Both"/> is reported rather than resolved by preferring one. Whichever
+    /// were preferred, the other would be silently ignored, and a datum built on the face the user
+    /// last picked while the file still names a datum plane is exactly the kind of quietly wrong
+    /// geometry §5.3 would rather refuse than guess at.
+    /// </remarks>
+    public static InputSource SatisfiedBy(FeatureProperty property, Feature feature)
+    {
+        ArgumentNullException.ThrowIfNull(property);
+        ArgumentNullException.ThrowIfNull(feature);
+
+        bool geometry = feature.FindSetting(property.Name) is ReferenceValue;
+        bool topology = feature.FindSelection(property.Name) >= 0;
+
+        return (geometry, topology) switch
+        {
+            (true, true) => InputSource.Both,
+            (true, false) => InputSource.Geometry,
+            (false, true) => InputSource.Topology,
+            _ => InputSource.Unanswered,
+        };
     }
 
     /// <summary>Fills in whatever a feature has not been told and the schema has a default for.</summary>
@@ -299,6 +366,16 @@ public sealed record FeatureSchema(
                 continue;
             }
 
+            if (property.Kind == PropertyKind.Reference)
+            {
+                if (ComplainAboutInput(property, feature) is { } wrongInput)
+                {
+                    found.Add(wrongInput);
+                }
+
+                continue;
+            }
+
             FeatureValue? value = ValueOf(property, feature);
 
             if (value is null)
@@ -359,6 +436,33 @@ public sealed record FeatureSchema(
     /// <inheritdoc/>
     public override string ToString() => $"{Label} ({FeatureType}, {Declared.Length} properties)";
 
+    /// <summary>What is wrong with how an input was answered, or null if nothing is.</summary>
+    /// <remarks>
+    /// Only the two questions this layer can answer without a built model: whether anything answered
+    /// the input at all, and whether two things did. Whether the entity a selection names still
+    /// exists is persistent naming's question, asked at rebuild (§5.3), and answering it here would
+    /// be guessing -- the same reason a plain <see cref="PropertyKind.Selection"/> is not asked for
+    /// above.
+    /// </remarks>
+    private static SchemaViolation? ComplainAboutInput(FeatureProperty property, Feature feature)
+        => SatisfiedBy(property, feature) switch
+        {
+            InputSource.Unanswered => new SchemaViolation(
+                feature.Id,
+                property.Name,
+                ViolationSeverity.Error,
+                $"'{property.Label}' has not been given anything to point at."),
+
+            InputSource.Both => new SchemaViolation(
+                feature.Id,
+                property.Name,
+                ViolationSeverity.Error,
+                $"'{property.Label}' names both reference geometry and a piece of a body, and "
+                    + "only one of the two can be what it points at."),
+
+            _ => null,
+        };
+
     /// <summary>What is wrong with a value, or null if nothing is.</summary>
     private static string? Check(FeatureProperty property, FeatureValue value)
     {
@@ -375,6 +479,9 @@ public sealed record FeatureSchema(
 
             case (PropertyKind.Flag, FlagValue):
             case (PropertyKind.Text, TextValue):
+                return null;
+
+            case (PropertyKind.Reference, ReferenceValue):
                 return null;
 
             case (PropertyKind.Choice, ChoiceValue choice):
@@ -408,6 +515,7 @@ public sealed record FeatureSchema(
         PropertyKind.Flag => "on or off",
         PropertyKind.Text => "text",
         PropertyKind.Choice => "one of a set of options",
+        PropertyKind.Reference => "reference geometry or a piece of a body",
         _ => "geometry",
     };
 

@@ -178,6 +178,14 @@ public readonly record struct RebuildKey(ulong High, ulong Low)
                 WriteText(hash, choice.Value);
                 break;
 
+            case ReferenceValue reference:
+                // Both halves. The owner alone would make a feature's two datums interchangeable,
+                // and the name alone would make one feature's "Plane1" the same key as another's.
+                Write(hash, 6);
+                WriteText(hash, reference.Owner.ToStorageString());
+                WriteText(hash, reference.Name);
+                break;
+
             default:
                 // A kind this build does not know cannot be hashed into a key that means anything,
                 // and hashing only its type name would make two different values look identical.

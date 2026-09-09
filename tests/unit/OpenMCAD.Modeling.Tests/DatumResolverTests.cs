@@ -304,8 +304,7 @@ public sealed class DatumResolverTests
         DatumResolution result = DatumResolver.Resolve(
             new DatumDefinition.PlaneOffsetFrom("d", scenario.Reference(face), 1),
             Owner,
-            Document.Empty(),
-            Owner);
+            Document.Empty());
 
         result.Outcome.Should().Be(DatumResolutionOutcome.NotFound);
     }
@@ -954,8 +953,7 @@ public sealed class DatumResolverTests
             definition,
             Owner,
             document ?? Document.Empty(),
-            Owner,
-            scenario?.Resolver(),
+            scenario is null ? null : DatumResolver.Through(scenario.Resolver(), Owner),
             planeOf,
             pointOf,
             curveOf);

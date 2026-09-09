@@ -86,6 +86,33 @@ public sealed record Feature(
     public FeatureValue? FindSetting(string name)
         => SettingValues.TryGetValue(name, out FeatureValue? value) ? value : null;
 
+    /// <summary>Finds which entity reference satisfies one of this feature's declared inputs.</summary>
+    /// <param name="property">The input's stable name, as its schema declares it.</param>
+    /// <returns>
+    /// Its position in <see cref="EntityReferences"/>, or -1 if no reference claims that input.
+    /// </returns>
+    /// <remarks>
+    /// The position rather than the reference, because that is what a rebuild needs: an evaluator
+    /// is handed <c>FeatureEvaluation.Resolved</c> in the same order, so the index is what turns
+    /// "the plane this datum is offset from" into the entity it resolved to this time round.
+    /// </remarks>
+    public int FindSelection(string property)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(property);
+
+        ImmutableArray<Naming.EntityReference> references = EntityReferences;
+
+        for (int i = 0; i < references.Length; ++i)
+        {
+            if (string.Equals(references[i].Property, property, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     /// <summary>Returns this feature with a setting given a value.</summary>
     /// <param name="name">What it is called.</param>
     /// <param name="value">What it is now.</param>

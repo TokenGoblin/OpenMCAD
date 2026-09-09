@@ -52,6 +52,9 @@ public static class DocumentCodec
     /// <summary>The tag of a setting holding one of a set of options.</summary>
     private const int SettingChoice = 4;
 
+    /// <summary>The tag of a setting pointing at reference geometry.</summary>
+    private const int SettingReference = 5;
+
     /// <summary>Writes a document.</summary>
     /// <param name="document">The document.</param>
     /// <returns>Its bytes.</returns>
@@ -399,13 +402,22 @@ public static class DocumentCodec
 
         foreach (EntityReference reference in feature.EntityReferences)
         {
-            writer.WriteMapHeader(2);
+            // Two fields or three. A reference that does not say which input it is has nothing to
+            // record, and writing an empty string for it would put a field in every file already
+            // written in order to say nothing.
+            writer.WriteMapHeader(reference.IsNamed ? 3 : 2);
 
             writer.Write("name");
             writer.Write(PersistentNameFormat.Write(reference.Name));
 
             writer.Write("mult");
             writer.Write((int)reference.Multiplicity);
+
+            if (reference.IsNamed)
+            {
+                writer.Write("prop");
+                writer.Write(reference.Property);
+            }
         }
 
         writer.Write("suppressed");
@@ -468,6 +480,13 @@ public static class DocumentCodec
                     writer.Write(choice.Value);
                     break;
 
+                case ReferenceValue reference:
+                    writer.Write(SettingReference);
+                    writer.WriteArrayHeader(2);
+                    writer.Write(reference.Owner.ToStorageString());
+                    writer.Write(reference.Name);
+                    break;
+
                 default:
                     throw new DocumentFormatException(
                         $"There is no way to write a {value.GetType().Name}. A kind of value added "
@@ -524,6 +543,13 @@ public static class DocumentCodec
 
                 case SettingChoice:
                     found[name] = new ChoiceValue(reader.ReadString());
+                    break;
+
+                case SettingReference:
+                    reader.ReadArrayHeader();
+                    found[name] = new ReferenceValue(
+                        FeatureId.Parse(reader.ReadString()), reader.ReadString());
+
                     break;
 
                 default:
@@ -620,6 +646,7 @@ public static class DocumentCodec
 
             PersistentName? name = null;
             MultiplicityPolicy multiplicity = MultiplicityPolicy.ExactlyOne;
+            string property = string.Empty;
 
             for (int f = 0; f < fields; ++f)
             {
@@ -631,6 +658,10 @@ public static class DocumentCodec
 
                     case "mult":
                         multiplicity = (MultiplicityPolicy)reader.ReadInt32();
+                        break;
+
+                    case "prop":
+                        property = reader.ReadString() ?? string.Empty;
                         break;
 
                     default:
@@ -645,7 +676,7 @@ public static class DocumentCodec
                     "A feature refers to an entity without saying which one.");
             }
 
-            found.Add(new EntityReference(name, multiplicity));
+            found.Add(new EntityReference(name, multiplicity, property));
         }
 
         return found.ToImmutable();

@@ -75,6 +75,39 @@ public sealed record TextValue(string Value) : FeatureValue
     public override string ToString() => Value;
 }
 
+/// <summary>A pointer at reference geometry the document already holds.</summary>
+/// <param name="Owner">
+/// The feature that created it, or <see cref="FeatureId.None"/> for the origin geometry every
+/// document starts with.
+/// </param>
+/// <param name="Name">What it is called.</param>
+/// <remarks>
+/// <para>
+/// A value rather than an <see cref="Naming.EntityReference"/>, which is the other way a feature
+/// points at something. The two look alike and are not: an entity reference names kernel topology,
+/// which has no name of its own and has to be traced through the model's history by the three tiers
+/// of §5.3, and it carries a <see cref="Naming.MultiplicityPolicy"/> because the face it named can
+/// become several. Reference geometry has a name it keeps, is looked up by
+/// <see cref="Document.FindReference"/> in one step, and cannot split. Giving it the naming layer's
+/// machinery would mean carrying repair, ranking and multiplicity for a lookup that either finds a
+/// datum plane called "Front" or does not.
+/// </para>
+/// <para>
+/// The consequence worth stating: this contributes an edge to the dependency graph exactly when
+/// <paramref name="Owner"/> is a real feature, and the feature holding it must declare that owner in
+/// <see cref="Feature.Inputs"/> — <see cref="FeatureGraph"/> reads inputs and entity references, and
+/// a datum's own settings are not somewhere it looks.
+/// </para>
+/// </remarks>
+public sealed record ReferenceValue(FeatureId Owner, string Name) : FeatureValue
+{
+    /// <inheritdoc/>
+    public override string Kind => "reference geometry";
+
+    /// <inheritdoc/>
+    public override string ToString() => Owner.IsValid ? $"{Name} (of {Owner})" : Name;
+}
+
 /// <summary>One of a fixed set of options.</summary>
 /// <param name="Value">Which one, by its stable name.</param>
 /// <remarks>

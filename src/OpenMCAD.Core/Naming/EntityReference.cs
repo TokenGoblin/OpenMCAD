@@ -55,24 +55,52 @@ public enum MultiplicityPolicy
 /// </summary>
 /// <param name="Name">Which entity.</param>
 /// <param name="Multiplicity">What to do when it has become more than one.</param>
+/// <param name="Property">
+/// Which of the feature's declared inputs this reference satisfies, by the stable name its schema
+/// gives that input. Empty when the feature does not declare its inputs by name.
+/// </param>
 /// <remarks>
+/// <para>
 /// The unit a feature actually declares. §5.3 asks for the policy to be recorded per reference
 /// rather than per feature, because one feature can hold references meaning different things: a
 /// boolean cut wants exactly one tool body, and the faces it is aligned against may well be a
 /// region.
+/// </para>
+/// <para>
+/// <b>Why a reference says which input it is.</b> A feature with one selection needs no such thing,
+/// and until there was a feature with more than one nothing noticed that <c>PropertyKind.Selection</c>
+/// could be declared in a schema and never read back: position in the array was the only link, and
+/// position is not a link at all once one input is optional or can be satisfied another way. A
+/// datum plane through three points and a datum plane at an angle to an axis are the first features
+/// where getting two inputs the wrong way round produces geometry rather than an error, which is
+/// the failure worth spending a field to make impossible.
+/// </para>
+/// <para>
+/// Defaulted to empty rather than required. Every reference written before this existed says
+/// nothing about which input it is, and a feature with a single selection has nothing to say —
+/// demanding a name from both would be demanding it for the sake of the field.
+/// </para>
 /// </remarks>
 public sealed record EntityReference(
     PersistentName Name,
-    MultiplicityPolicy Multiplicity = MultiplicityPolicy.ExactlyOne)
+    MultiplicityPolicy Multiplicity = MultiplicityPolicy.ExactlyOne,
+    string Property = "")
 {
     /// <summary>Gets whether this reference expects to yield a set rather than a single entity.</summary>
     public bool IsSet => Multiplicity == MultiplicityPolicy.AllDescendants;
 
+    /// <summary>Gets whether this reference says which of its feature's inputs it satisfies.</summary>
+    public bool IsNamed => !string.IsNullOrEmpty(Property);
+
     /// <inheritdoc />
     public override string ToString()
-        => Multiplicity == MultiplicityPolicy.ExactlyOne
+    {
+        string entity = Multiplicity == MultiplicityPolicy.ExactlyOne
             ? Name.ToString()
             : $"{Name} [{Multiplicity}]";
+
+        return IsNamed ? $"{Property}={entity}" : entity;
+    }
 }
 
 /// <summary>

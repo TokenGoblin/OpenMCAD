@@ -123,17 +123,11 @@ public static class DatumResolver
     /// hosts it.
     /// </param>
     /// <param name="document">The document to resolve reference geometry against.</param>
-    /// <param name="consumer">
-    /// The feature holding the definition, for a topology reference's history search. The same
-    /// feature as <paramref name="owner"/> in ordinary use; separate because
-    /// <see cref="NameResolver"/> takes the consumer as its own concept and conflating the two here
-    /// would hide that.
-    /// </param>
-    /// <param name="entityResolver">
-    /// How to resolve a topology reference through the naming tiers (§5.3), or
-    /// <see langword="null"/> if this configuration cannot — any
-    /// <see cref="DatumReference.OnTopology"/> then fails with
-    /// <see cref="DatumResolutionOutcome.NotFound"/> rather than throwing.
+    /// <param name="entityOf">
+    /// What a topology reference already came to, or <see langword="null"/> if this configuration
+    /// has no way to say — any <see cref="DatumReference.OnTopology"/> then fails with
+    /// <see cref="DatumResolutionOutcome.NotFound"/> rather than throwing. Use
+    /// <see cref="Through"/> to build one from a <see cref="NameResolver"/>.
     /// </param>
     /// <param name="planeOf">
     /// How to get the world-space plane a resolved face lies on, or <see langword="null"/> to the
@@ -153,8 +147,7 @@ public static class DatumResolver
         DatumDefinition definition,
         FeatureId owner,
         Document document,
-        FeatureId consumer,
-        NameResolver? entityResolver = null,
+        Func<PersistentName, ResolvedReference>? entityOf = null,
         Func<SubEntity, Plane?>? planeOf = null,
         Func<SubEntity, Vec3d?>? pointOf = null,
         Func<SubEntity, WorldCurve?>? curveOf = null)
@@ -162,7 +155,7 @@ public static class DatumResolver
         ArgumentNullException.ThrowIfNull(definition);
         ArgumentNullException.ThrowIfNull(document);
 
-        Lookup lookup = new(document, consumer, entityResolver, planeOf, pointOf, curveOf);
+        Lookup lookup = new(document, entityOf, planeOf, pointOf, curveOf);
 
         return definition switch
         {
@@ -181,6 +174,33 @@ public static class DatumResolver
             DatumDefinition.PointAlongEdge alongEdge => PointAlongEdge(alongEdge, owner, lookup),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(definition), definition, "Unknown datum definition kind."),
+        };
+    }
+
+    /// <summary>Builds an entity source that resolves names afresh through the naming tiers.</summary>
+    /// <param name="resolver">The resolver.</param>
+    /// <param name="consumer">The feature holding the definition, for the history search.</param>
+    /// <returns>The source.</returns>
+    /// <remarks>
+    /// For a caller that has a name and no answer yet — a tool building a datum interactively, or a
+    /// test. A rebuild is not that caller: the engine has already resolved every declared reference
+    /// by the time an evaluator runs, and resolving them a second time here would be work done
+    /// twice that could come out differently, since the geometric tier scores candidates against a
+    /// model the second pass would be reading in a different state.
+    /// </remarks>
+    public static Func<PersistentName, ResolvedReference> Through(
+        NameResolver resolver, FeatureId consumer)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+
+        return name =>
+        {
+            NameResolution resolution = resolver.Resolve(name, consumer);
+
+            return new ResolvedReference(
+                resolution.Outcome,
+                resolution.IsResolved ? [resolution.Entity] : [],
+                resolution.Reason);
         };
     }
 
@@ -614,8 +634,7 @@ public static class DatumResolver
     /// </remarks>
     private sealed class Lookup(
         Document document,
-        FeatureId consumer,
-        NameResolver? entityResolver,
+        Func<PersistentName, ResolvedReference>? entityOf,
         Func<SubEntity, Plane?>? planeOf,
         Func<SubEntity, Vec3d?>? pointOf,
         Func<SubEntity, WorldCurve?>? curveOf)
@@ -845,14 +864,14 @@ public static class DatumResolver
         private Input<SubEntity> Entity(
             DatumReference.OnTopology reference, SubEntityKind wanted, string description)
         {
-            if (entityResolver is null)
+            if (entityOf is null)
             {
                 return Input<SubEntity>.Failed(
                     DatumResolutionOutcome.NotFound,
                     "No way to resolve a topology reference is available in this configuration.");
             }
 
-            NameResolution resolution = entityResolver.Resolve(reference.Entity, consumer);
+            ResolvedReference resolution = entityOf(reference.Entity);
 
             if (resolution.Outcome == NameResolutionOutcome.Ambiguous)
             {
@@ -868,11 +887,24 @@ public static class DatumResolver
                     resolution.Reason ?? "The referenced entity could not be resolved.");
             }
 
+            if (resolution.Entities.Length != 1)
+            {
+                // A reference declared AllDescendants and the entity it named has split. Reported
+                // as ambiguous rather than taking the first: a datum input is one entity, and which
+                // of the pieces was meant is exactly what nothing here knows.
+                return Input<SubEntity>.Failed(
+                    DatumResolutionOutcome.Ambiguous,
+                    $"That reference came to {resolution.Entities.Length} entities, and a datum is "
+                        + "built on one.");
+            }
+
+            SubEntity entity = resolution.Entities[0];
+
             // Naming an entity of the wrong kind is a mistake by whoever built the reference rather
             // than a fact about the model, but it is still reported as data: a rebuild that throws
             // on one bad reference takes the whole document with it (§5.4).
-            return resolution.Entity.Kind == wanted
-                ? Input<SubEntity>.Of(resolution.Entity)
+            return entity.Kind == wanted
+                ? Input<SubEntity>.Of(entity)
                 : Input<SubEntity>.Failed(
                     DatumResolutionOutcome.NotFound, $"The reference does not name {description}.");
         }
