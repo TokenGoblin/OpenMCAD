@@ -35,15 +35,30 @@ public enum DimensionLayoutOutcome
 /// One line per measured point, running from the point to the dimension line, when resolved.
 /// </param>
 /// <param name="TextPosition">Where the text sits, when resolved.</param>
-/// <param name="Value">What the dimension currently reads, when resolved.</param>
+/// <param name="Value">
+/// What the dimension currently reads, when resolved: a length in the sketch's units, or an angle
+/// in radians for <see cref="ConstraintKind.Angle"/>.
+/// </param>
 /// <param name="Reason">Why, in words, when layout could not be resolved.</param>
+/// <param name="DimensionArc">
+/// The dimension line, when it is an arc rather than a segment — which is the case for an angular
+/// dimension and no other. Anticlockwise from <c>StartAngle</c> to <c>EndAngle</c>, the same
+/// convention <see cref="SketchArc"/> uses, so a renderer has one rule for arcs rather than two.
+/// </param>
+/// <remarks>
+/// Exactly one of <paramref name="DimensionLine"/> and <paramref name="DimensionArc"/> is set when
+/// resolved. Two fields rather than one, because forcing an arc into a pair of points loses the
+/// bulge that is the whole shape of an angular dimension, and making every consumer handle a
+/// general polyline would charge the seven kinds that are a straight line for the one that is not.
+/// </remarks>
 public sealed record DimensionLayout(
     DimensionLayoutOutcome Outcome,
     (Vec2d Start, Vec2d End)? DimensionLine = null,
     ImmutableArray<(Vec2d From, Vec2d To)> WitnessLines = default,
     Vec2d? TextPosition = null,
     double? Value = null,
-    string? Reason = null)
+    string? Reason = null,
+    (Vec2d Centre, double Radius, double StartAngle, double EndAngle)? DimensionArc = null)
 {
     /// <summary>Gets whether this dimension has geometry to draw.</summary>
     public bool IsResolved => Outcome == DimensionLayoutOutcome.Resolved;
@@ -66,18 +81,26 @@ public sealed record DimensionLayout(
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Scoped to the point-to-point dimension kinds.</b> <see cref="ConstraintKind.Distance"/>
-/// (aligned), <see cref="ConstraintKind.HorizontalDistance"/> and
-/// <see cref="ConstraintKind.VerticalDistance"/> (linear — §5.6's "linear" and "aligned" dimension
-/// types) are laid out here; <see cref="ConstraintKind.Distance"/>'s point-to-line operand shape,
-/// <see cref="ConstraintKind.Angle"/>, <see cref="ConstraintKind.Radius"/> and
-/// <see cref="ConstraintKind.Diameter"/> resolve to <see cref="DimensionLayoutOutcome.Unsupported"/>
-/// for now. Their geometry is a real piece of work each — an angular dimension needs an arc radius
-/// picked from the witness point and two possibly-extended lines to find where the arc meets them; a
-/// radial or diametric one needs a leader direction and a decision about whether the leader lands
-/// inside or outside the circle — and none of it is needed to give the three point-to-point kinds
-/// (which is what a plain length between two points, in any of its three senses, actually is) a
-/// complete and correct implementation now rather than three-sevenths of a general one.
+/// <b>Every dimension type §5.6 names is laid out here.</b> Aligned
+/// (<see cref="ConstraintKind.Distance"/> between two points), linear
+/// (<see cref="ConstraintKind.HorizontalDistance"/> and <see cref="ConstraintKind.VerticalDistance"/>),
+/// point-to-line (<see cref="ConstraintKind.Distance"/>'s other operand shape), angular
+/// (<see cref="ConstraintKind.Angle"/>), radial (<see cref="ConstraintKind.Radius"/>) and diametric
+/// (<see cref="ConstraintKind.Diameter"/>).
+/// </para>
+/// <para>
+/// <b>The witness point decides every choice that is otherwise arbitrary,</b> and there is one such
+/// choice per kind. It is the offset of the dimension line for a length; the radius of the arc and
+/// <em>which of the four angles</em> for an angular dimension; the direction of the leader and
+/// whether it sits inside or outside the circle for a radial or diametric one. Nothing here guesses
+/// from the geometry alone, because all of those have several defensible answers and only the user
+/// knows which they meant — they have already said, by dragging the text somewhere.
+/// </para>
+/// <para>
+/// <b>A point-to-line distance is an aligned dimension to the foot of the perpendicular.</b> Once
+/// the foot is found, "the distance from this point to that line" is the distance between two
+/// points, laid out by the same code, and giving it its own would have been a second opinion about
+/// where a dimension line goes.
 /// </para>
 /// <para>
 /// <b>Ordinate dimensioning is not a fourth layout.</b> §5.6 lists it separately, but the number an
@@ -120,11 +143,17 @@ public static class SketchDimensionLayout
         return constraint.Kind switch
         {
             ConstraintKind.Distance
-                => PointPair(constraint, sketch, dimension.TextPosition, Aligned),
+                => Length(constraint, sketch, dimension.TextPosition),
             ConstraintKind.HorizontalDistance
                 => PointPair(constraint, sketch, dimension.TextPosition, (a, b, t) => Linear(a, b, t, vertical: false)),
             ConstraintKind.VerticalDistance
                 => PointPair(constraint, sketch, dimension.TextPosition, (a, b, t) => Linear(a, b, t, vertical: true)),
+            ConstraintKind.Angle
+                => Angular(constraint, sketch, dimension.TextPosition),
+            ConstraintKind.Radius
+                => Radial(constraint, sketch, dimension.TextPosition, across: false),
+            ConstraintKind.Diameter
+                => Radial(constraint, sketch, dimension.TextPosition, across: true),
             _ => DimensionLayout.Failed(
                 DimensionLayoutOutcome.Unsupported,
                 $"This build does not yet lay out a {constraint.Schema.Label} dimension."),
@@ -167,6 +196,272 @@ public static class SketchDimensionLayout
                 "This build only lays out a dimension between two points.")
             : layout(a, b, text);
     }
+
+    /// <summary>
+    /// A <see cref="ConstraintKind.Distance"/>, which measures either between two points or from a
+    /// point to a line, and is told which by what its operands resolve to.
+    /// </summary>
+    private static DimensionLayout Length(SketchConstraint constraint, Sketch sketch, Vec2d text)
+    {
+        if (constraint.On.Length != 2)
+        {
+            return Unsupported("A distance dimension measures between two things.");
+        }
+
+        if (sketch.Entities.Find(constraint.On[0].Entity) is null
+            || sketch.Entities.Find(constraint.On[1].Entity) is not { } second)
+        {
+            return Missing();
+        }
+
+        if (sketch.Entities.Locate(constraint.On[0]) is not { } point)
+        {
+            return Unsupported(
+                "The first operand of a distance dimension has to be a point this build can place.");
+        }
+
+        // Two points is the aligned dimension. A point and a line is the same dimension to the foot
+        // of the perpendicular, which is the only place a distance to a line is ever measured from.
+        if (sketch.Entities.Locate(constraint.On[1]) is { } other)
+        {
+            return Aligned(point, other, text);
+        }
+
+        if (second is not SketchLine line)
+        {
+            return Unsupported(
+                $"This build does not lay out a distance from a point to a {second.Kind}.");
+        }
+
+        if (line.Length <= Tolerance.LinearResolution)
+        {
+            return Degenerate(
+                "The line this dimension measures to has no length, so it has no direction.");
+        }
+
+        Vec2d foot = line.Start + (line.Direction * Vec2d.Dot(point - line.Start, line.Direction));
+
+        return Aligned(foot, point, text);
+    }
+
+    /// <summary>An angular dimension: an arc between two lines, centred where they cross.</summary>
+    private static DimensionLayout Angular(SketchConstraint constraint, Sketch sketch, Vec2d text)
+    {
+        if (constraint.On.Length != 2)
+        {
+            return Unsupported("An angular dimension is between two lines.");
+        }
+
+        if (sketch.Entities.Find(constraint.On[0].Entity) is not { } firstEntity
+            || sketch.Entities.Find(constraint.On[1].Entity) is not { } secondEntity)
+        {
+            return Missing();
+        }
+
+        if (firstEntity is not SketchLine first || secondEntity is not SketchLine second)
+        {
+            return Unsupported("This build lays out an angle between two lines only.");
+        }
+
+        if (first.Length <= Tolerance.LinearResolution || second.Length <= Tolerance.LinearResolution)
+        {
+            return Degenerate("One of the lines has no length, so it points nowhere.");
+        }
+
+        double denominator = Vec2d.Cross(first.Direction, second.Direction);
+
+        if (System.Math.Abs(denominator) <= Tolerance.Linear)
+        {
+            return Degenerate(
+                "These lines are parallel, so they meet nowhere and make no angle to place an arc in.");
+        }
+
+        Vec2d vertex = first.Start
+            + (first.Direction
+                * (Vec2d.Cross(second.Start - first.Start, second.Direction) / denominator));
+
+        Vec2d spoke = text - vertex;
+        double radius = spoke.Length;
+
+        if (radius <= Tolerance.LinearResolution)
+        {
+            return Degenerate(
+                "The text sits exactly where the lines cross, which says nothing about which of the "
+                + "four angles was meant, nor how big to draw it.");
+        }
+
+        // Four angles meet at a crossing and the geometry alone cannot say which was meant. The one
+        // the text sits in is the one, so each line contributes whichever of its two rays makes a
+        // sector containing it.
+        if (Sector(first.Direction, second.Direction, spoke.Angle()) is not { } chosen)
+        {
+            return Degenerate(
+                "The text lies along one of the lines rather than between them, so there is no "
+                + "sector to draw the arc in.");
+        }
+
+        (Vec2d fromRay, Vec2d toRay, double sweep) = chosen;
+
+        return new DimensionLayout(
+            DimensionLayoutOutcome.Resolved,
+            null,
+            [
+                .. Extension(first, vertex, fromRay, radius),
+                .. Extension(second, vertex, toRay, radius),
+            ],
+            text,
+            System.Math.Abs(sweep),
+            null,
+            DimensionArc: (
+                vertex,
+                radius,
+                sweep > 0 ? fromRay.Angle() : toRay.Angle(),
+                sweep > 0 ? toRay.Angle() : fromRay.Angle()));
+    }
+
+    /// <summary>A radial or diametric dimension: a leader out along the direction of the text.</summary>
+    private static DimensionLayout Radial(
+        SketchConstraint constraint, Sketch sketch, Vec2d text, bool across)
+    {
+        if (constraint.On.Length != 1)
+        {
+            return Unsupported("A radial dimension names one circle or arc.");
+        }
+
+        if (sketch.Entities.Find(constraint.On[0].Entity) is not { } entity)
+        {
+            return Missing();
+        }
+
+        if (entity is not (SketchCircle or SketchArc))
+        {
+            return Unsupported($"This build does not lay out a radial dimension on a {entity.Kind}.");
+        }
+
+        SketchArc? arc = entity as SketchArc;
+        Vec2d centre = entity is SketchCircle circle ? circle.Centre : arc!.Centre;
+        double radius = entity is SketchCircle round ? round.Radius : arc!.Radius;
+
+        if (radius <= Tolerance.LinearResolution)
+        {
+            return Degenerate($"This {entity.Kind} has no radius to dimension.");
+        }
+
+        Vec2d spoke = text - centre;
+
+        if (spoke.Length <= Tolerance.LinearResolution)
+        {
+            return Degenerate(
+                "The text sits on the centre, which gives the leader no direction to run in.");
+        }
+
+        // An arc exists only over its own sweep, so a leader aimed past either end would point at
+        // nothing. Brought back to the nearer end rather than refused: the user asked for this
+        // arc's radius, and the nearest place the arc actually is remains a true answer to that.
+        double angle = arc is null ? spoke.Angle() : OnSweep(arc, spoke.Angle());
+        Vec2d direction = new(System.Math.Cos(angle), System.Math.Sin(angle));
+        Vec2d touch = centre + (direction * radius);
+
+        // Inside or outside is the other choice only the user can make, and dragging the text past
+        // the rim is how they make it: the leader then runs from the rim out to the text rather
+        // than from the centre to the rim.
+        bool outside = spoke.Length > radius;
+
+        (Vec2d start, Vec2d end) = across
+            ? (centre - (direction * radius), touch)
+            : outside ? (touch, text) : (centre, touch);
+
+        return new DimensionLayout(
+            DimensionLayoutOutcome.Resolved,
+            (start, end),
+            across && outside ? [(touch, text)] : [],
+            text,
+            across ? radius * 2 : radius);
+    }
+
+    /// <summary>
+    /// Which pair of rays makes the sector the text sits in, and how far it sweeps, signed.
+    /// </summary>
+    private static (Vec2d From, Vec2d To, double Sweep)? Sector(
+        Vec2d first, Vec2d second, double toText)
+    {
+        foreach (double firstSign in (ReadOnlySpan<double>)[1, -1])
+        {
+            foreach (double secondSign in (ReadOnlySpan<double>)[1, -1])
+            {
+                Vec2d from = first * firstSign;
+                Vec2d to = second * secondSign;
+
+                double sweep = Signed(to.Angle() - from.Angle());
+                double toTheText = Signed(toText - from.Angle());
+
+                // On the same side of the first ray, and not past the second. A zero sweep cannot
+                // arise here: the lines were established as non-parallel before this was asked.
+                if (toTheText * sweep >= 0
+                    && System.Math.Abs(toTheText) <= System.Math.Abs(sweep))
+                {
+                    return (from, to, sweep);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>A witness line from where a line stops to where the arc needs it to reach.</summary>
+    private static ImmutableArray<(Vec2d From, Vec2d To)> Extension(
+        SketchLine line, Vec2d vertex, Vec2d ray, double radius)
+    {
+        double reach = System.Math.Max(
+            Vec2d.Dot(line.Start - vertex, ray), Vec2d.Dot(line.End - vertex, ray));
+
+        // Only when the line stops short of the arc. A line already running past it needs no
+        // extension, and drawing a zero-length one would put a stray tick in the picture.
+        return reach >= radius - Tolerance.Linear
+            ? []
+            : [(vertex + (ray * System.Math.Max(reach, 0)), vertex + (ray * radius))];
+    }
+
+    /// <summary>An angle brought onto an arc's own sweep, by the nearer end when it is outside.</summary>
+    private static double OnSweep(SketchArc arc, double angle)
+    {
+        double wrapped = (angle - arc.StartAngle) % (2 * System.Math.PI);
+
+        if (wrapped < 0)
+        {
+            wrapped += 2 * System.Math.PI;
+        }
+
+        if (wrapped <= arc.Sweep)
+        {
+            return angle;
+        }
+
+        // Past the end. Whichever end of the sweep it is nearer to, measured the short way round.
+        return wrapped - arc.Sweep <= (2 * System.Math.PI) - wrapped
+            ? arc.EndAngle
+            : arc.StartAngle;
+    }
+
+    private static double Signed(double angle)
+    {
+        double wrapped = angle % (2 * System.Math.PI);
+
+        return wrapped > System.Math.PI
+            ? wrapped - (2 * System.Math.PI)
+            : wrapped <= -System.Math.PI ? wrapped + (2 * System.Math.PI) : wrapped;
+    }
+
+    private static DimensionLayout Unsupported(string reason)
+        => DimensionLayout.Failed(DimensionLayoutOutcome.Unsupported, reason);
+
+    private static DimensionLayout Degenerate(string reason)
+        => DimensionLayout.Failed(DimensionLayoutOutcome.Degenerate, reason);
+
+    private static DimensionLayout Missing()
+        => DimensionLayout.Failed(
+            DimensionLayoutOutcome.GeometryNotFound,
+            "The geometry this dimension measures no longer exists.");
 
     private static DimensionLayout Aligned(Vec2d a, Vec2d b, Vec2d text)
     {
