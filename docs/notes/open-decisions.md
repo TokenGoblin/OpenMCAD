@@ -152,78 +152,53 @@ about which classes make their own devices.** They named `RenderDeviceTests`, `D
 shipped, and that mismatch is most of why the failure read as surprising. Corrected.
 
 **The nightly regression has never once passed.** Thirteen runs since it was created on
-2026-08-28, thirteen failures, and the same shape every time: the **Build** step dies after 76 to
-104 minutes in both of the two `Corpus and determinism` jobs, while "Rebuild from scratch" passes.
-That is the OCCT build from source failing partway — nowhere near the 330-minute timeout, and long
-before anything the build script checks afterwards. The detail is below, along with the correction
-of an earlier answer that was confidently wrong.
+2026-08-28, thirteen failures, and the cause is the same every time: the *Licence notices* step
+reports that `THIRD-PARTY-NOTICES.md` does not match the dependency closure the build resolved.
+Two of its three jobs fail on it; "Rebuild from scratch" passes.
 
-Why it went unnoticed for a fortnight has a separate cause worth keeping. The parts of `build.ps1`
-that only exist in an OCCT build — the licence-notices check among them — are skipped everywhere
-else, deliberately, because a stub build has no native closure to compare. So neither a local
-`./build.ps1` nor the fast CI exercises them, the nightly is the only thing that does, and nobody
-was reading it.
+This is read from the job log rather than inferred. The log shows the OCCT build *succeeding* --
+that is what the 76 to 104 minutes buy -- then `Build succeeded, 0 Error(s)` for the managed
+solution in 38 seconds, and then:
 
-**What was first written here, and why it was wrong.** The entry used to say the cause was the
-*Licence notices* step reporting that `THIRD-PARTY-NOTICES.md` did not match the resolved closure.
-That was inferred from which steps *could* fail in an OCCT-only build rather than read from the
-failure, and it was wrong — the notices check has never run, because `build.ps1` reaches it only
-after the native shims that are what actually fail. It is left recorded because the way it was
-arrived at is the reusable part.
+    ==> Licence notices
+    THIRD-PARTY-NOTICES.md does not match the dependencies this build resolved.
 
-The managed half of the file was checked and cleared at the time: forty-four packages, no
-additions, no removals, no version drift, against `artifacts/obj/**/project.assets.json`, which is
-what the generator itself reads. The conclusion drawn from that — that the drift must therefore be
-in the native section, which only a machine that has built OCCT could regenerate — is where the
-reasoning went wrong. Eliminating one half of a file does not establish that the other half is at
-fault when nothing had yet shown the file was involved at all.
+Why it went unnoticed for a fortnight is the interesting half. The check only runs in an OCCT
+build — `build.ps1` skips it otherwise, deliberately, because a stub build has no native closure to
+compare — so neither a local `./build.ps1` nor the fast CI ever executes it. The nightly is the only
+thing that does, and nobody was reading it.
 
-**The check now says what differs**, which is the half of this that could be fixed from here. It
-used to report only "does not match", and a failure whose sole remedy is "reproduce a ten-hour
-build and look" is a failure nobody acts on — most of the reason this sat for thirteen runs. It
-prints the lines present on one side and not the other, capped, so a version drift in the native
-table comes out as one line each way.
+**What is not yet known is why it disagrees with a developer machine.** A full OCCT build here --
+`./build.ps1 -Configuration Release -WithOcct`, real closure, `openmcad_occt.dll` beside forty-odd
+`TK*.dll` -- reports `ok  THIRD-PARTY-NOTICES.md matches the resolved dependencies`. Same commit,
+same committed file (it has not been touched since 2026-08-23), opposite answers.
 
-Set differences rather than a line-by-line diff, deliberately: a row changing is one row, but a
-*section* that could not be generated shifts every line after it, and a positional diff then prints
-a screenful of merely displaced rows and buries the one that moved. Verified both ways here —
-against a build with no native closure, where it correctly reports the whole section as missing, and
-against a one-version change, where it reports exactly two lines.
+The obvious suspect has been ruled out: every native version the runner resolved matches the one
+installed here, checked package by package out of the log --
+`opencascade[core,freetype]@8.0.1`, `freetype 2.14.3`, `brotli 1.2.0`, `bzip2 1.0.8#6`,
+`libpng 1.6.58`, `zlib 1.3.2#2` -- and those are exactly the six rows in the native table. So the
+drift is not a version difference in the native section, which is what this entry previously
+assumed.
 
-**That diagnosis was wrong, and this is the correction.** The notices are not why the nightly
-fails. A real OCCT build on a developer machine -- `./build.ps1 -Configuration Release -WithOcct`,
-with the full closure installed and `openmcad_occt.dll` beside forty-odd `TK*.dll` -- reports
-`ok  THIRD-PARTY-NOTICES.md matches the resolved dependencies`. The committed file is correct
-against a genuine native closure, so there was never any drift to find.
+**The check that would answer this has never run.** Naming the drifted rows landed in `70ebfe5`,
+at 10:06 today; the most recent nightly started at 07:37, on a commit from 2026-09-03. The next
+run will be the first to include it, and it prints the rows present on one side and not the other.
+**That is the thing to read after the next nightly**, and until then anything said about *which*
+rows differ is a guess.
 
-What actually happens is earlier and cruder. Every run since the first, on 2026-08-28, fails in the
-**Build** step after 76 to 104 minutes, on *both* matrix legs. That is nowhere near the
-330-minute timeout, so it is not the job running out of time; it is the OCCT build from source
-failing partway. The notices check sits at the end of `build.ps1`, after the native shims, so it
-has never once been reached -- which is also why improving it changed nothing.
+**A note on how this entry got wrong twice, because the method matters more than the answer.**
+It first said the drift had to be in the native section, reasoning that the managed half had been
+checked and cleared so the other half must be at fault. That is elimination standing in for
+evidence. It was then "corrected" to say the notices were not involved at all and the OCCT compile
+was failing -- inferred from step durations and from a local build passing, and wrong in the
+opposite direction; the log plainly shows the compile succeeding.
 
-Both legs fail because both build OCCT: the `Build` step passes `-WithOcct` regardless of which
-kernel the matrix leg goes on to exercise. And the failure sustains itself. `Cache vcpkg binaries`
-restores nothing, and `Post Cache vcpkg binaries` is skipped because the job failed, so the cache is
-never written -- every night pays the cold build and dies in the same place. A cache that can only
-be filled by a job that succeeds cannot help a job that always fails.
-
-**What this needs, and why it is not fixed here.** The compiler error is in the runner's log, and
-reading a job log needs authentication this environment does not have; the REST endpoint returns
-403 and `gh` is not usable against this remote. Annotations give only `Process completed with exit
-code 1`. It cannot be reproduced locally either -- the local vcpkg closure was built earlier and
-builds clean, which is the evidence above but also the reason the failure does not appear here.
-
-So this wants one of: someone reading the log from the web UI and pasting the compiler error; or a
-change to the workflow, which `CLAUDE.md` puts behind an explicit ask. Guessing at a vcpkg or OCCT
-pin without the error would be a change made blind, and this entry has already cost one confident
-wrong answer.
-
-**The improvement to the check still stands, on its own terms.** It reports what differs rather
-than only that something does, which is worth having the first time the notices genuinely drift.
-It was simply not the fix for this, and saying it was is the mistake being corrected here -- a
-diagnosis reached without reading the failure is a guess wearing a conclusion's clothes, and it
-survived thirteen runs precisely because nothing ever tested it.
+Both were reached without reading the failure, and the log was readable the whole time: job logs
+need authentication even on a public repository, and the token in the machine's git credential
+manager supplies it. That was already written down in this project's own notes on checking CI.
+The lesson is not about licences or vcpkg -- it is that a diagnosis nothing has tested is a guess,
+and that a guess stated in a committed file acquires an authority it never earned. Two commits
+now exist saying contradictory things about this failure; this is the one that read the log.
 
 **P3-T13, the naming corpus.** Seven of the ten mandatory §5.3 categories are covered. The other
 three — pattern instance count, mirror, imported geometry — need feature types that do not exist
