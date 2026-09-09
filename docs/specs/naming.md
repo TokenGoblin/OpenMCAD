@@ -332,10 +332,56 @@ move is part of closing P3-T13.
 
 ---
 
+## 11a. Writing a name — `NameMinter`
+
+Resolution is only half of it. Something has to turn a picked `SubEntity` into a name in the first
+place, and until P3-T08..P3-T12's minter that direction did not exist: the only ways to construct a
+`PersistentName` were `PersistentName.Of` by hand and the text form of §3. A selection could
+therefore not survive a rebuild, because a kernel tag is a handle into one rebuild and means
+nothing in the next.
+
+`NameMinter` walks the same `RebuildHistory` the resolver walks, and inverts it:
+
+| Field | Where it comes from |
+|---|---|
+| `Feature` | The **last** feature whose outputs include the entity, searching back from the consumer |
+| `Provenance` | `Generated` if the source generated it, `Modified` if it altered it, `New` if there is no source |
+| `Sources` | The source entity, named by the same procedure — recursion that terminates because a source is always an output of an earlier feature |
+| `Role` | The operation's own role for that output |
+| `Ordinal` | Its place among the candidates *its own name will offer*, counting from one; `0` when unique |
+| `Hint` | Nothing. See below. |
+
+Two of those rows are easy to get wrong in ways nothing complains about.
+
+**The ordinal must be counted over the candidate set that will resolve it.** §5 narrows by source
+before it applies role and ordinal when a segment has sources, and starts from every output when it
+does not. An ordinal counted over the wider set and then read against the narrower one selects the
+wrong sibling — and both sets are internally consistent, so the mistake is silent. The minter
+therefore builds the same candidate set the resolver will and counts within it.
+
+**Name an entity where it was last left, not where it began.** An entity can be an output of
+several features in turn. Naming it at the first is not merely less precise: where a later feature
+split it and one half kept its identity — which is what a kernel usually does — a name anchored
+before the split resolves to one face and is then carried into a feature that made two, which is
+ambiguous by §8 and correctly so. Anchored at the split, the halves are siblings the role and
+ordinal separate.
+
+**A minted name has tiers 1 and 3 but not tier 2.** `GeoHint` describes geometry, and the minter
+holds a rebuild's history rather than the shapes it produced, so it leaves the hint empty. Names
+minted this way survive by replay alone; §6's geometric fallback has nothing to match on. Filling
+the hint in belongs to the picking code, which is holding the geometry at the moment the user
+clicks.
+
+A minted name is `null` rather than approximate when the history does not account for the entity.
+A name that cannot be resolved is worse than no name: it would be written into a document and fail
+later, at a distance from whatever caused it.
+
 ## 12. Not yet done
 
 | Gap | Why it is open |
 |---|---|
+| A geometric hint on minted names | The minter has no geometry; §6's tier cannot help a name it wrote. Wants the picking code — P6-T06. |
+| `SelectionSet` storing names rather than kernel entities | The minter makes it possible; wiring it through is its own change. |
 | Pattern instance count, mirror | Need Phase 5 feature types. |
 | Imported geometry | Needs Phase 8. |
 | Moving the corpus to `tests/regression/naming-corpus` as fixtures | §5.3's stated shape; §11. |

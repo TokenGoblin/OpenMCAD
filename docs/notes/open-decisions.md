@@ -240,11 +240,40 @@ rather than to promise anything.
 
 **Reference plane display (P2-T11) — done.** The blocker was stale: P2-T11 landed at commit 45 and the P2-T10 transparency it said it was waiting for arrived at 53. Built as `ReferencePlanePass` with `DisplayPlane` on the snapshot; see the P2-T11 note in PLAN.md for the decisions.
 
-**Selection does not survive a rebuild, and no task owns finishing it.** P2-T09's note and `SelectionSet.cs` both say a selection surviving a topology change "needs the persistent naming of PLAN.md 5.3", and the source says it "does not exist yet". It does: the whole of P3-T08 to P3-T12 shipped it, and `OpenMCAD.Interaction` already reaches `OpenMCAD.Core` through its existing references, so nothing structural is in the way.
+**Minting a name from a picked entity — done.** The missing half of the pair: the **resolve**
+direction had existed since P3-T09, while nothing anywhere **minted** a `PersistentName` from a
+picked `SubEntity`, so the only ways to construct one were `PersistentName.Of` by hand and the text
+parser. `NameMinter` is now the generator, beside the resolver in `OpenMCAD.Core.Naming`, walking
+the per-feature `HistoryMap`s `RebuildHistory` already carried.
 
-But this is only half a stale blocker, and the other half is the point. The **resolve** direction exists -- `NameResolver.Resolve(PersistentName, FeatureId)` -- while nothing anywhere **mints** a `PersistentName` from a picked `SubEntity`. The only two ways to construct one are `PersistentName.Of` and the text parser; there is no name generator. `RebuildHistory` carries the per-feature `HistoryMap`s such a pass would walk, so the material is there, but the pass is not.
+The property it exists for has a test: a name minted against one rebuild resolves to the same
+face in the next, after every kernel tag has changed. That is what a selection has to survive.
 
-Worth deciding where that belongs. P6-T06 is selection *filters* and box-select, not rebuild survival, so on the current plan nobody is scheduled to do it -- which is how a half-cleared blocker stays invisible: the note that would have flagged it still says the thing it is waiting for does not exist.
+**The subtlety worth recording, because it would have been silent.** A name's ordinal has to be
+counted over exactly the candidate set that will resolve it. When a segment carries sources the
+resolver narrows to what those sources produced *before* it applies role and ordinal; when it
+carries none it starts from every output the operation reported. An ordinal counted over the wider
+set and resolved against the narrower one points at the wrong sibling, and both sets are internally
+consistent, so nothing would have complained. `TheOrdinalCountsAmongWhatTheNameItselfWillOffer`
+pins it: four walls, two per profile edge, and the second wall of the second edge is ordinal 2
+rather than 4.
+
+**Where it is named matters, and that took a sharper test to show.** An entity is named at the
+*last* feature that reported it, not the first. Two sabotages of that survived a first pass,
+because in every scenario written to that point the picked entity was an output of exactly one
+feature. The case that separates them is a split where one half keeps the original's identity —
+which is what a kernel usually does. Named at the feature that made the original, resolution finds
+one face and then carries it into the feature that made two: ambiguous, and rightly. Named at the
+split, the halves are siblings the role and ordinal separate.
+
+**What is not here.** A minted name carries no `GeoHint`, so it has §5.3's tier one and tier three
+but not tier two: it survives by replay, and a geometric fallback has nothing to match on. The hint
+describes geometry, and `NameMinter` holds the history of a rebuild rather than the shapes it
+produced — filling it in wants the picking code, which is holding the geometry at the moment the
+user clicks. That is the next increment and it belongs with P6-T06's selection work.
+
+`SelectionSet` itself still stores kernel entities rather than names; wiring it through is a
+separate change, and now an unblocked one.
 
 **Silhouette edges on curved surfaces (P2-T06).** "Everything but silhouettes." A cylinder currently
 shows its end circles and its seam but nothing where its wall turns away, which reads as a drawing
