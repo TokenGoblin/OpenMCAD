@@ -106,22 +106,30 @@ short-lived, so after a removal the next test built a clean one; now a removed a
 by the shared device for the rest of the run, and anything reaching for it afterwards gets
 `DEVICE_REMOVED`.
 
-Two candidate fixes, neither verifiable on this machine — the failure exists only on the runner, and
-locally the whole suite passes either way:
+**Fixed, and the diagnosis is confirmed rather than argued.** `TestDevices.Attempted` now checks
+whether the device it is holding has been removed, and builds a fresh one if so. That restores
+exactly what the old arrangement did by accident — a test that asks for a device gets a live one —
+without giving up the sharing that stopped the host dying on the way out.
 
-1. **Revert the sharing.** 36 short-lived devices plus the `CI` debug-layer gate is the exact
-   configuration CI was green with at #38. Biggest change, highest confidence, and it gives back the
-   thing the refactor was for.
-2. **Let `DeviceLossTests` release the shared device first.** `TestDevices.ReleaseShared` already
-   exists and `Attempted()` rebuilds lazily, so the class could drop the shared device before
-   removing anything and let the next class make a fresh one. Much smaller, and it rests on the
-   guess that WARP recovers once *every* device is gone — which is the part nothing here can check.
+What makes this more than another guess: **the CI failure now reproduces locally.** Removing that
+one check and running the suite fails the same six `SwapChainTests` that fail on the runner, plus
+the new test written for it. The mechanism is therefore established, not inferred — a removed
+shared device being handed to every test that follows — and the only part that remains
+environment-specific is *what* removes it. On a runner, `DeviceLossTests` removing its own device
+appears to take the shared one with it; on this machine it does not, so
+`SharedDeviceTests` removes the shared device directly and asserts the replacement.
 
-One more thing found while reading it, and worth fixing whichever way this goes: **`TestDevices`'
-own remarks are wrong about which classes make their own devices.** They name `RenderDeviceTests`,
-`DeviceLossTests` and `SwapChainTests` as the three that do, but the same commit converted
-`SwapChainTests` to `TestDevices.Required`. The comment describes the design that was intended, not
-the one that shipped, and that mismatch is most of why the failure is surprising to read.
+The revert stays available and is written down here in case CI disagrees: 36 short-lived devices
+plus the `CI` debug-layer gate is the exact configuration that was green at #38. It was not tried
+first because it is an eleven-file blind edit whose own mistakes would be indistinguishable from the
+failure it was meant to cure, while this is a dozen lines aimed at a mechanism a local test now
+pins down.
+
+One more thing found while reading rather than running: **`TestDevices`' own remarks were wrong
+about which classes make their own devices.** They named `RenderDeviceTests`, `DeviceLossTests` and
+`SwapChainTests` as the three that do, but the same commit converted `SwapChainTests` to
+`TestDevices.Required`. The comment described the design that was intended rather than the one that
+shipped, and that mismatch is most of why the failure read as surprising. Corrected.
 
 **The nightly regression has never once passed.** Thirteen runs since it was created on
 2026-08-28, thirteen failures, and the cause is the same every time: the *Licence notices* step

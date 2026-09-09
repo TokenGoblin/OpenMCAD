@@ -113,6 +113,24 @@ internal static class TestDevices
     {
         lock (Gate)
         {
+            if (_attempt is { Device: { } existing } && existing.IsRemoved)
+            {
+                // The failure CI #39 and #40 found. DeviceLossTests removes a device on purpose,
+                // and on a runner's WARP that takes every device in the process with it -- the
+                // shared one included. Before the assembly shared a device this was invisible,
+                // because the next test simply built a fresh one and never learned that the last
+                // had died; now the corpse would be handed to every test for the rest of the run,
+                // which is what the six SwapChainTests failures were.
+                //
+                // Replacing it here restores exactly the old behaviour -- a test that asks for a
+                // device gets a live one -- without giving up the sharing that stopped the host
+                // dying on the way out. It is checked on the way out of the cache rather than on
+                // the way in, because nothing tells this class when a removal happens: the class
+                // that causes it is a peer, and it is not the only thing that could.
+                existing.Dispose();
+                _attempt = null;
+            }
+
             return _attempt ??= Create();
         }
     }
