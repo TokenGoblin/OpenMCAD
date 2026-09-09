@@ -180,11 +180,29 @@ installed here, checked package by package out of the log --
 drift is not a version difference in the native section, which is what this entry previously
 assumed.
 
+**What has been ruled out**, so nobody spends the afternoon on it again. Each of these was
+checked against the runner's own log rather than assumed:
+
+| Suspect | How it was checked | Result |
+|---|---|---|
+| Native version drift | All twelve vcpkg packages read out of the install plan in the log, with their feature sets | Identical to this machine, `opencascade[core,freetype]@8.0.1` included |
+| The shipped native closure | Every `Installing: *.dll` line in the log against `native/install/Release/bin` here | Identical, 32 DLLs each, no difference either way |
+| The notices file having moved | `git log` on the file | Untouched since 2026-08-23; byte-identical at the nightly's commit and at `main` |
+| The commit being older than `main` | Worktree at `cc70c6c`, restored, package graph compared with `main`'s | Identical, 89 packages both |
+| Stale `artifacts/obj` masking it here | `./build.ps1 -Clean -Configuration Release -WithOcct` from scratch | Still reports the notices match |
+
+So every input that can be compared from here is the same on both machines, and the check still
+answers differently. What is left is something about the runner that the log does not print --
+most likely inside `Get-ManagedPackages`, which is the one half whose *output* has never been seen
+from the runner: the native table is derived from files that have now been compared directly,
+while the managed table's licence strings are read from the NuGet cache at generation time.
+
 **The check that would answer this has never run.** Naming the drifted rows landed in `70ebfe5`,
-at 10:06 today; the most recent nightly started at 07:37, on a commit from 2026-09-03. The next
-run will be the first to include it, and it prints the rows present on one side and not the other.
-**That is the thing to read after the next nightly**, and until then anything said about *which*
-rows differ is a guess.
+at 10:06 on 2026-09-09; the most recent nightly started at 07:37, on a commit from 2026-09-03. The
+next run is the first to include it, and it prints the rows present on one side and not the other.
+**That is the thing to read after the next nightly** -- or after a manual `workflow_dispatch`,
+which this workflow offers and which would answer it in an hour rather than a day. Until then
+anything said about *which* rows differ is a guess, and this entry has already paid for two.
 
 **A note on how this entry got wrong twice, because the method matters more than the answer.**
 It first said the drift had to be in the native section, reasoning that the managed half had been
