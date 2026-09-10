@@ -247,8 +247,31 @@ describes geometry, and `NameMinter` holds the history of a rebuild rather than 
 produced — filling it in wants the picking code, which is holding the geometry at the moment the
 user clicks. That is the next increment and it belongs with P6-T06's selection work.
 
-`SelectionSet` itself still stores kernel entities rather than names; wiring it through is a
-separate change, and now an unblocked one.
+**And the selection now actually crosses a rebuild** (`SelectionAcrossRebuild`). `SelectionSet`
+still holds `SubEntity`, deliberately: a selection is read every frame to decide what is
+highlighted and is compared against kernel entities in the display snapshot, so holding names
+instead would put resolution on the highlight path — per-frame work to answer a question that only
+changes when the model does, and a name resolves to zero or one entity where highlighting needs the
+entity. The durability goes at the boundary that needs it instead: `Remember` before a rebuild,
+`Restore` after.
+
+**What cannot be found is dropped and counted, not guessed at.** A name that no longer resolves
+means the face is gone or has become several, and §5.3's third tier is explicit that an ambiguous
+reference is not answered by a guess — selecting both halves of a split face would be one, made
+silently, and the user would go on to act on something they never chose. Selecting every candidate
+is a defensible alternative for a *selection* specifically, where being wrong costs a click rather
+than a broken feature; it is worth revisiting with the UI that surfaces this, and is recorded here
+rather than decided in passing.
+
+**A bug found by asking what a guard was for.** Restorations were counted by whether the set grew,
+which is wrong where a rebuild *merges* two selected faces into one: both names resolve, to the
+same entity, so the second `Apply` reports no change and the face would have been reported lost
+when it had been found. The count comes from the resolution now. Five sabotages, all five failing a
+test.
+
+Null-argument guards here are the codebase's usual `ArgumentNullException.ThrowIfNull` and are
+untested, as they are everywhere else in the tree; noted rather than singled out for coverage in
+one file.
 
 **Silhouette edges on curved surfaces (P2-T06).** "Everything but silhouettes." A cylinder currently
 shows its end circles and its seam but nothing where its wall turns away, which reads as a drawing

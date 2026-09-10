@@ -372,6 +372,11 @@ minted this way survive by replay alone; §6's geometric fallback has nothing to
 the hint in belongs to the picking code, which is holding the geometry at the moment the user
 clicks.
 
+A selection crosses a rebuild through this pair (`SelectionAcrossRebuild`, in
+`OpenMCAD.Interaction`): names are minted before the rebuild and resolved after. `SelectionSet`
+goes on holding kernel entities between those points, because it is read every frame to decide
+what is highlighted and a name would have to be resolved to answer that.
+
 A minted name is `null` rather than approximate when the history does not account for the entity.
 A name that cannot be resolved is worse than no name: it would be written into a document and fail
 later, at a distance from whatever caused it.
@@ -381,7 +386,7 @@ later, at a distance from whatever caused it.
 | Gap | Why it is open |
 |---|---|
 | A geometric hint on minted names | The minter has no geometry; §6's tier cannot help a name it wrote. Wants the picking code — P6-T06. |
-| `SelectionSet` storing names rather than kernel entities | The minter makes it possible; wiring it through is its own change. |
+| Selecting every candidate when a name became ambiguous | `SelectionAcrossRebuild` drops it, per tier 3. For a selection specifically, being wrong costs a click rather than a broken feature, so offering both halves of a split face is defensible; wants the UI that will surface it. |
 | Pattern instance count, mirror | Need Phase 5 feature types. |
 | Imported geometry | Needs Phase 8. |
 | Moving the corpus to `tests/regression/naming-corpus` as fixtures | §5.3's stated shape; §11. |

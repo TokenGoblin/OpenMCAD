@@ -30,11 +30,12 @@ public enum SelectionAction
 /// <see cref="SubEntity"/> names the thing itself.
 /// </para>
 /// <para>
-/// That is still not permanent. Surviving a rebuild that changes the topology needs the persistent
-/// naming of PLAN.md 5.3, which does not exist yet; until it does, a selection survives camera
-/// movement, tessellation changes and re-picking, and does not survive a modelling operation that
-/// renumbers the entity. That is the honest boundary, and the reason selection is stored here
-/// rather than being resolved to persistent names it cannot yet produce.
+/// On its own that survives camera movement, tessellation changes and re-picking, but not a
+/// modelling operation that renumbers the entity. Crossing a rebuild is
+/// <see cref="SelectionAcrossRebuild"/>'s job, and it stays there rather than being folded in
+/// here: a selection is read every frame to decide what is highlighted, so holding names instead
+/// would put name resolution on the highlight path to answer a question that only changes when
+/// the model does.
 /// </para>
 /// <para>
 /// Pre-selection — the entity merely under the cursor — is kept separate from the selection
