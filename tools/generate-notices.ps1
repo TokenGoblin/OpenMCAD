@@ -207,11 +207,40 @@ function Get-NativePackages {
         return $null
     }
 
-    $installed = Join-Path $RepoRoot 'native/vcpkg_installed'
-    $infoDir = Join-Path $installed 'vcpkg/info'
-    if (-not (Test-Path -LiteralPath $infoDir)) {
-        return $null
+    # A shim built without OCCT installs itself and nothing else. Generating from that would
+    # produce a notices file with every native component missing, and it would look complete --
+    # which is worse than failing, because someone would commit it.
+    $foreign = @(Get-ChildItem -Path $binDir -Filter '*.dll' |
+        Where-Object { $_.Name -ne 'openmcad_occt.dll' })
+
+    if ($foreign.Count -eq 0) {
+        throw ("The native closure at $binDir contains only the shim itself, so this build did " +
+            'not link OCCT. Generating now would drop every native component from the notices. ' +
+            'Build with -WithOcct first.')
     }
+
+    # vcpkg in manifest mode under CMake installs into the *build* tree,
+    # ${CMAKE_BINARY_DIR}/vcpkg_installed, rather than beside the manifest. Reading only the
+    # manifest-adjacent path is what made this check pass on a developer machine and fail on every
+    # fresh clone for thirteen nightly runs: a tree built once under an older layout keeps a stale
+    # native/vcpkg_installed, and that directory -- not the one this build populated -- was what
+    # got read. Both are accepted, the build tree first, so neither a fresh clone nor an old
+    # working tree reads the wrong one.
+    $installed = @(
+        (Join-Path $RepoRoot 'native/build/vcpkg_installed'),
+        (Join-Path $RepoRoot 'native/vcpkg_installed')
+    ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'vcpkg/info') } | Select-Object -First 1
+
+    # Loudly, rather than by returning null. Null becomes "this section could not be generated" in
+    # the document, which reads like a considered statement and is really the generator not knowing
+    # where vcpkg put anything. Libraries are shipping; something has to account for their licences.
+    if (-not $installed) {
+        throw ("$($foreign.Count) native libraries ship from $binDir, but no vcpkg metadata was " +
+            'found under native/build/vcpkg_installed or native/vcpkg_installed. Their licences ' +
+            'cannot be established, and guessing at them is not an option.')
+    }
+
+    $infoDir = Join-Path $installed 'vcpkg/info'
 
     # file name (lower case) -> owning package
     $owners = @{}
@@ -226,18 +255,6 @@ function Get-NativePackages {
 
     $packages = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
-
-    # A shim built without OCCT installs itself and nothing else. Generating from that would
-    # produce a notices file with every native component missing, and it would look complete --
-    # which is worse than failing, because someone would commit it.
-    $foreign = @(Get-ChildItem -Path $binDir -Filter '*.dll' |
-        Where-Object { $_.Name -ne 'openmcad_occt.dll' })
-
-    if ($foreign.Count -eq 0) {
-        throw ("The native closure at $binDir contains only the shim itself, so this build did " +
-            'not link OCCT. Generating now would drop every native component from the notices. ' +
-            'Build with -WithOcct first.')
-    }
 
     foreach ($dll in $foreign) {
 

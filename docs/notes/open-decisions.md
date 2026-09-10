@@ -151,72 +151,47 @@ about which classes make their own devices.** They named `RenderDeviceTests`, `D
 `TestDevices.Required`. The comment described the design that was intended rather than the one that
 shipped, and that mismatch is most of why the failure read as surprising. Corrected.
 
-**The nightly regression has never once passed.** Thirteen runs since it was created on
-2026-08-28, thirteen failures, and the cause is the same every time: the *Licence notices* step
-reports that `THIRD-PARTY-NOTICES.md` does not match the dependency closure the build resolved.
-Two of its three jobs fail on it; "Rebuild from scratch" passes.
+**The nightly regression had never once passed — found and fixed.** Thirteen runs from
+2026-08-28, thirteen failures, all in the *Licence notices* step of `build.ps1`, and the cause was
+in the generator rather than in the notices file.
 
-This is read from the job log rather than inferred. The log shows the OCCT build *succeeding* --
-that is what the 76 to 104 minutes buy -- then `Build succeeded, 0 Error(s)` for the managed
-solution in 38 seconds, and then:
+**vcpkg in manifest mode under CMake installs into the build tree.** Packages land in
+`${CMAKE_BINARY_DIR}/vcpkg_installed` — for this repository `native/build/vcpkg_installed` — not
+beside the manifest. `tools/generate-notices.ps1` read only `native/vcpkg_installed`, found no
+`vcpkg/info`, and returned null; the document then rendered the whole native section as
+*"The native closure was not built, so this section could not be generated."*, which of course did
+not match the committed table, and the check failed. `THIRD-PARTY-NOTICES.md` was correct all
+along.
 
-    ==> Licence notices
-    THIRD-PARTY-NOTICES.md does not match the dependencies this build resolved.
+**Why a developer machine could not see it.** A working tree built once under an older layout keeps
+a stale `native/vcpkg_installed`, and that directory — not the one the build had just populated —
+is what got read, so the check passed locally and failed on every fresh clone. The lookup now
+accepts both, build tree first, so neither a fresh clone nor an old working tree reads the wrong
+one.
 
-Why it went unnoticed for a fortnight is the interesting half. The check only runs in an OCCT
-build — `build.ps1` skips it otherwise, deliberately, because a stub build has no native closure to
-compare — so neither a local `./build.ps1` nor the fast CI ever executes it. The nightly is the only
-thing that does, and nobody was reading it.
+**The null return is the reason it hid for a fortnight.** "This section could not be generated"
+reads like a considered statement about the build, and was really the generator not knowing where
+vcpkg had put anything. Where libraries are shipping and no vcpkg metadata can be found, it now
+throws and names both paths it looked in. A licence question must not be answerable by a
+placeholder.
 
-**What is not yet known is why it disagrees with a developer machine.** A full OCCT build here --
-`./build.ps1 -Configuration Release -WithOcct`, real closure, `openmcad_occt.dll` beside forty-odd
-`TK*.dll` -- reports `ok  THIRD-PARTY-NOTICES.md matches the resolved dependencies`. Same commit,
-same committed file (it has not been touched since 2026-08-23), opposite answers.
+Verified against an exact reproduction of the runner's state — a pristine clone at a short path,
+built `Release -WithOcct` from nothing — which failed the same way before the change and passes
+after. Both layouts and the missing-metadata case were each exercised.
 
-The obvious suspect has been ruled out: every native version the runner resolved matches the one
-installed here, checked package by package out of the log --
-`opencascade[core,freetype]@8.0.1`, `freetype 2.14.3`, `brotli 1.2.0`, `bzip2 1.0.8#6`,
-`libpng 1.6.58`, `zlib 1.3.2#2` -- and those are exactly the six rows in the native table. So the
-drift is not a version difference in the native section, which is what this entry previously
-assumed.
+**Two process notes worth more than the fix.** The first: this entry twice recorded a confident
+diagnosis reached without reading the failure — once blaming the native table by elimination, once
+blaming the OCCT compile from step durations — and the job log was readable throughout, via the
+token in the machine's git credential manager, a method already written down in this project's own
+notes on checking CI. The second: a local build passing is evidence about the local machine. When
+it disagrees with a build agent, the disagreement is the thing to investigate, and reproducing the
+agent's state from scratch is what finally did it.
 
-**What has been ruled out**, so nobody spends the afternoon on it again. Each of these was
-checked against the runner's own log rather than assumed:
-
-| Suspect | How it was checked | Result |
-|---|---|---|
-| Native version drift | All twelve vcpkg packages read out of the install plan in the log, with their feature sets | Identical to this machine, `opencascade[core,freetype]@8.0.1` included |
-| The shipped native closure | Every `Installing: *.dll` line in the log against `native/install/Release/bin` here | Identical, 32 DLLs each, no difference either way |
-| The notices file having moved | `git log` on the file | Untouched since 2026-08-23; byte-identical at the nightly's commit and at `main` |
-| The commit being older than `main` | Worktree at `cc70c6c`, restored, package graph compared with `main`'s | Identical, 89 packages both |
-| Stale `artifacts/obj` masking it here | `./build.ps1 -Clean -Configuration Release -WithOcct` from scratch | Still reports the notices match |
-
-So every input that can be compared from here is the same on both machines, and the check still
-answers differently. What is left is something about the runner that the log does not print --
-most likely inside `Get-ManagedPackages`, which is the one half whose *output* has never been seen
-from the runner: the native table is derived from files that have now been compared directly,
-while the managed table's licence strings are read from the NuGet cache at generation time.
-
-**The check that would answer this has never run.** Naming the drifted rows landed in `70ebfe5`,
-at 10:06 on 2026-09-09; the most recent nightly started at 07:37, on a commit from 2026-09-03. The
-next run is the first to include it, and it prints the rows present on one side and not the other.
-**That is the thing to read after the next nightly** -- or after a manual `workflow_dispatch`,
-which this workflow offers and which would answer it in an hour rather than a day. Until then
-anything said about *which* rows differ is a guess, and this entry has already paid for two.
-
-**A note on how this entry got wrong twice, because the method matters more than the answer.**
-It first said the drift had to be in the native section, reasoning that the managed half had been
-checked and cleared so the other half must be at fault. That is elimination standing in for
-evidence. It was then "corrected" to say the notices were not involved at all and the OCCT compile
-was failing -- inferred from step durations and from a local build passing, and wrong in the
-opposite direction; the log plainly shows the compile succeeding.
-
-Both were reached without reading the failure, and the log was readable the whole time: job logs
-need authentication even on a public repository, and the token in the machine's git credential
-manager supplies it. That was already written down in this project's own notes on checking CI.
-The lesson is not about licences or vcpkg -- it is that a diagnosis nothing has tested is a guess,
-and that a guess stated in a committed file acquires an authority it never earned. Two commits
-now exist saying contradictory things about this failure; this is the one that read the log.
+**`tools/*.ps1` has no automated coverage, and this is what that costs.** The generator is only
+ever exercised by an OCCT build, which no local build and no fast CI job performs, so the one
+consumer of this code path was a nightly nobody read. Worth deciding whether the tooling deserves
+a Pester suite, or whether the throw added here is enough — it converts the silent case into a
+loud one, which is most of the value a test would have provided.
 
 **P3-T13, the naming corpus.** Seven of the ten mandatory §5.3 categories are covered. The other
 three — pattern instance count, mirror, imported geometry — need feature types that do not exist
